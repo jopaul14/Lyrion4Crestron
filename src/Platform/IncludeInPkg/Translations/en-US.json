@@ -1,0 +1,32 @@
+{
+  "LyrionGateway": {
+    "DisplayName": "Lyrion Music Server",
+    "Description": "Gateway driver for Lyrion Music Server (LMS). Discovers and controls Squeezebox players via the CLI protocol."
+  },
+  "LyrionPlayer": {
+    "DisplayName": "Lyrion Player",
+    "Description": "Media player controlled by Lyrion Music Server.",
+    "Controls": {
+      "Play": "Play",
+      "Pause": "Pause",
+      "Stop": "Stop",
+      "NextTrack": "Next Track",
+      "PreviousTrack": "Previous Track",
+      "VolumeUp": "Volume Up",
+      "VolumeDown": "Volume Down",
+      "VolumeMute": "Mute",
+      "PowerOn": "Power On",
+      "PowerOff": "Power Off",
+      "Repeat": "Repeat",
+      "Shuffle": "Shuffle"
+    },
+    "Status": {
+      "NowPlaying": "Now Playing",
+      "Title": "Title",
+      "Artist": "Artist",
+      "Album": "Album",
+      "Volume": "Volume",
+      "Power": "Power"
+    }
+  }
+}
