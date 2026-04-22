@@ -1,0 +1,98 @@
+{
+  "SchemaVersion": "2.0",
+  "GeneralInformation": {
+    "MinSdkVersion": "25.0000.0033",
+    "DeviceType": "Platform",
+    "Manufacturer": "Lyrion Community",
+    "BaseModel": "Media Server",
+    "OtherSupportedModels": [],
+    "SupportedSeries": ["3-Series", "4-Series"],
+    "DependencyGroup": "",
+    "Developer": {
+      "Company": "Lyrion Community",
+      "Contact": "JP",
+      "Email": "JP@jponthe.net",
+      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+      "PhoneNumber": ""
+    },
+    "DriverVersion": "1.0.0.0",
+    "VersionDate": "2026-04-22 00:00:00.000",
+    "Description": "Crestron Certified Driver for the Lyrion Media Server. Integrates Lyrion/Squeezebox players as per-player ManagedDevice entities using the LMS CLI (port 9090) for real-time control and unsolicited feedback, and JSON-RPC over HTTP (port 9000) for library, playlist, and favorites browsing."
+  },
+  "ConfigurationSteps": {
+    "Items": [
+      {
+        "Id": "_Host_",
+        "UsageContext": "Network.Address",
+        "Title": "LMS Hostname or IP Address",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "String"
+      },
+      {
+        "Id": "_CliPort_",
+        "UsageContext": "Network.Port",
+        "Title": "CLI Port (Telnet)",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "Number",
+        "MinValue": 1,
+        "MaxValue": 65535,
+        "DefaultValue": "9090"
+      },
+      {
+        "Id": "_HttpPort_",
+        "UsageContext": "Network.Port",
+        "Title": "HTTP Port (JSON-RPC)",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "Number",
+        "MinValue": 1,
+        "MaxValue": 65535,
+        "DefaultValue": "9000"
+      },
+      {
+        "Id": "_Username_",
+        "UsageContext": "Credentials.Username",
+        "Title": "Username (optional, leave blank if LMS auth is disabled)",
+        "Required": false,
+        "Persistent": true,
+        "ValueType": "String"
+      },
+      {
+        "Id": "_Password_",
+        "UsageContext": "Credentials.Password",
+        "Title": "Password (optional, leave blank if LMS auth is disabled)",
+        "Required": false,
+        "Persistent": true,
+        "ValueType": "String"
+      },
+      {
+        "Id": "_Players_",
+        "UsageContext": "Generic.Prompt",
+        "Title": "Players (one per line: MAC,Friendly Name[,Description])",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "String"
+      }
+    ],
+    "Steps": [
+      {
+        "StepId": "Transport",
+        "Items": ["_Host_", "_CliPort_", "_HttpPort_"],
+        "NextStep": "Authentication"
+      },
+      {
+        "StepId": "Authentication",
+        "Items": ["_Username_", "_Password_"],
+        "NextStep": "Players"
+      },
+      {
+        "StepId": "Players",
+        "Items": ["_Players_"],
+        "NextStep": null
+      }
+    ],
+    "FirstStep": "Transport"
+  }
+}

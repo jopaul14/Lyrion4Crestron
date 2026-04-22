@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+*.pkg
+*.dll
+*.pdb
+
+# NuGet
+packages/
+*.nupkg
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Rider / ReSharper
+_ReSharper*/
+*.DotSettings.user
+
+# OS
+Thumbs.db
+.DS_Store

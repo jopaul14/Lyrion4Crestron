@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Platform_Lyrion_LMS_IP - Crestron Certified Driver for Lyrion Media Server.
+
+  Build requirements:
+    * Visual Studio 2019 or 2022
+    * .NET Framework 4.7.2 Developer Pack
+    * Crestron Certified Drivers SDK installed at $(CrestronSdkPath)
+      Defaults to C:\Lyrion4Crestron\Crestron_SDK; override on the command line
+      (msbuild /p:CrestronSdkPath=...) or via an environment variable of the
+      same name.
+
+  Output:
+    bin\<Config>\Platform_Lyrion_LMS_IP.dll              - driver assembly
+    bin\<Config>\Platform_Lyrion_LMS_IP.pkg              - driver package (via ManifestUtil)
+
+  See BUILD.md at the repo root for step-by-step instructions.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion</RootNamespace>
+    <AssemblyName>Platform_Lyrion_LMS_IP</AssemblyName>
+    <TargetFramework>net472</TargetFramework>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+
+    <!-- Path to a local Crestron Certified Drivers SDK install.
+         Override via environment variable or /p:CrestronSdkPath=... -->
+    <CrestronSdkPath Condition=" '$(CrestronSdkPath)' == '' ">C:\Lyrion4Crestron\Crestron_SDK</CrestronSdkPath>
+
+    <!-- Crestron SDK requires these options to produce a clean driver assembly. -->
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>false</Deterministic>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+
+    <!-- We use C# 7.3 language features (async/await, out var, tuple literals).
+         The SDK samples pin LangVersion=3 for VS2008 compat; we don't need that. -->
+    <LangVersion>7.3</LangVersion>
+
+    <!-- Disable auto-includes of README.md/LICENSE from parent folder. -->
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>portable</DebugType>
+    <Optimize>false</Optimize>
+    <DefineConstants>$(DefineConstants);DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+    <ErrorReport>prompt</ErrorReport>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugType>portable</DebugType>
+    <Optimize>true</Optimize>
+    <DefineConstants>$(DefineConstants);TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+    <ErrorReport>prompt</ErrorReport>
+  </PropertyGroup>
+
+  <!-- Framework assemblies we need (NoStdLib=true means we must reference mscorlib explicitly). -->
+  <ItemGroup>
+    <Reference Include="mscorlib" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+  </ItemGroup>
+
+  <!-- Crestron SDK V2 Entity Model assemblies.
+       These ship with the Crestron Certified Drivers SDK at $(CrestronSdkPath)\Libraries. -->
+  <ItemGroup>
+    <Reference Include="Crestron.DeviceDrivers.SDK">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.SDK.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Crestron.DeviceDrivers.EntityModel">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.EntityModel.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Crestron.DeviceDrivers.API">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.API.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Crestron.DeviceDrivers.Core">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.Core.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- The driver manifest must be embedded so the Crestron platform can read it. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Driver.json" />
+  </ItemGroup>
+
+  <!-- Fail fast with a clear message if the Crestron SDK isn't where we expect it. -->
+  <Target Name="ValidateCrestronSdk" BeforeTargets="PrepareForBuild">
+    <Error
+      Condition="!Exists('$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.SDK.dll')"
+      Text="Crestron SDK not found at '$(CrestronSdkPath)\Libraries'. Install the Crestron Certified Drivers SDK or set the CrestronSdkPath environment variable (or pass /p:CrestronSdkPath=... on the command line)." />
+  </Target>
+
+  <!-- After build, run ManifestUtil to produce the .pkg file the control system loads.
+       ManifestUtil writes the .pkg alongside the built DLL. -->
+  <Target Name="RunManifestUtil" AfterTargets="Build"
+          Condition="Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
+    <Message Importance="high" Text="ManifestUtil: generating driver package for $(AssemblyName)..." />
+    <Exec Command="&quot;$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe&quot; &quot;$(TargetDir.TrimEnd('\\'))&quot;" />
+  </Target>
+
+  <Target Name="WarnIfManifestUtilMissing" AfterTargets="Build"
+          Condition="!Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
+    <Warning Text="ManifestUtil.exe not found at '$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe'. The .dll was built but no .pkg was produced. Install the Crestron Certified Drivers SDK to enable .pkg generation." />
+  </Target>
+
+</Project>
