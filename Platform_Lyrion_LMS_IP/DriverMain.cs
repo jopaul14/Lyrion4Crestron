@@ -691,10 +691,16 @@ namespace LyrionCommunity.Crestron.Lyrion
 
         // ---------------------------------------------------------------- Dispose
 
-        public void Dispose()
+        /// <summary>
+        /// Override of <see cref="BaseDriverEntity.Dispose"/> that tears down
+        /// the transport clients and clears the managed players collection
+        /// before deferring to the base implementation.
+        /// </summary>
+        public override void Dispose()
         {
             if (_disposed)
             {
+                base.Dispose();
                 return;
             }
 
@@ -717,6 +723,8 @@ namespace LyrionCommunity.Crestron.Lyrion
             {
                 _log("DriverMain: Dispose TeardownPlayers threw: " + ex.Message);
             }
+
+            base.Dispose();
         }
     }
 }

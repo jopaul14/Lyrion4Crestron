@@ -12,6 +12,7 @@ using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
 using LyrionCommunity.Crestron.Lyrion.Definitions;
 using LyrionCommunity.Crestron.Lyrion.Models;
 using LyrionCommunity.Crestron.Lyrion.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Transport;
 
 namespace LyrionCommunity.Crestron.Lyrion
 {

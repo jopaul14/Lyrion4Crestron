@@ -63,6 +63,22 @@ Lyrion4CrestronRepo\Platform_Lyrion_LMS_IP\bin\Release\net472\Platform_Lyrion_LM
 
 The `.pkg` file is what gets deployed to the Crestron controller.
 
+#### A note on the build log
+
+On a successful build you will see ManifestUtil print several `Null Exception: String reference not set to an instance of a String.` messages — one for each of the four `Crestron.DeviceDrivers.*.dll` assemblies that are copy-local next to the driver. These are harmless; ManifestUtil scans every DLL in the output folder looking for an embedded driver manifest, and complains (but keeps going) when it finds one without a manifest.
+
+You will also see a `System.IO.FileLoadException` for `Microsoft.Office.Interop.Word`, followed by `Error creating DAT file`, near the end of ManifestUtil's output:
+
+```
+Exception: Could not load file or assembly 'Microsoft.Office.Interop.Word, Version=15.0.0.0...'
+   at ManifestUtil.Helpers.DocumentHelper.ConvertDocumentsToPdf(String dllPath)
+   at ManifestUtil.PkgFile.WriteToDisk(String outputDir)
+```
+
+This is expected and harmless on a machine that does not have Microsoft Office installed. After writing the `.pkg` file, ManifestUtil tries to generate a companion `.dat` file that contains **optional programmer-facing reference documentation**, and it does so by invoking Microsoft Word via COM interop to convert `.doc`/`.docx` help files into embedded PDFs. With no Word installed, the COM call fails and ManifestUtil exits non-zero, but the `.pkg` has already been written by that point. The project's build target is aware of this pattern: it ignores ManifestUtil's exit code and instead fails only if the `.pkg` file was not actually produced.
+
+The missing `.dat` file does **not** affect the driver at runtime — the Crestron control system only needs the `.pkg`. The `.dat` file is only used to surface class-level reference documentation inside Crestron's programming tools. If you do want a `.dat` generated (e.g. to ship a fully-documented driver), install Microsoft Office with the Primary Interop Assemblies on the build machine and supply matching `.doc`/`.docx` help files alongside each class per the Crestron SDK's documentation conventions.
+
 ### 2.2 Via the command line
 
 From a **Developer Command Prompt for Visual Studio** (this puts `msbuild.exe` on `PATH`):
@@ -127,6 +143,8 @@ The project's `ValidateCrestronSdk` target will error out with a clear message i
 
 - **`error : Crestron SDK not found at '...'.`** — The SDK path the build resolved to does not contain `Libraries\Crestron.DeviceDrivers.SDK.dll`. Install the SDK or pass `/p:CrestronSdkPath=...` as described in section 3.
 - **`warning : ManifestUtil.exe not found ...`** — The `.dll` built successfully but no `.pkg` was produced. Install the full Crestron Certified Drivers SDK (ManifestUtil is bundled with it) or copy `ManifestUtil.exe` to `$(CrestronSdkPath)\ManifestUtil\` and rebuild.
+- **ManifestUtil prints `Null Exception: String reference not set to an instance of a String.` for each Crestron SDK DLL.** — Harmless. ManifestUtil scans every DLL in the output directory; these messages are emitted when it finds one without an embedded driver manifest (i.e. the Crestron SDK reference assemblies). The build is unaffected.
+- **ManifestUtil prints `Could not load file or assembly 'Microsoft.Office.Interop.Word'` and `Error creating DAT file`, but the build still succeeds.** — Harmless. The `.pkg` is produced before this point; only the optional `.dat` programmer-documentation file is skipped. See section 2.1, "A note on the build log," for the full explanation. The `.dat` file is not required for the driver to run on a Crestron controller.
 - **Build succeeds, driver does not load on the controller.** — Confirm that `Driver.json`'s `MinSdkVersion` (`25.0000.0033`) is less than or equal to the driver runtime version on the controller. If the controller is older, it cannot load the driver.
 - **"Player not found" in the configuration tool.** — The driver only exposes players that are configured in the _Players_ list. Verify the MAC matches exactly the one LMS reports (LMS Server Web UI → Settings → Information shows each player's MAC).
 - **Driver connects but never receives playback updates.** — The driver subscribes to all CLI notifications (`listen 1`) on connect. If your LMS is behind a firewall, make sure TCP port 9090 is reachable from the Crestron controller.

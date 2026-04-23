@@ -76,33 +76,43 @@
   </ItemGroup>
 
   <!-- Crestron SDK V2 Entity Model assemblies.
-       These ship with the Crestron Certified Drivers SDK at $(CrestronSdkPath)\Libraries. -->
+       These ship with the Crestron Certified Drivers SDK at $(CrestronSdkPath)\Libraries.
+       Private=True (copy local) is REQUIRED: ManifestUtil.exe reflects over the built
+       driver DLL, and the CLR must be able to resolve these references from the
+       driver's output directory. Leaving Private=False produces a CLR exception
+       (HRESULT 0xE0434352) inside ManifestUtil when it tries to load the DLL. -->
   <ItemGroup>
     <Reference Include="Crestron.DeviceDrivers.SDK">
       <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.SDK.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
-      <Private>False</Private>
+      <Private>True</Private>
     </Reference>
     <Reference Include="Crestron.DeviceDrivers.EntityModel">
       <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.EntityModel.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
-      <Private>False</Private>
+      <Private>True</Private>
     </Reference>
     <Reference Include="Crestron.DeviceDrivers.API">
       <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.API.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
-      <Private>False</Private>
+      <Private>True</Private>
     </Reference>
     <Reference Include="Crestron.DeviceDrivers.Core">
       <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.Core.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
-      <Private>False</Private>
+      <Private>True</Private>
     </Reference>
   </ItemGroup>
 
-  <!-- The driver manifest must be embedded so the Crestron platform can read it. -->
+  <!-- The driver manifest must be embedded so the Crestron platform can read it.
+       LogicalName forces the embedded resource name to be '<AssemblyName>.json'
+       (without the RootNamespace prefix). This matches the convention used by
+       Crestron SDK sample drivers and is required for ManifestUtil.exe to find
+       and parse the manifest correctly. -->
   <ItemGroup>
-    <EmbeddedResource Include="Driver.json" />
+    <EmbeddedResource Include="Driver.json">
+      <LogicalName>$(AssemblyName).json</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <!-- Fail fast with a clear message if the Crestron SDK isn't where we expect it. -->
@@ -113,11 +123,56 @@
   </Target>
 
   <!-- After build, run ManifestUtil to produce the .pkg file the control system loads.
-       ManifestUtil writes the .pkg alongside the built DLL. -->
+       ManifestUtil writes the .pkg alongside the built DLL.
+
+       Implementation notes:
+
+       1. ManifestUtil.exe uses Assembly.LoadFrom on every DLL in the scan directory
+          and reflects over each one. The CLR's default probing only looks in the
+          .exe's own base directory for dependencies. If ManifestUtil runs from its
+          install location with our output directory as an argument, the CLR can't
+          resolve the Crestron SDK assemblies our driver references and throws
+          FileNotFoundException mid-scan. To fix this we copy ManifestUtil.exe INTO
+          the output directory and run it from there (so the output directory IS the
+          probing base directory). This matches the pattern used by the SDK-supplied
+          VS macro ManifestUtil.vb.
+
+       2. ManifestUtil scans EVERY .dll in the output directory, including the four
+          Crestron SDK DLLs that are copy-local alongside our driver. Those SDK DLLs
+          do not contain an embedded driver manifest, and ManifestUtil's handling of
+          that case is not always clean — it can throw an unhandled exception
+          (HRESULT 0xE0434352 = -532462766) AFTER it has already successfully
+          produced our driver's .pkg. So we run the tool with IgnoreExitCode="true"
+          and instead verify success by checking that the .pkg was actually produced
+          (and is newer than the .dll). -->
   <Target Name="RunManifestUtil" AfterTargets="Build"
           Condition="Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
     <Message Importance="high" Text="ManifestUtil: generating driver package for $(AssemblyName)..." />
-    <Exec Command="&quot;$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe&quot; &quot;$(TargetDir.TrimEnd('\\'))&quot;" />
+
+    <!-- Stage ManifestUtil.exe into the output directory so CLR probing finds the
+         copy-local Crestron SDK dependencies when ManifestUtil reflects on our DLL. -->
+    <Copy SourceFiles="$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe"
+          DestinationFolder="$(TargetDir)"
+          OverwriteReadOnlyFiles="true" />
+
+    <!-- Delete any stale .pkg so we can definitively tell whether this run produced one. -->
+    <Delete Files="$(TargetDir)$(AssemblyName).pkg" />
+
+    <!-- Run the tool. IgnoreExitCode=true: ManifestUtil can throw an unhandled
+         exception after producing our .pkg while scanning the copy-local SDK DLLs.
+         We validate success by checking the .pkg instead of trusting the exit code. -->
+    <Exec Command="ManifestUtil.exe"
+          WorkingDirectory="$(TargetDir)"
+          IgnoreExitCode="true" />
+
+    <!-- Clean up the staged tool either way. -->
+    <Delete Files="$(TargetDir)ManifestUtil.exe" />
+
+    <!-- Real success check: did we get a .pkg for our driver? -->
+    <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pkg')"
+           Text="ManifestUtil.exe did not produce $(AssemblyName).pkg. Check that Driver.json is embedded correctly and that the Crestron SDK DLLs are copy-local alongside the driver assembly." />
+
+    <Message Importance="high" Text="ManifestUtil: produced $(TargetDir)$(AssemblyName).pkg" />
   </Target>
 
   <Target Name="WarnIfManifestUtilMissing" AfterTargets="Build"
