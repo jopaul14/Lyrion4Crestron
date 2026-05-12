@@ -1,0 +1,66 @@
+{
+  "SchemaVersion": "2.0",
+  "GeneralInformation": {
+    "MinSdkVersion": "25.0000.0033",
+    "DeviceType": "AvReceiver",
+    "Manufacturer": "Lyrion Community",
+    "BaseModel": "Lyrion Receiver",
+    "OtherSupportedModels": [],
+    "SupportedSeries": ["3-Series", "4-Series"],
+    "DependencyGroup": "",
+    "Developer": {
+      "Company": "Lyrion Community",
+      "Contact": "JP",
+      "Email": "JP@jponthe.net",
+      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+      "PhoneNumber": ""
+    },
+    "DriverVersion": "2.0.0.0",
+    "VersionDate": "2026-05-12 00:00:00.000",
+    "Description": "Lyrion Receiver. Per-room AV-receiver style endpoint exposing volume (0-100), mute, and power for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Optional: external amps/AVRs may be used instead."
+  },
+  "AudioInputs": [
+    {
+      "Id": "analogIn",
+      "Title": "Analog Audio Input",
+      "ConnectorType": "AnalogStereo"
+    }
+  ],
+  "SpeakerOutputs": [
+    {
+      "Id": "roomSpeakers",
+      "Title": "Room Speakers"
+    }
+  ],
+  "ConfigurationSteps": {
+    "Items": [
+      {
+        "Id": "_Mac_",
+        "UsageContext": "Generic.Prompt",
+        "Title": "Player MAC Address (aa:bb:cc:dd:ee:ff)",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "String"
+      },
+      {
+        "Id": "_VolumeStep_",
+        "UsageContext": "Generic.Prompt",
+        "Title": "Volume step size",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "Number",
+        "MinValue": 1,
+        "MaxValue": 50,
+        "DefaultValue": "2"
+      }
+    ],
+    "Steps": [
+      {
+        "StepId": "Player",
+        "Items": ["_Mac_", "_VolumeStep_"],
+        "NextStep": null
+      }
+    ],
+    "FirstStep": "Player"
+  }
+}

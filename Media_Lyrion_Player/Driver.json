@@ -1,0 +1,54 @@
+{
+  "SchemaVersion": "2.0",
+  "GeneralInformation": {
+    "MinSdkVersion": "25.0000.0033",
+    "DeviceType": "MediaPlayer",
+    "Manufacturer": "Lyrion Community",
+    "BaseModel": "Lyrion Source",
+    "OtherSupportedModels": [],
+    "SupportedSeries": ["3-Series", "4-Series"],
+    "DependencyGroup": "",
+    "Developer": {
+      "Company": "Lyrion Community",
+      "Contact": "JP",
+      "Email": "JP@jponthe.net",
+      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+      "PhoneNumber": ""
+    },
+    "DriverVersion": "2.0.0.0",
+    "VersionDate": "2026-05-12 00:00:00.000",
+    "Description": "Lyrion Source. Per-room Extension Media Player for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service for all transport, metadata, shuffle, repeat, and power. Volume is handled by the companion Lyrion Receiver driver."
+  },
+  "AudioOutputs": [
+    {
+      "Id": "digitalOut",
+      "Title": "Digital Audio Output",
+      "ConnectorType": "DigitalCoax"
+    },
+    {
+      "Id": "analogOut",
+      "Title": "Analog Audio Output",
+      "ConnectorType": "AnalogStereo"
+    }
+  ],
+  "ConfigurationSteps": {
+    "Items": [
+      {
+        "Id": "_Mac_",
+        "UsageContext": "Generic.Prompt",
+        "Title": "Player MAC Address (aa:bb:cc:dd:ee:ff)",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "String"
+      }
+    ],
+    "Steps": [
+      {
+        "StepId": "Player",
+        "Items": ["_Mac_"],
+        "NextStep": null
+      }
+    ],
+    "FirstStep": "Player"
+  }
+}

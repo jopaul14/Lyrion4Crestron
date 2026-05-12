@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Volume_Lyrion_Player - Driver 3 of the three-driver Lyrion architecture.
+  Per-room AV receiver-style endpoint exposing volume, mute, and power for a
+  single Lyrion player. Bound by MAC address; consumes the gateway service.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Volume</RootNamespace>
+    <AssemblyName>Volume_Lyrion_Player</AssemblyName>
+    <TargetFramework>net472</TargetFramework>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+
+    <CrestronSdkPath Condition=" '$(CrestronSdkPath)' == '' ">C:\Lyrion4Crestron\Crestron_SDK</CrestronSdkPath>
+
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>false</Deterministic>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+
+    <LangVersion>7.3</LangVersion>
+
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>portable</DebugType>
+    <Optimize>false</Optimize>
+    <DefineConstants>$(DefineConstants);DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugType>portable</DebugType>
+    <Optimize>true</Optimize>
+    <DefineConstants>$(DefineConstants);TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="mscorlib" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Crestron.DeviceDrivers.SDK">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.SDK.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Crestron.DeviceDrivers.EntityModel">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.EntityModel.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Crestron.DeviceDrivers.API">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.API.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Crestron.DeviceDrivers.Core">
+      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.Core.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Common\Service\*.cs">
+      <Link>Common\Service\%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Driver.json">
+      <LogicalName>$(AssemblyName).json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <Target Name="ValidateCrestronSdk" BeforeTargets="PrepareForBuild">
+    <Error
+      Condition="!Exists('$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.SDK.dll')"
+      Text="Crestron SDK not found at '$(CrestronSdkPath)\Libraries'. Install the Crestron Certified Drivers SDK or set the CrestronSdkPath environment variable (or pass /p:CrestronSdkPath=... on the command line)." />
+  </Target>
+
+  <Target Name="RunManifestUtil" AfterTargets="Build"
+          Condition="Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
+    <Message Importance="high" Text="ManifestUtil: generating driver package for $(AssemblyName)..." />
+
+    <Copy SourceFiles="$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe"
+          DestinationFolder="$(TargetDir)"
+          OverwriteReadOnlyFiles="true" />
+
+    <Delete Files="$(TargetDir)$(AssemblyName).pkg" />
+
+    <Exec Command="ManifestUtil.exe"
+          WorkingDirectory="$(TargetDir)"
+          IgnoreExitCode="true" />
+
+    <Delete Files="$(TargetDir)ManifestUtil.exe" />
+
+    <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pkg')"
+           Text="ManifestUtil.exe did not produce $(AssemblyName).pkg." />
+
+    <Message Importance="high" Text="ManifestUtil: produced $(TargetDir)$(AssemblyName).pkg" />
+  </Target>
+
+  <Target Name="WarnIfManifestUtilMissing" AfterTargets="Build"
+          Condition="!Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
+    <Warning Text="ManifestUtil.exe not found at '$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe'." />
+  </Target>
+
+</Project>

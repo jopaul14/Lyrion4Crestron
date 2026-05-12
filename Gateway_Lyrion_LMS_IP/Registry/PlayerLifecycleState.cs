@@ -1,0 +1,16 @@
+// ---------------------------------------------------------------------------
+//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 3)
+//  Licensed under the MIT License. See LICENSE at the repository root.
+// ---------------------------------------------------------------------------
+
+namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
+{
+    /// <summary>Lifecycle states per CLAUDE.md "DRIVER 1 INTERNAL PLAYER REGISTRY".</summary>
+    internal enum PlayerLifecycleState
+    {
+        Unknown = 0,
+        Offline = 1,
+        Online = 2,
+        InvalidSession = 3
+    }
+}
