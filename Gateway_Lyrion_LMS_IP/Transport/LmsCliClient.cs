@@ -1,0 +1,371 @@
+// ---------------------------------------------------------------------------
+//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 3)
+//  Licensed under the MIT License. See LICENSE at the repository root.
+// ---------------------------------------------------------------------------
+
+using System;
+using System.IO;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
+
+namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
+{
+    /// <summary>Connection state reported by <see cref="LmsCliClient"/>.</summary>
+    public enum LmsConnectionState
+    {
+        Disconnected,
+        Connecting,
+        Connected,
+        Faulted
+    }
+
+    /// <summary>
+    /// Persistent async TCP client for the LMS CLI (Telnet) protocol.
+    /// Reconnect schedule per CLAUDE.md: 2s → 5s → 10s → 30s → 60s (cap).
+    /// </summary>
+    /// <remarks>
+    /// All raw transitions are forwarded to the caller via
+    /// <see cref="ConnectionStateChanged"/>. Higher-level smoothing
+    /// (oscillation suppression, minimum stable time) is applied above this
+    /// layer in <see cref="Lifecycle.ServerConnectivityFsm"/>.
+    /// <para/>
+    /// Memory: the line-assembly buffer is capped at <see cref="MaxLineBytes"/>;
+    /// oversize lines are dropped without growing the buffer further.
+    /// </remarks>
+    internal sealed class LmsCliClient : IDisposable
+    {
+        private const int MaxLineBytes = 64 * 1024;
+
+        // CLAUDE.md mandates this exact sequence; values are in seconds.
+        private static readonly int[] BackoffSecondsSchedule = new[] { 2, 5, 10, 30, 60 };
+
+        private readonly string _host;
+        private readonly int _port;
+        private readonly string _username;
+        private readonly string _password;
+        private readonly Action<string> _log;
+
+        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
+
+        private readonly object _stateLock = new object();
+        private LmsConnectionState _state = LmsConnectionState.Disconnected;
+
+        private CancellationTokenSource _cts;
+        private Task _workerTask;
+
+        private Stream _stream;
+        private TcpClient _tcpClient;
+
+        public LmsCliClient(string host, int port, string username, string password, Action<string> log)
+        {
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                throw new ArgumentException("Host is required.", nameof(host));
+            }
+
+            if (port <= 0 || port > 65535)
+            {
+                throw new ArgumentOutOfRangeException(nameof(port));
+            }
+
+            _host = host;
+            _port = port;
+            _username = username ?? string.Empty;
+            _password = password ?? string.Empty;
+            _log = log ?? (_ => { });
+        }
+
+        public event Action<LmsMessage> MessageReceived;
+        public event Action<LmsConnectionState> ConnectionStateChanged;
+
+        /// <summary>
+        /// Raised when LMS rejects our login. Surfaced separately so the FSM
+        /// can log it as an error per CLAUDE.md "ERROR LOGGING ONLY".
+        /// </summary>
+        public event Action<string> AuthenticationFailed;
+
+        public LmsConnectionState State
+        {
+            get { lock (_stateLock) { return _state; } }
+        }
+
+        public Task StartAsync(CancellationToken externalToken)
+        {
+            if (_workerTask != null && !_workerTask.IsCompleted)
+            {
+                return Task.CompletedTask;
+            }
+
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+            _workerTask = Task.Run(() => RunAsync(_cts.Token));
+            return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(TimeSpan timeout)
+        {
+            var cts = _cts;
+            if (cts != null)
+            {
+                try { cts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            CloseSocket();
+
+            var worker = _workerTask;
+            if (worker != null)
+            {
+                var completed = await Task.WhenAny(worker, Task.Delay(timeout)).ConfigureAwait(false);
+                if (completed != worker)
+                {
+                    _log("LmsCliClient worker did not exit within timeout; abandoning.");
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            try { StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
+            catch { }
+
+            _cts?.Dispose();
+            _writeLock.Dispose();
+        }
+
+        public async Task<bool> SendLineAsync(string commandLine, CancellationToken ct)
+        {
+            if (commandLine == null) return false;
+
+            var stream = _stream;
+            if (stream == null || _state != LmsConnectionState.Connected)
+            {
+                return false;
+            }
+
+            var bytes = Encoding.UTF8.GetBytes(commandLine + "\r\n");
+
+            await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await stream.WriteAsync(bytes, 0, bytes.Length, ct).ConfigureAwait(false);
+                await stream.FlushAsync(ct).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                CloseSocket();
+                return false;
+            }
+            finally
+            {
+                try { _writeLock.Release(); }
+                catch (ObjectDisposedException) { }
+            }
+        }
+
+        private async Task RunAsync(CancellationToken ct)
+        {
+            var attempt = 0;
+
+            while (!ct.IsCancellationRequested)
+            {
+                SetState(LmsConnectionState.Connecting);
+
+                TcpClient tcp = null;
+                NetworkStream stream = null;
+
+                try
+                {
+                    tcp = new TcpClient { NoDelay = true };
+                    await ConnectWithCancellationAsync(tcp, _host, _port, ct).ConfigureAwait(false);
+                    stream = tcp.GetStream();
+                    _tcpClient = tcp;
+                    _stream = stream;
+
+                    SetState(LmsConnectionState.Connected);
+                    attempt = 0;
+
+                    if (!string.IsNullOrEmpty(_username))
+                    {
+                        await SendLineAsync(LmsCliCommands.Login(_username, _password), ct).ConfigureAwait(false);
+                    }
+
+                    await SendLineAsync(LmsCliCommands.ListenAll(), ct).ConfigureAwait(false);
+                    await SendLineAsync(LmsCliCommands.QueryServerVersion(), ct).ConfigureAwait(false);
+
+                    await ReceiveLoopAsync(stream, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _log("LmsCliClient: connect/receive error: " + ex.Message);
+                }
+                finally
+                {
+                    TeardownCurrentConnection(tcp, stream);
+                }
+
+                if (ct.IsCancellationRequested) break;
+
+                SetState(LmsConnectionState.Faulted);
+
+                var seconds = BackoffSecondsSchedule[Math.Min(attempt, BackoffSecondsSchedule.Length - 1)];
+                attempt++;
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            SetState(LmsConnectionState.Disconnected);
+        }
+
+        private static async Task ConnectWithCancellationAsync(TcpClient client, string host, int port, CancellationToken ct)
+        {
+            var connectTask = client.ConnectAsync(host, port);
+            using (ct.Register(() =>
+            {
+                try { client.Close(); }
+                catch { }
+            }))
+            {
+                await connectTask.ConfigureAwait(false);
+            }
+
+            ct.ThrowIfCancellationRequested();
+        }
+
+        private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
+        {
+            var readBuffer = new byte[8192];
+            var lineBuffer = new MemoryStream(1024);
+
+            while (!ct.IsCancellationRequested)
+            {
+                int bytesRead;
+                try
+                {
+                    bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
+                }
+                catch (IOException)
+                {
+                    return;
+                }
+
+                if (bytesRead <= 0) return;
+
+                for (var i = 0; i < bytesRead; i++)
+                {
+                    var b = readBuffer[i];
+                    if (b == (byte)'\n')
+                    {
+                        EmitLine(lineBuffer);
+                        lineBuffer.SetLength(0);
+                    }
+                    else if (b != (byte)'\r')
+                    {
+                        if (lineBuffer.Length >= MaxLineBytes)
+                        {
+                            lineBuffer.SetLength(0);
+                            continue;
+                        }
+                        lineBuffer.WriteByte(b);
+                    }
+                }
+            }
+        }
+
+        private void EmitLine(MemoryStream lineBuffer)
+        {
+            if (lineBuffer.Length == 0) return;
+
+            string line;
+            try
+            {
+                line = Encoding.UTF8.GetString(lineBuffer.GetBuffer(), 0, (int)lineBuffer.Length);
+            }
+            catch
+            {
+                return;
+            }
+
+            LmsMessage message;
+            try
+            {
+                message = LmsCliParser.Parse(line);
+            }
+            catch
+            {
+                return;
+            }
+
+            // LMS returns a single "login" line on auth failure too — but the
+            // canonical signal is the connection drop that follows. We surface
+            // any explicit error line through AuthenticationFailed so the FSM
+            // can log it once and avoid retry-loop chatter.
+            if (message.Kind == LmsMessageKind.GlobalRaw
+                && message.Tokens != null
+                && message.Tokens.Length >= 2
+                && string.Equals(message.Tokens[0], "login", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(message.Tokens[1], "failed", StringComparison.OrdinalIgnoreCase))
+            {
+                try { AuthenticationFailed?.Invoke("LMS rejected credentials."); }
+                catch { }
+                return;
+            }
+
+            try { MessageReceived?.Invoke(message); }
+            catch (Exception ex) { _log("LmsCliClient: message handler threw: " + ex); }
+        }
+
+        private void SetState(LmsConnectionState newState)
+        {
+            bool changed;
+            lock (_stateLock)
+            {
+                changed = _state != newState;
+                if (changed) _state = newState;
+            }
+
+            if (!changed) return;
+
+            try { ConnectionStateChanged?.Invoke(newState); }
+            catch (Exception ex) { _log("LmsCliClient: state change handler threw: " + ex); }
+        }
+
+        private void TeardownCurrentConnection(TcpClient tcp, Stream stream)
+        {
+            _stream = null;
+            _tcpClient = null;
+
+            try { stream?.Dispose(); } catch { }
+            try { tcp?.Close(); } catch { }
+        }
+
+        private void CloseSocket()
+        {
+            var tcp = _tcpClient;
+            _tcpClient = null;
+            var stream = _stream;
+            _stream = null;
+
+            try { stream?.Dispose(); } catch { }
+            try { tcp?.Close(); } catch { }
+        }
+    }
+}

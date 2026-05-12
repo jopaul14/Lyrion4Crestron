@@ -1,0 +1,85 @@
+{
+  "SchemaVersion": "2.0",
+  "GeneralInformation": {
+    "MinSdkVersion": "25.0000.0033",
+    "DeviceType": "Platform",
+    "Manufacturer": "Lyrion Community",
+    "BaseModel": "Lyrion Server",
+    "OtherSupportedModels": [],
+    "SupportedSeries": ["3-Series", "4-Series"],
+    "DependencyGroup": "",
+    "Developer": {
+      "Company": "Lyrion Community",
+      "Contact": "JP",
+      "Email": "JP@jponthe.net",
+      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+      "PhoneNumber": ""
+    },
+    "DriverVersion": "2.0.0.0",
+    "VersionDate": "2026-05-12 00:00:00.000",
+    "Description": "Lyrion Server gateway. Maintains the single CLI + JSON-RPC connection to LMS and publishes a service consumed by the Lyrion Source and Lyrion Receiver drivers. Install one instance per home; no room assignment."
+  },
+  "ConfigurationSteps": {
+    "Items": [
+      {
+        "Id": "_Host_",
+        "UsageContext": "Network.Address",
+        "Title": "LMS Hostname or IP Address",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "String"
+      },
+      {
+        "Id": "_HttpPort_",
+        "UsageContext": "Network.Port",
+        "Title": "HTTP Port (JSON-RPC)",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "Number",
+        "MinValue": 1,
+        "MaxValue": 65535,
+        "DefaultValue": "9000"
+      },
+      {
+        "Id": "_CliPort_",
+        "UsageContext": "Network.Port",
+        "Title": "CLI Port (Telnet)",
+        "Required": true,
+        "Persistent": true,
+        "ValueType": "Number",
+        "MinValue": 1,
+        "MaxValue": 65535,
+        "DefaultValue": "9090"
+      },
+      {
+        "Id": "_Username_",
+        "UsageContext": "Credentials.Username",
+        "Title": "Username (optional)",
+        "Required": false,
+        "Persistent": true,
+        "ValueType": "String"
+      },
+      {
+        "Id": "_Password_",
+        "UsageContext": "Credentials.Password",
+        "Title": "Password (optional)",
+        "Required": false,
+        "Persistent": true,
+        "ValueType": "String"
+      }
+    ],
+    "Steps": [
+      {
+        "StepId": "Server",
+        "Items": ["_Host_", "_HttpPort_", "_CliPort_"],
+        "NextStep": "Authentication"
+      },
+      {
+        "StepId": "Authentication",
+        "Items": ["_Username_", "_Password_"],
+        "NextStep": null
+      }
+    ],
+    "FirstStep": "Server"
+  }
+}
