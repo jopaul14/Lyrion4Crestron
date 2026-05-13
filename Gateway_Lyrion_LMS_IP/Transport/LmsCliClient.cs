@@ -184,6 +184,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 try
                 {
                     tcp = new TcpClient { NoDelay = true };
+                    EnableTcpKeepAlive(tcp);
                     await ConnectWithCancellationAsync(tcp, _host, _port, ct).ConfigureAwait(false);
                     stream = tcp.GetStream();
                     _tcpClient = tcp;
@@ -235,6 +236,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             SetState(LmsConnectionState.Disconnected);
         }
 
+        /// <summary>
+        /// Enable TCP keepalive so half-open connections (LMS host crash
+        /// without a TCP RST) are detected within a bounded window instead of
+        /// stalling the receive loop for the OS default (often 2h+). The
+        /// per-option IOControl is best-effort: not every Crestron runtime
+        /// exposes <c>KeepAliveValues</c>; falling back to the bare
+        /// <c>SO_KEEPALIVE</c> flag is still strictly better than nothing.
+        /// </summary>
+        private static void EnableTcpKeepAlive(TcpClient client)
+        {
+            try
+            {
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            }
+            catch { /* unsupported on some constrained runtimes */ }
+
+            try
+            {
+                // Windows / Mono: 30s idle, 10s interval. 12-byte payload:
+                //   u32 onoff (1) | u32 time-ms (30000) | u32 interval-ms (10000)
+                var keepAlive = new byte[12];
+                keepAlive[0] = 1;
+                BitConverter.GetBytes((uint)30000).CopyTo(keepAlive, 4);
+                BitConverter.GetBytes((uint)10000).CopyTo(keepAlive, 8);
+                client.Client.IOControl(IOControlCode.KeepAliveValues, keepAlive, null);
+            }
+            catch { /* not all platforms expose KeepAliveValues; SO_KEEPALIVE alone still helps */ }
+        }
+
         private static async Task ConnectWithCancellationAsync(TcpClient client, string host, int port, CancellationToken ct)
         {
             var connectTask = client.ConnectAsync(host, port);
@@ -253,38 +283,39 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
         {
             var readBuffer = new byte[8192];
-            var lineBuffer = new MemoryStream(1024);
-
-            while (!ct.IsCancellationRequested)
+            using (var lineBuffer = new MemoryStream(1024))
             {
-                int bytesRead;
-                try
+                while (!ct.IsCancellationRequested)
                 {
-                    bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
-                }
-                catch (IOException)
-                {
-                    return;
-                }
-
-                if (bytesRead <= 0) return;
-
-                for (var i = 0; i < bytesRead; i++)
-                {
-                    var b = readBuffer[i];
-                    if (b == (byte)'\n')
+                    int bytesRead;
+                    try
                     {
-                        EmitLine(lineBuffer);
-                        lineBuffer.SetLength(0);
+                        bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
                     }
-                    else if (b != (byte)'\r')
+                    catch (IOException)
                     {
-                        if (lineBuffer.Length >= MaxLineBytes)
+                        return;
+                    }
+
+                    if (bytesRead <= 0) return;
+
+                    for (var i = 0; i < bytesRead; i++)
+                    {
+                        var b = readBuffer[i];
+                        if (b == (byte)'\n')
                         {
+                            EmitLine(lineBuffer);
                             lineBuffer.SetLength(0);
-                            continue;
                         }
-                        lineBuffer.WriteByte(b);
+                        else if (b != (byte)'\r')
+                        {
+                            if (lineBuffer.Length >= MaxLineBytes)
+                            {
+                                lineBuffer.SetLength(0);
+                                continue;
+                            }
+                            lineBuffer.WriteByte(b);
+                        }
                     }
                 }
             }

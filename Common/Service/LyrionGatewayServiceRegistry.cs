@@ -93,5 +93,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             try { onAvailable(now); }
             catch { /* never propagate consumer faults */ }
         }
+
+        /// <summary>
+        /// Removes a pending <see cref="Subscribe"/> callback if it has not yet
+        /// fired. Safe to call after the callback has fired (no-op). Consumers
+        /// must call this from Dispose() to prevent the registry from holding
+        /// references to disposed drivers if the gateway has not yet registered.
+        /// </summary>
+        public static void Unsubscribe(Action<ILyrionGatewayService> onAvailable)
+        {
+            if (onAvailable == null) return;
+            lock (Gate)
+            {
+                Pending.Remove(onAvailable);
+            }
+        }
     }
 }

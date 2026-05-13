@@ -43,8 +43,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private LmsCliClient _cli;
         private LmsJsonRpcClient _rpc;
 
+        // CLI event delegates stored as fields so they can be unsubscribed
+        // cleanly during transport rebuild. Anonymous lambdas would leak the
+        // FSM/log references onto the old client until it is GC'd.
+        private Action<LmsConnectionState> _cliStateHandler;
+        private Action<string> _cliAuthHandler;
+
         private CancellationTokenSource _lifetime = new CancellationTokenSource();
         private Timer _freezePump;
+        private Timer _reconcileTimer;
 
         private string _host;
         private int _httpPort = 9000;
@@ -170,9 +177,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 _lifetime = lifetime;
 
                 var cli = new LmsCliClient(_host, _cliPort, _username, _password, _log);
+                _cliStateHandler = s => _fsm.OnRawTransition(s);
+                _cliAuthHandler = msg => _log("Gateway ERROR auth: " + msg);
+
                 cli.MessageReceived += OnCliMessage;
-                cli.ConnectionStateChanged += s => _fsm.OnRawTransition(s);
-                cli.AuthenticationFailed += msg => _log("Gateway ERROR auth: " + msg);
+                cli.ConnectionStateChanged += _cliStateHandler;
+                cli.AuthenticationFailed += _cliAuthHandler;
 
                 var rpc = new LmsJsonRpcClient(_host, _httpPort, _username, _password, TimeSpan.FromSeconds(15), _log);
 
@@ -193,14 +203,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             var oldLifetime = _lifetime;
             var oldCli = _cli;
             var oldRpc = _rpc;
+            var oldStateHandler = _cliStateHandler;
+            var oldAuthHandler = _cliAuthHandler;
 
-            _lifetime = new CancellationTokenSource();
+            // Only allocate a replacement lifetime if we are still live; on
+            // final dispose the caller drops the field and we avoid leaking
+            // an undisposed CTS.
+            _lifetime = _disposed ? null : new CancellationTokenSource();
             _cli = null;
             _rpc = null;
+            _cliStateHandler = null;
+            _cliAuthHandler = null;
 
             if (oldCli != null)
             {
-                oldCli.MessageReceived -= OnCliMessage;
+                try { oldCli.MessageReceived -= OnCliMessage; } catch { }
+                if (oldStateHandler != null)
+                {
+                    try { oldCli.ConnectionStateChanged -= oldStateHandler; } catch { }
+                }
+                if (oldAuthHandler != null)
+                {
+                    try { oldCli.AuthenticationFailed -= oldAuthHandler; } catch { }
+                }
                 try
                 {
                     _ = oldCli.StopAsync(TimeSpan.FromSeconds(2)).ContinueWith(
@@ -225,9 +250,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void EnsureFreezePumpRunning()
         {
-            if (_freezePump != null) return;
-            _freezePump = new Timer(_ => SweepFrozenMetadata(), null,
-                TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            lock (_gate)
+            {
+                if (_disposed) return;
+                if (_freezePump != null) return;
+                _freezePump = new Timer(_ => SweepFrozenMetadata(), null,
+                    TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            }
         }
 
         private void SweepFrozenMetadata()
@@ -368,7 +397,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac));
             }
 
-            _registry.RepublishAll(macs);
+            // Defer republish until status responses have had time to arrive.
+            // Republishing immediately would surface pre-disconnect state to
+            // Driver 2/3 (CLAUDE.md "MUST NOT trust cached or incremental
+            // state"). 2 seconds is long enough for the CLI round trip but
+            // short enough that any UI flicker is bounded.
+            ScheduleReconcileRepublish(macs);
+        }
+
+        private void ScheduleReconcileRepublish(IReadOnlyList<string> macs)
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                try { _reconcileTimer?.Dispose(); } catch { }
+                _reconcileTimer = new Timer(_ =>
+                {
+                    try { _registry.RepublishAll(macs); }
+                    catch { }
+                }, null, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+            }
         }
 
         private void OnPlayerBound(string mac)
@@ -388,7 +436,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             var cli = _cli;
             if (cli == null) return false;
-            _ = cli.SendLineAsync(line, _lifetime?.Token ?? CancellationToken.None);
+            var token = _lifetime?.Token ?? CancellationToken.None;
+            // Observe the task so OperationCanceledException during transport
+            // teardown does not become an unobserved task exception.
+            cli.SendLineAsync(line, token).ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
             return true;
         }
 
@@ -396,7 +451,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             var cli = _cli;
             if (cli == null) return Task.FromResult(false);
-            return cli.SendLineAsync(line, _lifetime?.Token ?? CancellationToken.None);
+            var token = _lifetime?.Token ?? CancellationToken.None;
+            var send = cli.SendLineAsync(line, token);
+            send.ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+            return send;
         }
 
         // ===== Diagnostic state =====
@@ -429,9 +491,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             try { _freezePump?.Dispose(); } catch { }
             _freezePump = null;
 
+            Timer reconcile;
+            lock (_gate)
+            {
+                reconcile = _reconcileTimer;
+                _reconcileTimer = null;
+            }
+            try { reconcile?.Dispose(); } catch { }
+
             try { _fsm.Dispose(); } catch { }
             try { TeardownTransport(); } catch { }
 
+            // TeardownTransport sets _lifetime = null when _disposed is true,
+            // but the original lifetime was disposed inside the teardown
+            // (cancelled and then disposed off-thread). Nothing further to
+            // dispose here; the field is null.
             base.Dispose();
         }
     }

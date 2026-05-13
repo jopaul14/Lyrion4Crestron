@@ -116,18 +116,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
 
         /// <summary>
         /// Reflects the smoothed server state from the FSM. When the server
-        /// transitions to false, all players become unavailable. We do NOT
-        /// raise individual <see cref="AvailabilityChanged"/> events here —
-        /// per CLAUDE.md "Do NOT log per-player availability caused by server
-        /// disconnect". The gateway service raises a single batched event
-        /// instead.
+        /// transitions, every record's availability is recomputed and
+        /// <see cref="AvailabilityChanged"/> is raised for each affected MAC.
+        /// CLAUDE.md "Do NOT log per-player availability caused by server
+        /// disconnect" refers to logging only — the data events must still
+        /// fire so consuming drivers can update their Available property.
         /// </summary>
         public IReadOnlyList<string> SetServerConnected(bool connected)
         {
-            var affected = new List<string>();
+            var affected = new List<(string mac, bool nowAvail)>();
             lock (_gate)
             {
-                if (_serverConnected == connected) return affected;
+                if (_serverConnected == connected) return Array.Empty<string>();
                 _serverConnected = connected;
 
                 foreach (var kvp in _records)
@@ -137,7 +137,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     if (nowAvail != rec.IsAvailable)
                     {
                         rec.IsAvailable = nowAvail;
-                        affected.Add(rec.MacAddress);
+                        affected.Add((rec.MacAddress, nowAvail));
 
                         if (!nowAvail)
                         {
@@ -151,7 +151,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 }
             }
 
-            return affected;
+            var macs = new List<string>(affected.Count);
+            foreach (var item in affected)
+            {
+                macs.Add(item.mac);
+                try { AvailabilityChanged?.Invoke(item.mac, item.nowAvail); } catch { }
+            }
+            return macs;
         }
 
         // ===== Per-player mutators =====
@@ -431,13 +437,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         /// 30s+, clear it and republish empty metadata. Called once per
         /// second by the gateway driver's pump.
         /// </summary>
+        /// <remarks>
+        /// Short-circuits when no record is currently frozen so the steady-
+        /// state cost is one dictionary scan per second with zero
+        /// allocations. The allocation path only runs when a player is
+        /// actually offline.
+        /// </remarks>
         public IReadOnlyList<(string mac, LyrionMetadata payload)> SweepFrozenMetadata(TimeSpan freezeTtl)
         {
-            var toPublish = new List<(string, LyrionMetadata)>();
             var now = DateTime.UtcNow;
+            List<(string, LyrionMetadata)> toPublish = null;
 
             lock (_gate)
             {
+                bool anyFrozen = false;
+                foreach (var kvp in _records)
+                {
+                    if (kvp.Value.IsFrozen) { anyFrozen = true; break; }
+                }
+                if (!anyFrozen) return Array.Empty<(string, LyrionMetadata)>();
+
                 foreach (var kvp in _records)
                 {
                     var rec = kvp.Value;
@@ -451,10 +470,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                         rec.ArtworkUrl = string.Empty;
                         rec.DurationSeconds = 0;
                         rec.PositionSeconds = 0;
+                        if (toPublish == null) toPublish = new List<(string, LyrionMetadata)>();
                         toPublish.Add((rec.MacAddress, SnapshotMetadata(rec)));
                     }
                 }
             }
+
+            if (toPublish == null) return Array.Empty<(string, LyrionMetadata)>();
 
             foreach (var item in toPublish)
             {
@@ -478,23 +500,34 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 var canon = MacAddress.Normalize(raw);
                 if (canon == null) continue;
 
-                PlayerRecord rec;
+                bool avail, power, muted, shuffle, repeat;
+                LyrionPlaybackState pbs;
+                int vol;
                 LyrionMetadata metaSnap;
+                IReadOnlyList<LyrionPreset> presets;
                 lock (_gate)
                 {
-                    if (!_records.TryGetValue(canon, out rec)) continue;
+                    if (!_records.TryGetValue(canon, out var rec)) continue;
+                    avail = rec.IsAvailable;
+                    power = rec.IsPoweredOn;
+                    pbs = rec.PlaybackState;
+                    vol = rec.Volume;
+                    muted = rec.Muted;
+                    shuffle = rec.ShuffleEnabled;
+                    repeat = rec.RepeatEnabled;
+                    presets = rec.Presets;
                     metaSnap = SnapshotMetadata(rec);
                 }
 
-                try { AvailabilityChanged?.Invoke(canon, rec.IsAvailable); } catch { }
-                try { PowerStateChanged?.Invoke(canon, rec.IsPoweredOn); } catch { }
-                try { PlaybackStateChanged?.Invoke(canon, rec.PlaybackState); } catch { }
-                try { VolumeChanged?.Invoke(canon, rec.Volume); } catch { }
-                try { MuteChanged?.Invoke(canon, rec.Muted); } catch { }
-                try { ShuffleChanged?.Invoke(canon, rec.ShuffleEnabled); } catch { }
-                try { RepeatChanged?.Invoke(canon, rec.RepeatEnabled); } catch { }
+                try { AvailabilityChanged?.Invoke(canon, avail); } catch { }
+                try { PowerStateChanged?.Invoke(canon, power); } catch { }
+                try { PlaybackStateChanged?.Invoke(canon, pbs); } catch { }
+                try { VolumeChanged?.Invoke(canon, vol); } catch { }
+                try { MuteChanged?.Invoke(canon, muted); } catch { }
+                try { ShuffleChanged?.Invoke(canon, shuffle); } catch { }
+                try { RepeatChanged?.Invoke(canon, repeat); } catch { }
                 try { MetadataUpdated?.Invoke(canon, metaSnap); } catch { }
-                try { PresetsUpdated?.Invoke(canon, rec.Presets); } catch { }
+                try { PresetsUpdated?.Invoke(canon, presets); } catch { }
             }
         }
 

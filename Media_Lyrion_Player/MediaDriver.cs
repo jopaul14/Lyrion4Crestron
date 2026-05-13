@@ -129,7 +129,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            lock (_gate) { _gateway = service; }
+            // Guard against late delivery to a disposed driver: if the
+            // gateway registers after we have already disposed, the
+            // subscription callback would otherwise wire up handlers that
+            // are never cleaned up and pin this driver alive.
+            if (_disposed) return;
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _gateway = service;
+            }
 
             service.AvailabilityChanged += OnAvailabilityChanged;
             service.PowerStateChanged += OnPowerStateChanged;
@@ -378,6 +387,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         {
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
+
+            // Remove our pending-registration callback so the registry does
+            // not hold a reference to a disposed driver if the gateway has
+            // not yet registered.
+            try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
 
             ILyrionGatewayService svc;
             string mac;
