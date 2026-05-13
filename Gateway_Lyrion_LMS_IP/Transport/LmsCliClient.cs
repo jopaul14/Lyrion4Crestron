@@ -66,8 +66,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         private CancellationTokenSource _cts;
         private Task _workerTask;
 
-        private Stream _stream;
-        private TcpClient _tcpClient;
+        // volatile so CloseSocket() can read these fields outside any lock
+        // without seeing stale values on weakly-ordered hardware (ARM). The
+        // writes in RunAsync are inside the try block before SetState; the
+        // volatile semantics on these fields and on _state together provide
+        // the publication barrier without requiring a lock.
+        private volatile Stream _stream;
+        private volatile TcpClient _tcpClient;
 
         public LmsCliClient(string host, int port, string username, string password, Action<string> log)
         {

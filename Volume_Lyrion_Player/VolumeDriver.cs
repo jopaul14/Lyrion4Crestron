@@ -124,21 +124,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            // Guard against late delivery to a disposed driver: if the
-            // gateway registers after we have already disposed, the
-            // subscription callback would otherwise wire up handlers that
-            // are never cleaned up and pin this driver alive.
+            // Guard against late delivery to a disposed driver. Subscribe
+            // inside the lock so a concurrent Dispose() cannot complete
+            // between the _disposed check and the event wiring — that race
+            // would otherwise leave handlers attached on a disposed driver
+            // and pin it alive through the service's delegate chain.
             if (_disposed) return;
             lock (_gate)
             {
                 if (_disposed) return;
                 _gateway = service;
-            }
 
-            service.AvailabilityChanged += OnAvailabilityChanged;
-            service.PowerStateChanged += OnPowerStateChanged;
-            service.VolumeChanged += OnVolumeChanged;
-            service.MuteChanged += OnMuteChanged;
+                service.AvailabilityChanged += OnAvailabilityChanged;
+                service.PowerStateChanged += OnPowerStateChanged;
+                service.VolumeChanged += OnVolumeChanged;
+                service.MuteChanged += OnMuteChanged;
+            }
 
             TryBindToGateway();
         }

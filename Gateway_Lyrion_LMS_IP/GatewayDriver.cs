@@ -209,6 +209,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             _cliStateHandler = null;
             _cliAuthHandler = null;
 
+            // Cancel oldLifetime first so the linked token inside oldCli is
+            // signaled before we start tearing down.
+            if (oldLifetime != null)
+            {
+                try { oldLifetime.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
             if (oldCli != null)
             {
                 try { oldCli.MessageReceived -= OnCliMessage; } catch { }
@@ -220,20 +228,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 {
                     try { oldCli.AuthenticationFailed -= oldAuthHandler; } catch { }
                 }
+
+                // Chain the lifetime disposal AFTER oldCli.Dispose() runs.
+                // By that point oldCli has stopped its worker and disposed
+                // its own (linked) CTS, so no thread holds a token derived
+                // from oldLifetime — disposing it cannot race with RunAsync.
+                var lifetimeToDispose = oldLifetime;
                 try
                 {
                     _ = oldCli.StopAsync(TimeSpan.FromSeconds(2)).ContinueWith(
-                        _ => { try { oldCli.Dispose(); } catch { } },
+                        _ =>
+                        {
+                            try { oldCli.Dispose(); } catch { }
+                            try { lifetimeToDispose?.Dispose(); } catch { }
+                        },
                         TaskScheduler.Default);
                 }
                 catch { }
             }
-
-            if (oldLifetime != null)
+            else if (oldLifetime != null)
             {
-                try { oldLifetime.Cancel(); }
-                catch (ObjectDisposedException) { }
-                _ = Task.Run(() => { try { oldLifetime.Dispose(); } catch { } });
+                // No CLI client to wait on — safe to dispose immediately.
+                try { oldLifetime.Dispose(); } catch { }
             }
 
             _serverConnected = false;
@@ -420,6 +436,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 try { _reconcileTimer?.Dispose(); } catch { }
                 _reconcileTimer = new Timer(_ =>
                 {
+                    if (_disposed) return;
                     try { _registry.RepublishAll(macs); }
                     catch { }
                 }, null, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
