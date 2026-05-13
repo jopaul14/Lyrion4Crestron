@@ -31,37 +31,37 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         // ===== Public entity properties =====
 
-        [EntityProperty(Id = "transport:playbackState")]
+        [EntityProperty(Id = "playbackState")]
         public LyrionPlaybackState PlaybackState { get; private set; } = LyrionPlaybackState.Stopped;
 
-        [EntityProperty(Id = "lyrion:available")]
+        [EntityProperty(Id = "available")]
         public bool Available { get; private set; }
 
-        [EntityProperty(Id = "power:on")]
+        [EntityProperty(Id = "powerOn")]
         public bool PowerOn { get; private set; }
 
-        [EntityProperty(Id = "lyrion:shuffleEnabled")]
+        [EntityProperty(Id = "shuffleEnabled")]
         public bool ShuffleEnabled { get; private set; }
 
-        [EntityProperty(Id = "lyrion:repeatEnabled")]
+        [EntityProperty(Id = "repeatEnabled")]
         public bool RepeatEnabled { get; private set; }
 
-        [EntityProperty(Id = "media:title")]
+        [EntityProperty(Id = "title")]
         public string Title { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:artist")]
+        [EntityProperty(Id = "artist")]
         public string Artist { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:album")]
+        [EntityProperty(Id = "album")]
         public string Album { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:artworkUrl")]
+        [EntityProperty(Id = "artworkUrl")]
         public string ArtworkUrl { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:durationSec")]
+        [EntityProperty(Id = "durationSec")]
         public int DurationSec { get; private set; }
 
-        [EntityProperty(Id = "media:elapsedSec")]
+        [EntityProperty(Id = "elapsedSec")]
         public int ElapsedSec { get; private set; }
 
         public MediaDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
@@ -253,37 +253,37 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         // ===== Commands =====
 
-        [EntityCommand(Id = "transport:play")]
+        [EntityCommand(Id = "play")]
         public void Play() => InvokeOnGateway((svc, mac) => svc.Play(mac));
 
-        [EntityCommand(Id = "transport:pause")]
+        [EntityCommand(Id = "pause")]
         public void Pause() => InvokeOnGateway((svc, mac) => svc.Pause(mac));
 
-        [EntityCommand(Id = "transport:stop")]
+        [EntityCommand(Id = "stop")]
         public void Stop() => InvokeOnGateway((svc, mac) => svc.Stop(mac));
 
-        [EntityCommand(Id = "transport:nextTrack")]
+        [EntityCommand(Id = "nextTrack")]
         public void Next() => InvokeOnGateway((svc, mac) => svc.Next(mac));
 
-        [EntityCommand(Id = "transport:previousTrack")]
+        [EntityCommand(Id = "previousTrack")]
         public void Previous() => InvokeOnGateway((svc, mac) => svc.Previous(mac));
 
-        [EntityCommand(Id = "transport:seek")]
+        [EntityCommand(Id = "seek")]
         public void Seek(int positionSeconds) => InvokeOnGateway((svc, mac) => svc.Seek(mac, positionSeconds));
 
-        [EntityCommand(Id = "lyrion:setShuffle")]
+        [EntityCommand(Id = "setShuffle")]
         public void SetShuffle(bool enabled) => InvokeOnGateway((svc, mac) => svc.SetShuffle(mac, enabled));
 
-        [EntityCommand(Id = "lyrion:setRepeat")]
+        [EntityCommand(Id = "setRepeat")]
         public void SetRepeat(bool enabled) => InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, enabled));
 
-        [EntityCommand(Id = "power:on")]
+        [EntityCommand(Id = "powerOn")]
         public void PowerOnCommand() => InvokeOnGateway((svc, mac) => svc.PowerOn(mac));
 
-        [EntityCommand(Id = "power:off")]
+        [EntityCommand(Id = "powerOff")]
         public void PowerOffCommand() => InvokeOnGateway((svc, mac) => svc.PowerOff(mac));
 
-        [EntityCommand(Id = "power:toggle")]
+        [EntityCommand(Id = "powerToggle")]
         public void PowerToggle() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Property update helpers =====
@@ -292,35 +292,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         {
             if (Available == value) return;
             Available = value;
-            try { NotifyPropertyChanged("lyrion:available", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("available", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdatePowerOn(bool value)
         {
             if (PowerOn == value) return;
             PowerOn = value;
-            try { NotifyPropertyChanged("power:on", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("powerOn", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdatePlaybackState(LyrionPlaybackState value)
         {
             if (PlaybackState == value) return;
             PlaybackState = value;
-            try { NotifyPropertyChanged("transport:playbackState", new DriverEntityValue((long)value)); } catch { }
+            try { NotifyPropertyChanged("playbackState", new DriverEntityValue((long)value)); } catch { }
         }
 
         private void UpdateShuffle(bool value)
         {
             if (ShuffleEnabled == value) return;
             ShuffleEnabled = value;
-            try { NotifyPropertyChanged("lyrion:shuffleEnabled", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("shuffleEnabled", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdateRepeat(bool value)
         {
             if (RepeatEnabled == value) return;
             RepeatEnabled = value;
-            try { NotifyPropertyChanged("lyrion:repeatEnabled", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("repeatEnabled", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdateMetadata(LyrionMetadata meta)
@@ -330,32 +330,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
             if (Title != meta.Title)
             {
                 Title = meta.Title;
-                try { NotifyPropertyChanged("media:title", new DriverEntityValue(Title)); } catch { }
+                try { NotifyPropertyChanged("title", new DriverEntityValue(Title)); } catch { }
             }
             if (Artist != meta.Artist)
             {
                 Artist = meta.Artist;
-                try { NotifyPropertyChanged("media:artist", new DriverEntityValue(Artist)); } catch { }
+                try { NotifyPropertyChanged("artist", new DriverEntityValue(Artist)); } catch { }
             }
             if (Album != meta.Album)
             {
                 Album = meta.Album;
-                try { NotifyPropertyChanged("media:album", new DriverEntityValue(Album)); } catch { }
+                try { NotifyPropertyChanged("album", new DriverEntityValue(Album)); } catch { }
             }
             if (ArtworkUrl != meta.ArtworkUrl)
             {
                 ArtworkUrl = meta.ArtworkUrl;
-                try { NotifyPropertyChanged("media:artworkUrl", new DriverEntityValue(ArtworkUrl)); } catch { }
+                try { NotifyPropertyChanged("artworkUrl", new DriverEntityValue(ArtworkUrl)); } catch { }
             }
             if (DurationSec != meta.DurationSeconds)
             {
                 DurationSec = meta.DurationSeconds;
-                try { NotifyPropertyChanged("media:durationSec", new DriverEntityValue((long)DurationSec)); } catch { }
+                try { NotifyPropertyChanged("durationSec", new DriverEntityValue((long)DurationSec)); } catch { }
             }
             if (ElapsedSec != meta.PositionSeconds)
             {
                 ElapsedSec = meta.PositionSeconds;
-                try { NotifyPropertyChanged("media:elapsedSec", new DriverEntityValue((long)ElapsedSec)); } catch { }
+                try { NotifyPropertyChanged("elapsedSec", new DriverEntityValue((long)ElapsedSec)); } catch { }
             }
         }
 

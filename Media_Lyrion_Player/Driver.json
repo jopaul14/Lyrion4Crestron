@@ -2,12 +2,15 @@
   "SchemaVersion": "2.0",
   "GeneralInformation": {
     "MinSdkVersion": "25.0000.0033",
-    "DeviceType": "MediaPlayer",
+    "DeviceType": "Media Player",
     "Manufacturer": "Lyrion Community",
     "BaseModel": "Lyrion Source",
     "OtherSupportedModels": [],
     "SupportedSeries": ["3-Series", "4-Series"],
-    "DependencyGroup": "",
+    "DependencyGroup": "LyrionLMS",
+    "ExtensionDeviceData": {
+      "IsExtensionDevice": true
+    },
     "Developer": {
       "Company": "Lyrion Community",
       "Contact": "Bob Dylan",

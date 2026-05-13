@@ -7,7 +7,7 @@
     "BaseModel": "Lyrion Server",
     "OtherSupportedModels": [],
     "SupportedSeries": ["3-Series", "4-Series"],
-    "DependencyGroup": "",
+    "DependencyGroup": "LyrionLMS",
     "Developer": {
       "Company": "Lyrion Community",
       "Contact": "Bob Dylan",
