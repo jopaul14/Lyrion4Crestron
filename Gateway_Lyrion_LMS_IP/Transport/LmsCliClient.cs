@@ -50,6 +50,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
 
+        // Serializes Start/Stop transitions so the _cts and _workerTask
+        // fields cannot be reassigned concurrently. Today only RebuildTransport
+        // calls Start, and it holds GatewayDriver._gate — but relying on that
+        // invariant from outside is a foot-gun, so we guard locally too.
+        private readonly object _startLock = new object();
+
         private readonly object _stateLock = new object();
         private LmsConnectionState _state = LmsConnectionState.Disconnected;
 
@@ -94,14 +100,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         public Task StartAsync(CancellationToken externalToken)
         {
-            if (_workerTask != null && !_workerTask.IsCompleted)
+            lock (_startLock)
             {
+                if (_workerTask != null && !_workerTask.IsCompleted)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+                _cts = cts;
+                _workerTask = Task.Run(() => RunAsync(cts.Token));
                 return Task.CompletedTask;
             }
-
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-            _workerTask = Task.Run(() => RunAsync(_cts.Token));
-            return Task.CompletedTask;
         }
 
         public async Task StopAsync(TimeSpan timeout)
@@ -128,7 +138,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         public void Dispose()
         {
-            try { StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
+            // Bounded Wait rather than GetAwaiter().GetResult(): the latter
+            // is a sync-over-async pattern that would deadlock if any
+            // continuation downstream were to capture the calling sync
+            // context. The 3s outer bound is StopAsync's 2s internal timeout
+            // plus a small slack for cancellation/dispose handlers to run.
+            try
+            {
+                var stop = StopAsync(TimeSpan.FromSeconds(2));
+                stop.Wait(TimeSpan.FromSeconds(3));
+            }
             catch { }
 
             _cts?.Dispose();
@@ -139,17 +158,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         {
             if (commandLine == null) return false;
 
-            var stream = _stream;
-            if (stream == null || _state != LmsConnectionState.Connected)
-            {
-                return false;
-            }
-
             var bytes = Encoding.UTF8.GetBytes(commandLine + "\r\n");
 
+            // Acquire the write lock before reading _stream so a concurrent
+            // CloseSocket() cannot null/dispose the stream between our read
+            // and our use of it. This closes the race that would otherwise
+            // silently drop commands during reconnect.
             await _writeLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                var stream = _stream;
+                if (stream == null || _state != LmsConnectionState.Connected)
+                {
+                    return false;
+                }
+
                 await stream.WriteAsync(bytes, 0, bytes.Length, ct).ConfigureAwait(false);
                 await stream.FlushAsync(ct).ConfigureAwait(false);
                 return true;
@@ -157,6 +180,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Socket torn down underneath us; nothing to close, just bail.
+                return false;
             }
             catch (Exception)
             {
@@ -298,6 +326,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                     }
                     catch (IOException)
                     {
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Stream disposed by CloseSocket() during a clean teardown.
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        // Hard reset from the peer.
                         return;
                     }
 
