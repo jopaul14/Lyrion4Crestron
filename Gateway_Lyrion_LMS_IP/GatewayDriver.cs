@@ -41,10 +41,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private readonly ServerConnectivityFsm _fsm;
 
         private LmsCliClient _cli;
-        private LmsJsonRpcClient _rpc;
+
+        // CLI event delegates stored as fields so they can be unsubscribed
+        // cleanly during transport rebuild. Anonymous lambdas would leak the
+        // FSM/log references onto the old client until it is GC'd.
+        private Action<LmsConnectionState> _cliStateHandler;
+        private Action<string> _cliAuthHandler;
 
         private CancellationTokenSource _lifetime = new CancellationTokenSource();
         private Timer _freezePump;
+        private Timer _reconcileTimer;
 
         private string _host;
         private int _httpPort = 9000;
@@ -170,64 +176,94 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 _lifetime = lifetime;
 
                 var cli = new LmsCliClient(_host, _cliPort, _username, _password, _log);
-                cli.MessageReceived += OnCliMessage;
-                cli.ConnectionStateChanged += s => _fsm.OnRawTransition(s);
-                cli.AuthenticationFailed += msg => _log("Gateway ERROR auth: " + msg);
+                _cliStateHandler = s => _fsm.OnRawTransition(s);
+                _cliAuthHandler = msg => _log("Gateway ERROR auth: " + msg);
 
-                var rpc = new LmsJsonRpcClient(_host, _httpPort, _username, _password, TimeSpan.FromSeconds(15), _log);
+                cli.MessageReceived += OnCliMessage;
+                cli.ConnectionStateChanged += _cliStateHandler;
+                cli.AuthenticationFailed += _cliAuthHandler;
 
                 _cli = cli;
-                _rpc = rpc;
 
                 _ = cli.StartAsync(lifetime.Token);
             }
+
+            _registry.SetServerConnected(false);
         }
 
         private void TeardownTransport()
         {
             lock (_gate) { TeardownTransport_NoLock(); }
+            _registry.SetServerConnected(false);
         }
 
         private void TeardownTransport_NoLock()
         {
             var oldLifetime = _lifetime;
             var oldCli = _cli;
-            var oldRpc = _rpc;
+            var oldStateHandler = _cliStateHandler;
+            var oldAuthHandler = _cliAuthHandler;
 
-            _lifetime = new CancellationTokenSource();
+            _lifetime = null;
             _cli = null;
-            _rpc = null;
+            _cliStateHandler = null;
+            _cliAuthHandler = null;
 
-            if (oldCli != null)
-            {
-                oldCli.MessageReceived -= OnCliMessage;
-                try
-                {
-                    _ = oldCli.StopAsync(TimeSpan.FromSeconds(2)).ContinueWith(
-                        _ => { try { oldCli.Dispose(); } catch { } },
-                        TaskScheduler.Default);
-                }
-                catch { }
-            }
-
+            // Cancel oldLifetime first so the linked token inside oldCli is
+            // signaled before we start tearing down.
             if (oldLifetime != null)
             {
                 try { oldLifetime.Cancel(); }
                 catch (ObjectDisposedException) { }
-                _ = Task.Run(() => { try { oldLifetime.Dispose(); } catch { } });
             }
 
-            _ = oldRpc;
+            if (oldCli != null)
+            {
+                try { oldCli.MessageReceived -= OnCliMessage; } catch { }
+                if (oldStateHandler != null)
+                {
+                    try { oldCli.ConnectionStateChanged -= oldStateHandler; } catch { }
+                }
+                if (oldAuthHandler != null)
+                {
+                    try { oldCli.AuthenticationFailed -= oldAuthHandler; } catch { }
+                }
+
+                // Chain the lifetime disposal AFTER oldCli.Dispose() runs.
+                // By that point oldCli has stopped its worker and disposed
+                // its own (linked) CTS, so no thread holds a token derived
+                // from oldLifetime — disposing it cannot race with RunAsync.
+                var lifetimeToDispose = oldLifetime;
+                try
+                {
+                    _ = oldCli.StopAsync(TimeSpan.FromSeconds(2)).ContinueWith(
+                        _ =>
+                        {
+                            try { oldCli.Dispose(); } catch { }
+                            try { lifetimeToDispose?.Dispose(); } catch { }
+                        },
+                        TaskScheduler.Default);
+                }
+                catch { }
+            }
+            else if (oldLifetime != null)
+            {
+                // No CLI client to wait on — safe to dispose immediately.
+                try { oldLifetime.Dispose(); } catch { }
+            }
 
             _serverConnected = false;
-            _registry.SetServerConnected(false);
         }
 
         private void EnsureFreezePumpRunning()
         {
-            if (_freezePump != null) return;
-            _freezePump = new Timer(_ => SweepFrozenMetadata(), null,
-                TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            lock (_gate)
+            {
+                if (_disposed) return;
+                if (_freezePump != null) return;
+                _freezePump = new Timer(_ => SweepFrozenMetadata(), null,
+                    TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            }
         }
 
         private void SweepFrozenMetadata()
@@ -260,6 +296,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             switch (message.Kind)
             {
+                case LmsMessageKind.StatusResponse:
+                    ApplyStatusResponse(message.Mac, message.Tokens);
+                    return;
+
                 case LmsMessageKind.Play:
                     _registry.NotePlaybackState(message.Mac, LyrionPlaybackState.Playing);
                     break;
@@ -322,8 +362,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                                 break;
 
                             case "disconnect":
-                            case "forget":
                                 _registry.NoteLifecycle(message.Mac, PlayerLifecycleState.Offline);
+                                break;
+
+                            case "forget":
+                                // Per CLAUDE.md: mark InvalidSession, rediscover
+                                // once, retry once. If still failing → Offline.
+                                if (_registry.NoteInvalidSession(message.Mac))
+                                {
+                                    _ = SendCliForPlayer(message.Mac, LmsCliCommands.QueryStatus(message.Mac));
+                                }
+                                else
+                                {
+                                    _registry.NoteLifecycle(message.Mac, PlayerLifecycleState.Offline);
+                                }
                                 break;
                         }
                     }
@@ -368,7 +420,27 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac));
             }
 
-            _registry.RepublishAll(macs);
+            // Defer republish until status responses have had time to arrive.
+            // Republishing immediately would surface pre-disconnect state to
+            // Driver 2/3 (CLAUDE.md "MUST NOT trust cached or incremental
+            // state"). 2 seconds is long enough for the CLI round trip but
+            // short enough that any UI flicker is bounded.
+            ScheduleReconcileRepublish(macs);
+        }
+
+        private void ScheduleReconcileRepublish(IReadOnlyList<string> macs)
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                try { _reconcileTimer?.Dispose(); } catch { }
+                _reconcileTimer = new Timer(_ =>
+                {
+                    if (_disposed) return;
+                    try { _registry.RepublishAll(macs); }
+                    catch { }
+                }, null, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+            }
         }
 
         private void OnPlayerBound(string mac)
@@ -388,7 +460,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             var cli = _cli;
             if (cli == null) return false;
-            _ = cli.SendLineAsync(line, _lifetime?.Token ?? CancellationToken.None);
+            var token = _lifetime?.Token ?? CancellationToken.None;
+            // Observe the task so OperationCanceledException during transport
+            // teardown does not become an unobserved task exception.
+            cli.SendLineAsync(line, token).ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
             return true;
         }
 
@@ -396,10 +475,132 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             var cli = _cli;
             if (cli == null) return Task.FromResult(false);
-            return cli.SendLineAsync(line, _lifetime?.Token ?? CancellationToken.None);
+            var token = _lifetime?.Token ?? CancellationToken.None;
+            var send = cli.SendLineAsync(line, token);
+            send.ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+            return send;
         }
 
         // ===== Diagnostic state =====
+
+        private void ApplyStatusResponse(string mac, string[] tokens)
+        {
+            // Status responses echo the command prefix as the first few tokens
+            // (e.g. "<mac> status - 1 ..."), followed by key:value pairs. We
+            // start scanning from index 2 to skip the MAC and "status" tokens.
+            var kv = LmsCliParser.ExtractKeyValues(tokens, 2);
+
+            // Lifecycle: if we got a status response the player is reachable.
+            _registry.NoteLifecycle(mac, PlayerLifecycleState.Online);
+
+            // Playback mode
+            if (kv.TryGetValue("mode", out var mode))
+            {
+                switch (mode)
+                {
+                    case "play":
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Playing);
+                        break;
+                    case "pause":
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Paused);
+                        break;
+                    case "stop":
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Stopped);
+                        break;
+                }
+            }
+
+            // Power
+            if (kv.TryGetValue("power", out var powerStr))
+            {
+                _registry.NoteExplicitPower(mac, powerStr == "1");
+            }
+
+            // Volume — the status response uses "mixer volume" as two tokens
+            // that get merged by the CLI into a single "mixer volume:NN" token,
+            // but ExtractKeyValues sees the key as "mixer volume". LMS also
+            // sometimes returns it simply as "volume" depending on the tags
+            // requested, so we check both.
+            string volStr = null;
+            if (!kv.TryGetValue("mixer volume", out volStr))
+            {
+                kv.TryGetValue("volume", out volStr);
+            }
+            if (volStr != null && int.TryParse(volStr, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var vol))
+            {
+                _registry.NoteVolume(mac, vol);
+            }
+
+            // Mute — not always present in every status response
+            // Not a standard tag in "status - 1 tags:..." but may appear via
+            // "mixer muting" prefset. We handle it if present.
+
+            // Shuffle
+            if (kv.TryGetValue("playlist shuffle", out var shuffleStr)
+                || kv.TryGetValue("shuffle", out shuffleStr))
+            {
+                if (int.TryParse(shuffleStr, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var sh))
+                {
+                    _registry.NoteShuffle(mac, sh);
+                }
+            }
+
+            // Repeat
+            if (kv.TryGetValue("playlist repeat", out var repeatStr)
+                || kv.TryGetValue("repeat", out repeatStr))
+            {
+                if (int.TryParse(repeatStr, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var rp))
+                {
+                    _registry.NoteRepeat(mac, rp);
+                }
+            }
+
+            // Metadata — tags requested: g=genre, a=artist, l=album, d=duration,
+            // I=artwork_url (but artwork_url needs the HTTP prefix), K=artwork_track_id,
+            // o=type, N=remote_title, c=coverid, r=bitrate, y=year, u=url
+            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
+            var artist = TryGet(kv, "artist");
+            var album = TryGet(kv, "album");
+            var artworkUrl = TryGet(kv, "artwork_url");
+
+            int duration = -1;
+            if (kv.TryGetValue("duration", out var durStr) &&
+                double.TryParse(durStr, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var durVal))
+            {
+                duration = (int)durVal;
+            }
+
+            int position = -1;
+            if (kv.TryGetValue("time", out var timeStr) &&
+                double.TryParse(timeStr, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var timeVal))
+            {
+                position = (int)timeVal;
+            }
+
+            _registry.NoteMetadata(mac, title, artist, album, artworkUrl, duration, position);
+
+            // Player capabilities — "can_seek" indicates a real player; LMS
+            // also returns "player_name", "player_connected", etc. We note
+            // canPowerOff based on "canpoweroff" if present.
+            if (kv.TryGetValue("canpoweroff", out var cpStr))
+            {
+                _registry.SetCapabilities(mac, cpStr == "1", null);
+            }
+        }
+
+        private static string TryGet(IDictionary<string, string> kv, string key)
+        {
+            return kv.TryGetValue(key, out var val) ? val : null;
+        }
 
         private void UpdateServerVersion(string version)
         {
@@ -428,6 +629,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             try { _freezePump?.Dispose(); } catch { }
             _freezePump = null;
+
+            Timer reconcile;
+            lock (_gate)
+            {
+                reconcile = _reconcileTimer;
+                _reconcileTimer = null;
+            }
+            try { reconcile?.Dispose(); } catch { }
 
             try { _fsm.Dispose(); } catch { }
             try { TeardownTransport(); } catch { }

@@ -30,7 +30,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         private string _boundMac;
         private int _volumeStep = DefaultVolumeStep;
         private ILyrionGatewayService _gateway;
-        private bool _disposed;
+        private volatile bool _disposed;
 
         // ===== Public properties =====
 
@@ -124,12 +124,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            lock (_gate) { _gateway = service; }
+            // Guard against late delivery to a disposed driver. Subscribe
+            // inside the lock so a concurrent Dispose() cannot complete
+            // between the _disposed check and the event wiring — that race
+            // would otherwise leave handlers attached on a disposed driver
+            // and pin it alive through the service's delegate chain.
+            if (_disposed) return;
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _gateway = service;
 
-            service.AvailabilityChanged += OnAvailabilityChanged;
-            service.PowerStateChanged += OnPowerStateChanged;
-            service.VolumeChanged += OnVolumeChanged;
-            service.MuteChanged += OnMuteChanged;
+                service.AvailabilityChanged += OnAvailabilityChanged;
+                service.PowerStateChanged += OnPowerStateChanged;
+                service.VolumeChanged += OnVolumeChanged;
+                service.MuteChanged += OnMuteChanged;
+            }
 
             TryBindToGateway();
         }
@@ -138,6 +148,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         {
             ILyrionGatewayService svc;
             string mac;
+            string previousMac = null;
             lock (_gate)
             {
                 svc = _gateway;
@@ -148,9 +159,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
                 }
                 if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
                 {
-                    svc.UnbindPlayer(_boundMac);
+                    previousMac = _boundMac;
                 }
                 _boundMac = mac;
+            }
+
+            if (previousMac != null)
+            {
+                svc.UnbindPlayer(previousMac);
             }
 
             if (svc.BindPlayer(mac))
@@ -307,6 +323,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         {
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
+
+            // Remove our pending-registration callback so the registry does
+            // not hold a reference to a disposed driver if the gateway has
+            // not yet registered.
+            try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
 
             ILyrionGatewayService svc;
             string mac;

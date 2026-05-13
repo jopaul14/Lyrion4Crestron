@@ -86,13 +86,8 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Shared service contract compiled into every driver assembly. The
-       contract is small and source-shared so the three drivers always see
-       the same interface signatures and event types. -->
   <ItemGroup>
-    <Compile Include="..\Common\Service\*.cs">
-      <Link>Common\Service\%(Filename)%(Extension)</Link>
-    </Compile>
+    <ProjectReference Include="..\Common\Lyrion_Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

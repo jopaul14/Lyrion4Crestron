@@ -50,14 +50,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
 
+        // Serializes Start/Stop transitions so the _cts and _workerTask
+        // fields cannot be reassigned concurrently. Today only RebuildTransport
+        // calls Start, and it holds GatewayDriver._gate — but relying on that
+        // invariant from outside is a foot-gun, so we guard locally too.
+        private readonly object _startLock = new object();
+
         private readonly object _stateLock = new object();
-        private LmsConnectionState _state = LmsConnectionState.Disconnected;
+        // volatile so SendLineAsync can read _state outside _stateLock without
+        // a stale-cache hazard on weakly-ordered hardware. Mutation still
+        // happens under _stateLock so the read-modify-write in SetState stays
+        // atomic with the equality check.
+        private volatile LmsConnectionState _state = LmsConnectionState.Disconnected;
 
         private CancellationTokenSource _cts;
         private Task _workerTask;
 
-        private Stream _stream;
-        private TcpClient _tcpClient;
+        // volatile so CloseSocket() can read these fields outside any lock
+        // without seeing stale values on weakly-ordered hardware (ARM). The
+        // writes in RunAsync are inside the try block before SetState; the
+        // volatile semantics on these fields and on _state together provide
+        // the publication barrier without requiring a lock.
+        private volatile Stream _stream;
+        private volatile TcpClient _tcpClient;
 
         public LmsCliClient(string host, int port, string username, string password, Action<string> log)
         {
@@ -94,14 +109,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         public Task StartAsync(CancellationToken externalToken)
         {
-            if (_workerTask != null && !_workerTask.IsCompleted)
+            lock (_startLock)
             {
+                if (_workerTask != null && !_workerTask.IsCompleted)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+                _cts = cts;
+                _workerTask = Task.Run(() => RunAsync(cts.Token));
                 return Task.CompletedTask;
             }
-
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
-            _workerTask = Task.Run(() => RunAsync(_cts.Token));
-            return Task.CompletedTask;
         }
 
         public async Task StopAsync(TimeSpan timeout)
@@ -128,7 +147,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         public void Dispose()
         {
-            try { StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
+            // Bounded Wait rather than GetAwaiter().GetResult(): the latter
+            // is a sync-over-async pattern that would deadlock if any
+            // continuation downstream were to capture the calling sync
+            // context. The 3s outer bound is StopAsync's 2s internal timeout
+            // plus a small slack for cancellation/dispose handlers to run.
+            try
+            {
+                var stop = StopAsync(TimeSpan.FromSeconds(2));
+                stop.Wait(TimeSpan.FromSeconds(3));
+            }
             catch { }
 
             _cts?.Dispose();
@@ -139,17 +167,25 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         {
             if (commandLine == null) return false;
 
-            var stream = _stream;
-            if (stream == null || _state != LmsConnectionState.Connected)
-            {
-                return false;
-            }
-
             var bytes = Encoding.UTF8.GetBytes(commandLine + "\r\n");
 
+            // Acquire the write lock before reading _stream so a concurrent
+            // CloseSocket() cannot null/dispose the stream between our read
+            // and our use of it. This closes the race that would otherwise
+            // silently drop commands during reconnect.
             await _writeLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                if (_state != LmsConnectionState.Connected)
+                {
+                    return false;
+                }
+                var stream = _stream;
+                if (stream == null)
+                {
+                    return false;
+                }
+
                 await stream.WriteAsync(bytes, 0, bytes.Length, ct).ConfigureAwait(false);
                 await stream.FlushAsync(ct).ConfigureAwait(false);
                 return true;
@@ -157,6 +193,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Socket torn down underneath us; nothing to close, just bail.
+                return false;
             }
             catch (Exception)
             {
@@ -184,7 +225,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 try
                 {
                     tcp = new TcpClient { NoDelay = true };
+                    EnableKeepAliveFlag(tcp);
                     await ConnectWithCancellationAsync(tcp, _host, _port, ct).ConfigureAwait(false);
+                    TuneKeepAliveInterval(tcp);
                     stream = tcp.GetStream();
                     _tcpClient = tcp;
                     _stream = stream;
@@ -235,6 +278,38 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             SetState(LmsConnectionState.Disconnected);
         }
 
+        /// <summary>
+        /// Enable the bare SO_KEEPALIVE flag. Safe to call pre-connect.
+        /// </summary>
+        private static void EnableKeepAliveFlag(TcpClient client)
+        {
+            try
+            {
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            }
+            catch { /* unsupported on some constrained runtimes */ }
+        }
+
+        /// <summary>
+        /// Tune keepalive timing via IOControl. Must be called AFTER the
+        /// socket is connected — <c>IOControlCode.KeepAliveValues</c>
+        /// requires a connected socket on Windows / .NET Framework.
+        /// </summary>
+        private static void TuneKeepAliveInterval(TcpClient client)
+        {
+            try
+            {
+                // Windows / Mono: 30s idle, 10s interval. 12-byte payload:
+                //   u32 onoff (1) | u32 time-ms (30000) | u32 interval-ms (10000)
+                var keepAlive = new byte[12];
+                keepAlive[0] = 1;
+                BitConverter.GetBytes((uint)30000).CopyTo(keepAlive, 4);
+                BitConverter.GetBytes((uint)10000).CopyTo(keepAlive, 8);
+                client.Client.IOControl(IOControlCode.KeepAliveValues, keepAlive, null);
+            }
+            catch { /* not all platforms expose KeepAliveValues; SO_KEEPALIVE alone still helps */ }
+        }
+
         private static async Task ConnectWithCancellationAsync(TcpClient client, string host, int port, CancellationToken ct)
         {
             var connectTask = client.ConnectAsync(host, port);
@@ -253,38 +328,49 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
         {
             var readBuffer = new byte[8192];
-            var lineBuffer = new MemoryStream(1024);
-
-            while (!ct.IsCancellationRequested)
+            using (var lineBuffer = new MemoryStream(1024))
             {
-                int bytesRead;
-                try
+                while (!ct.IsCancellationRequested)
                 {
-                    bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
-                }
-                catch (IOException)
-                {
-                    return;
-                }
-
-                if (bytesRead <= 0) return;
-
-                for (var i = 0; i < bytesRead; i++)
-                {
-                    var b = readBuffer[i];
-                    if (b == (byte)'\n')
+                    int bytesRead;
+                    try
                     {
-                        EmitLine(lineBuffer);
-                        lineBuffer.SetLength(0);
+                        bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
                     }
-                    else if (b != (byte)'\r')
+                    catch (IOException)
                     {
-                        if (lineBuffer.Length >= MaxLineBytes)
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Stream disposed by CloseSocket() during a clean teardown.
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        // Hard reset from the peer.
+                        return;
+                    }
+
+                    if (bytesRead <= 0) return;
+
+                    for (var i = 0; i < bytesRead; i++)
+                    {
+                        var b = readBuffer[i];
+                        if (b == (byte)'\n')
                         {
+                            EmitLine(lineBuffer);
                             lineBuffer.SetLength(0);
-                            continue;
                         }
-                        lineBuffer.WriteByte(b);
+                        else if (b != (byte)'\r')
+                        {
+                            if (lineBuffer.Length >= MaxLineBytes)
+                            {
+                                lineBuffer.SetLength(0);
+                                continue;
+                            }
+                            lineBuffer.WriteByte(b);
+                        }
                     }
                 }
             }

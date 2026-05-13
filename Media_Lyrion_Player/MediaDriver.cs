@@ -27,41 +27,52 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         private string _configuredMac;
         private string _boundMac;
         private ILyrionGatewayService _gateway;
-        private bool _disposed;
+        private volatile bool _disposed;
 
         // ===== Public entity properties =====
 
-        [EntityProperty(Id = "transport:playbackState")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "playbackState")]
         public LyrionPlaybackState PlaybackState { get; private set; } = LyrionPlaybackState.Stopped;
 
-        [EntityProperty(Id = "lyrion:available")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "available")]
         public bool Available { get; private set; }
 
-        [EntityProperty(Id = "power:on")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "powerOn")]
         public bool PowerOn { get; private set; }
 
-        [EntityProperty(Id = "lyrion:shuffleEnabled")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "shuffleEnabled")]
         public bool ShuffleEnabled { get; private set; }
 
-        [EntityProperty(Id = "lyrion:repeatEnabled")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "repeatEnabled")]
         public bool RepeatEnabled { get; private set; }
 
-        [EntityProperty(Id = "media:title")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "title")]
         public string Title { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:artist")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "artist")]
         public string Artist { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:album")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "album")]
         public string Album { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:artworkUrl")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "artworkUrl")]
         public string ArtworkUrl { get; private set; } = string.Empty;
 
-        [EntityProperty(Id = "media:durationSec")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "durationSec")]
         public int DurationSec { get; private set; }
 
-        [EntityProperty(Id = "media:elapsedSec")]
+        [EntityPropertyMetadata(ExtensionUiProperty = true)]
+        [EntityProperty(Id = "elapsedSec")]
         public int ElapsedSec { get; private set; }
 
         public MediaDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
@@ -76,9 +87,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 null,
                 null);
 
-            // Subscribe to the registry; the callback fires either now (if
-            // the gateway is already registered) or once the gateway driver
-            // registers itself.
+            var uiDefinition = UiDefinitionProperty.LoadFromDirectoryIfExists(
+                args.DriverDataDirectoryPath, resources.InitLogger, LogEntryLevel.Error);
+            if (uiDefinition != null)
+            {
+                AddProperty(uiDefinition, UiDefinitionProperty.Name, uiDefinition);
+            }
+
+            AddCommand(this, ExtensionDoCommandExecutor.CommandName,
+                new ExtensionDoCommandExecutor(GetCommand, resources.Logger));
+            AddCommand(this, ExtensionSetPropertyValueExecutor.CommandName,
+                new ExtensionSetPropertyValueExecutor(GetCommand, resources.Logger));
+
             LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
         }
 
@@ -129,14 +149,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            lock (_gate) { _gateway = service; }
+            // Guard against late delivery to a disposed driver. Subscribe
+            // inside the lock so a concurrent Dispose() cannot complete
+            // between the _disposed check and the event wiring — that race
+            // would otherwise leave handlers attached on a disposed driver
+            // and pin it alive through the service's delegate chain.
+            if (_disposed) return;
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _gateway = service;
 
-            service.AvailabilityChanged += OnAvailabilityChanged;
-            service.PowerStateChanged += OnPowerStateChanged;
-            service.PlaybackStateChanged += OnPlaybackStateChanged;
-            service.MetadataUpdated += OnMetadataUpdated;
-            service.ShuffleChanged += OnShuffleChanged;
-            service.RepeatChanged += OnRepeatChanged;
+                service.AvailabilityChanged += OnAvailabilityChanged;
+                service.PowerStateChanged += OnPowerStateChanged;
+                service.PlaybackStateChanged += OnPlaybackStateChanged;
+                service.MetadataUpdated += OnMetadataUpdated;
+                service.ShuffleChanged += OnShuffleChanged;
+                service.RepeatChanged += OnRepeatChanged;
+            }
 
             TryBindToGateway();
         }
@@ -145,6 +175,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         {
             ILyrionGatewayService svc;
             string mac;
+            string previousMac = null;
             lock (_gate)
             {
                 svc = _gateway;
@@ -155,9 +186,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 }
                 if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
                 {
-                    svc.UnbindPlayer(_boundMac);
+                    previousMac = _boundMac;
                 }
                 _boundMac = mac;
+            }
+
+            if (previousMac != null)
+            {
+                svc.UnbindPlayer(previousMac);
             }
 
             if (svc.BindPlayer(mac))
@@ -237,37 +273,37 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         // ===== Commands =====
 
-        [EntityCommand(Id = "transport:play")]
+        [EntityCommand(Id = "play")]
         public void Play() => InvokeOnGateway((svc, mac) => svc.Play(mac));
 
-        [EntityCommand(Id = "transport:pause")]
+        [EntityCommand(Id = "pause")]
         public void Pause() => InvokeOnGateway((svc, mac) => svc.Pause(mac));
 
-        [EntityCommand(Id = "transport:stop")]
+        [EntityCommand(Id = "stop")]
         public void Stop() => InvokeOnGateway((svc, mac) => svc.Stop(mac));
 
-        [EntityCommand(Id = "transport:nextTrack")]
+        [EntityCommand(Id = "nextTrack")]
         public void Next() => InvokeOnGateway((svc, mac) => svc.Next(mac));
 
-        [EntityCommand(Id = "transport:previousTrack")]
+        [EntityCommand(Id = "previousTrack")]
         public void Previous() => InvokeOnGateway((svc, mac) => svc.Previous(mac));
 
-        [EntityCommand(Id = "transport:seek")]
+        [EntityCommand(Id = "seek")]
         public void Seek(int positionSeconds) => InvokeOnGateway((svc, mac) => svc.Seek(mac, positionSeconds));
 
-        [EntityCommand(Id = "lyrion:setShuffle")]
+        [EntityCommand(Id = "setShuffle")]
         public void SetShuffle(bool enabled) => InvokeOnGateway((svc, mac) => svc.SetShuffle(mac, enabled));
 
-        [EntityCommand(Id = "lyrion:setRepeat")]
+        [EntityCommand(Id = "setRepeat")]
         public void SetRepeat(bool enabled) => InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, enabled));
 
-        [EntityCommand(Id = "power:on")]
+        [EntityCommand(Id = "powerOn")]
         public void PowerOnCommand() => InvokeOnGateway((svc, mac) => svc.PowerOn(mac));
 
-        [EntityCommand(Id = "power:off")]
+        [EntityCommand(Id = "powerOff")]
         public void PowerOffCommand() => InvokeOnGateway((svc, mac) => svc.PowerOff(mac));
 
-        [EntityCommand(Id = "power:toggle")]
+        [EntityCommand(Id = "powerToggle")]
         public void PowerToggle() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Property update helpers =====
@@ -276,35 +312,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         {
             if (Available == value) return;
             Available = value;
-            try { NotifyPropertyChanged("lyrion:available", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("available", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdatePowerOn(bool value)
         {
             if (PowerOn == value) return;
             PowerOn = value;
-            try { NotifyPropertyChanged("power:on", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("powerOn", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdatePlaybackState(LyrionPlaybackState value)
         {
             if (PlaybackState == value) return;
             PlaybackState = value;
-            try { NotifyPropertyChanged("transport:playbackState", new DriverEntityValue((long)value)); } catch { }
+            try { NotifyPropertyChanged("playbackState", new DriverEntityValue((long)value)); } catch { }
         }
 
         private void UpdateShuffle(bool value)
         {
             if (ShuffleEnabled == value) return;
             ShuffleEnabled = value;
-            try { NotifyPropertyChanged("lyrion:shuffleEnabled", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("shuffleEnabled", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdateRepeat(bool value)
         {
             if (RepeatEnabled == value) return;
             RepeatEnabled = value;
-            try { NotifyPropertyChanged("lyrion:repeatEnabled", new DriverEntityValue(value)); } catch { }
+            try { NotifyPropertyChanged("repeatEnabled", new DriverEntityValue(value)); } catch { }
         }
 
         private void UpdateMetadata(LyrionMetadata meta)
@@ -314,32 +350,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
             if (Title != meta.Title)
             {
                 Title = meta.Title;
-                try { NotifyPropertyChanged("media:title", new DriverEntityValue(Title)); } catch { }
+                try { NotifyPropertyChanged("title", new DriverEntityValue(Title)); } catch { }
             }
             if (Artist != meta.Artist)
             {
                 Artist = meta.Artist;
-                try { NotifyPropertyChanged("media:artist", new DriverEntityValue(Artist)); } catch { }
+                try { NotifyPropertyChanged("artist", new DriverEntityValue(Artist)); } catch { }
             }
             if (Album != meta.Album)
             {
                 Album = meta.Album;
-                try { NotifyPropertyChanged("media:album", new DriverEntityValue(Album)); } catch { }
+                try { NotifyPropertyChanged("album", new DriverEntityValue(Album)); } catch { }
             }
             if (ArtworkUrl != meta.ArtworkUrl)
             {
                 ArtworkUrl = meta.ArtworkUrl;
-                try { NotifyPropertyChanged("media:artworkUrl", new DriverEntityValue(ArtworkUrl)); } catch { }
+                try { NotifyPropertyChanged("artworkUrl", new DriverEntityValue(ArtworkUrl)); } catch { }
             }
             if (DurationSec != meta.DurationSeconds)
             {
                 DurationSec = meta.DurationSeconds;
-                try { NotifyPropertyChanged("media:durationSec", new DriverEntityValue((long)DurationSec)); } catch { }
+                try { NotifyPropertyChanged("durationSec", new DriverEntityValue((long)DurationSec)); } catch { }
             }
             if (ElapsedSec != meta.PositionSeconds)
             {
                 ElapsedSec = meta.PositionSeconds;
-                try { NotifyPropertyChanged("media:elapsedSec", new DriverEntityValue((long)ElapsedSec)); } catch { }
+                try { NotifyPropertyChanged("elapsedSec", new DriverEntityValue((long)ElapsedSec)); } catch { }
             }
         }
 
@@ -378,6 +414,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         {
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
+
+            // Remove our pending-registration callback so the registry does
+            // not hold a reference to a disposed driver if the gateway has
+            // not yet registered.
+            try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
 
             ILyrionGatewayService svc;
             string mac;

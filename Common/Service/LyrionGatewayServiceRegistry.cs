@@ -14,13 +14,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// registration via <see cref="Subscribe"/>.
     /// </summary>
     /// <remarks>
-    /// This is the platform-neutral surface for the "Crestron SDK service
-    /// registration" requirement in CLAUDE.md. On a Crestron Home appliance
-    /// where all driver assemblies are loaded into a single AppDomain, the
-    /// static state in this class is the shared object. If a deployment ever
-    /// requires cross-process service routing, this class is the single point
-    /// where the underlying mechanism can be swapped without touching any
-    /// driver.
+    /// All three drivers reference this assembly (Lyrion_Common.dll) via
+    /// ProjectReference and share the same DependencyGroup ("LyrionLMS"),
+    /// ensuring they are loaded into the same AppDomain. The CLR loads
+    /// Lyrion_Common.dll once, so the static fields below are truly
+    /// process-wide shared state.
     /// </remarks>
     public static class LyrionGatewayServiceRegistry
     {
@@ -30,6 +28,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             new List<Action<ILyrionGatewayService>>();
 
         /// <summary>Called by the Gateway driver during driver startup.</summary>
+        /// <remarks>
+        /// SECURITY: this registry is process-wide static state. Any driver
+        /// loaded into the same AppDomain can call <see cref="Register"/> and
+        /// replace the active service, which would then receive every
+        /// Subscribe callback. This is acceptable on Crestron Home because
+        /// drivers are loaded from a signed/curated package store and the
+        /// AppDomain is treated as a single trust zone; do NOT remove this
+        /// note without also revisiting that platform assumption.
+        /// </remarks>
         public static void Register(ILyrionGatewayService service)
         {
             if (service == null) throw new ArgumentNullException(nameof(service));
@@ -92,6 +99,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 
             try { onAvailable(now); }
             catch { /* never propagate consumer faults */ }
+        }
+
+        /// <summary>
+        /// Removes a pending <see cref="Subscribe"/> callback if it has not yet
+        /// fired. Safe to call after the callback has fired (no-op). Consumers
+        /// must call this from Dispose() to prevent the registry from holding
+        /// references to disposed drivers if the gateway has not yet registered.
+        /// </summary>
+        public static void Unsubscribe(Action<ILyrionGatewayService> onAvailable)
+        {
+            if (onAvailable == null) return;
+            lock (Gate)
+            {
+                Pending.Remove(onAvailable);
+            }
         }
     }
 }

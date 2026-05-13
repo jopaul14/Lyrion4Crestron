@@ -105,7 +105,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
 
         public static string QueryStatus(string mac)
         {
-            return Player(mac) + " status - 1 tags:galdIKoNcryu";
+            return Player(mac) + " status - 1 tags:galdJKoNcryu";
         }
 
         public static string ActivatePreset(string mac, string presetId)

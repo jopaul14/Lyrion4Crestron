@@ -74,9 +74,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Common\Service\*.cs">
-      <Link>Common\Service\%(Filename)%(Extension)</Link>
-    </Compile>
+    <ProjectReference Include="..\Common\Lyrion_Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

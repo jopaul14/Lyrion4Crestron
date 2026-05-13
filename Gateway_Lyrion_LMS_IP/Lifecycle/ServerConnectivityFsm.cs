@@ -40,6 +40,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
         private DateTime _pendingSinceUtc = DateTime.UtcNow;
         private DateTime _lastCommittedUtc = DateTime.UtcNow;
         private bool _oscillationLogged;
+        private bool _disposed;
 
         private Timer _commitTimer;
 
@@ -63,6 +64,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
 
             lock (_gate)
             {
+                if (_disposed) return;
                 if (_pending == logical)
                 {
                     ScheduleCommit_NoLock();
@@ -104,6 +106,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
 
             lock (_gate)
             {
+                if (_disposed) return;
+
                 // Has _pending been stable long enough?
                 if (DateTime.UtcNow - _pendingSinceUtc + TimeSpan.FromMilliseconds(50) < MinStable)
                 {
@@ -150,6 +154,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
             Timer t;
             lock (_gate)
             {
+                _disposed = true;
                 t = _commitTimer;
                 _commitTimer = null;
             }

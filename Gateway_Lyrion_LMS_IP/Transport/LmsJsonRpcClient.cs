@@ -18,6 +18,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
     /// </summary>
     internal sealed class LmsJsonRpcClient
     {
+        // Cap response size to defend against a malicious or compromised LMS
+        // returning a huge body that would exhaust memory on the constrained
+        // Crestron processor. 1 MB is generous for any legitimate LMS reply.
+        private const int MaxResponseBytes = 1024 * 1024;
+
         private readonly Uri _endpoint;
         private readonly string _authorizationHeader;
         private readonly TimeSpan _defaultTimeout;
@@ -111,17 +116,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                             return LmsRpcResult.Failure("Empty response stream from LMS.");
                         }
 
-                        using (var reader = new StreamReader(responseStream, Encoding.UTF8))
+                        // Refuse if Content-Length advertises an oversized body.
+                        if (response.ContentLength > MaxResponseBytes)
                         {
-                            var body = await reader.ReadToEndAsync().ConfigureAwait(false);
-
-                            if (response.StatusCode != HttpStatusCode.OK)
-                            {
-                                return LmsRpcResult.Failure("HTTP " + (int)response.StatusCode + " from LMS: " + body);
-                            }
-
-                            return LmsRpcResult.Success(body);
+                            return LmsRpcResult.Failure("LMS response exceeds maximum size.");
                         }
+
+                        var body = await ReadCappedAsync(responseStream, MaxResponseBytes, ct).ConfigureAwait(false);
+                        if (body == null)
+                        {
+                            return LmsRpcResult.Failure("LMS response exceeds maximum size.");
+                        }
+
+                        if (response.StatusCode != HttpStatusCode.OK)
+                        {
+                            return LmsRpcResult.Failure("HTTP " + (int)response.StatusCode + " from LMS: " + body);
+                        }
+
+                        return LmsRpcResult.Success(body);
                     }
                 }
                 catch (OperationCanceledException)
@@ -136,6 +148,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 {
                     return LmsRpcResult.Failure(ex.Message);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Reads the stream into a UTF-8 string, aborting if the byte count
+        /// exceeds <paramref name="maxBytes"/>. Returns null when the limit
+        /// is exceeded.
+        /// </summary>
+        private static async Task<string> ReadCappedAsync(Stream stream, int maxBytes, CancellationToken ct)
+        {
+            const int ChunkSize = 8192;
+            var buffer = new byte[ChunkSize];
+            using (var ms = new MemoryStream())
+            {
+                int read;
+                while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) > 0)
+                {
+                    if (ms.Length + read > maxBytes)
+                    {
+                        return null;
+                    }
+                    ms.Write(buffer, 0, read);
+                }
+                return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
             }
         }
     }
