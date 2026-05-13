@@ -59,7 +59,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
             }
         }
 
-        public static string EncodeMac(string mac) => Encode(mac ?? string.Empty);
+        // MAC addresses contain only [0-9a-fA-F:] — all safe for LMS CLI.
+        // Encoding colons would break player addressing.
+        public static string EncodeMac(string mac) => mac ?? string.Empty;
 
         private static bool IsUnreserved(byte b)
         {
