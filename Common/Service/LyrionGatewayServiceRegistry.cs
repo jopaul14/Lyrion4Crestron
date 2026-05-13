@@ -14,13 +14,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// registration via <see cref="Subscribe"/>.
     /// </summary>
     /// <remarks>
-    /// This is the platform-neutral surface for the "Crestron SDK service
-    /// registration" requirement in CLAUDE.md. On a Crestron Home appliance
-    /// where all driver assemblies are loaded into a single AppDomain, the
-    /// static state in this class is the shared object. If a deployment ever
-    /// requires cross-process service routing, this class is the single point
-    /// where the underlying mechanism can be swapped without touching any
-    /// driver.
+    /// All three drivers reference this assembly (Lyrion_Common.dll) via
+    /// ProjectReference and share the same DependencyGroup ("LyrionLMS"),
+    /// ensuring they are loaded into the same AppDomain. The CLR loads
+    /// Lyrion_Common.dll once, so the static fields below are truly
+    /// process-wide shared state.
     /// </remarks>
     public static class LyrionGatewayServiceRegistry
     {

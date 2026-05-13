@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Lyrion_Common - Shared service contract library.
+  Compiled once and referenced by all three driver assemblies so they share
+  a single copy of the ILyrionGatewayService interface, registry, and data
+  types at runtime. This ensures static state in LyrionGatewayServiceRegistry
+  is truly process-wide when all drivers are loaded into the same AppDomain
+  via the DependencyGroup "LyrionLMS".
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Service</RootNamespace>
+    <AssemblyName>Lyrion_Common</AssemblyName>
+    <TargetFramework>net472</TargetFramework>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>false</Deterministic>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+
+    <LangVersion>7.3</LangVersion>
+
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>portable</DebugType>
+    <Optimize>false</Optimize>
+    <DefineConstants>$(DefineConstants);DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugType>portable</DebugType>
+    <Optimize>true</Optimize>
+    <DefineConstants>$(DefineConstants);TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="mscorlib" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+
+</Project>
