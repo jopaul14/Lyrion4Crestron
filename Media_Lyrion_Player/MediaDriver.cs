@@ -27,7 +27,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         private string _configuredMac;
         private string _boundMac;
         private ILyrionGatewayService _gateway;
-        private bool _disposed;
+        private volatile bool _disposed;
 
         // ===== Public entity properties =====
 
@@ -154,6 +154,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         {
             ILyrionGatewayService svc;
             string mac;
+            string previousMac = null;
             lock (_gate)
             {
                 svc = _gateway;
@@ -164,9 +165,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 }
                 if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
                 {
-                    svc.UnbindPlayer(_boundMac);
+                    previousMac = _boundMac;
                 }
                 _boundMac = mac;
+            }
+
+            if (previousMac != null)
+            {
+                svc.UnbindPlayer(previousMac);
             }
 
             if (svc.BindPlayer(mac))

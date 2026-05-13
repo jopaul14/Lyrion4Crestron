@@ -184,8 +184,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 try
                 {
                     tcp = new TcpClient { NoDelay = true };
-                    EnableTcpKeepAlive(tcp);
+                    EnableKeepAliveFlag(tcp);
                     await ConnectWithCancellationAsync(tcp, _host, _port, ct).ConfigureAwait(false);
+                    TuneKeepAliveInterval(tcp);
                     stream = tcp.GetStream();
                     _tcpClient = tcp;
                     _stream = stream;
@@ -237,21 +238,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         }
 
         /// <summary>
-        /// Enable TCP keepalive so half-open connections (LMS host crash
-        /// without a TCP RST) are detected within a bounded window instead of
-        /// stalling the receive loop for the OS default (often 2h+). The
-        /// per-option IOControl is best-effort: not every Crestron runtime
-        /// exposes <c>KeepAliveValues</c>; falling back to the bare
-        /// <c>SO_KEEPALIVE</c> flag is still strictly better than nothing.
+        /// Enable the bare SO_KEEPALIVE flag. Safe to call pre-connect.
         /// </summary>
-        private static void EnableTcpKeepAlive(TcpClient client)
+        private static void EnableKeepAliveFlag(TcpClient client)
         {
             try
             {
                 client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
             }
             catch { /* unsupported on some constrained runtimes */ }
+        }
 
+        /// <summary>
+        /// Tune keepalive timing via IOControl. Must be called AFTER the
+        /// socket is connected — <c>IOControlCode.KeepAliveValues</c>
+        /// requires a connected socket on Windows / .NET Framework.
+        /// </summary>
+        private static void TuneKeepAliveInterval(TcpClient client)
+        {
             try
             {
                 // Windows / Mono: 30s idle, 10s interval. 12-byte payload:

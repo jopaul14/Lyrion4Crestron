@@ -201,6 +201,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             }
         }
 
+        /// <summary>
+        /// Mark a player as InvalidSession and increment its retry counter.
+        /// Returns true if this is the first invalid-session for this player
+        /// (the caller should attempt rediscovery once). Returns false if
+        /// the retry has already been attempted, meaning the caller should
+        /// mark Offline.
+        /// </summary>
+        public bool NoteInvalidSession(string mac)
+        {
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null) return false;
+
+            lock (_gate)
+            {
+                if (!_records.TryGetValue(canon, out var rec)) return false;
+
+                if (rec.LifecycleState == PlayerLifecycleState.InvalidSession)
+                {
+                    return false;
+                }
+
+                rec.LifecycleState = PlayerLifecycleState.InvalidSession;
+                return true;
+            }
+        }
+
         public void SetPlayerId(string mac, string playerId)
         {
             var canon = MacAddress.Normalize(mac);

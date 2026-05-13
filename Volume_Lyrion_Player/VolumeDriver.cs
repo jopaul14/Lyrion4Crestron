@@ -30,7 +30,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         private string _boundMac;
         private int _volumeStep = DefaultVolumeStep;
         private ILyrionGatewayService _gateway;
-        private bool _disposed;
+        private volatile bool _disposed;
 
         // ===== Public properties =====
 
@@ -147,6 +147,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         {
             ILyrionGatewayService svc;
             string mac;
+            string previousMac = null;
             lock (_gate)
             {
                 svc = _gateway;
@@ -157,9 +158,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
                 }
                 if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
                 {
-                    svc.UnbindPlayer(_boundMac);
+                    previousMac = _boundMac;
                 }
                 _boundMac = mac;
+            }
+
+            if (previousMac != null)
+            {
+                svc.UnbindPlayer(previousMac);
             }
 
             if (svc.BindPlayer(mac))

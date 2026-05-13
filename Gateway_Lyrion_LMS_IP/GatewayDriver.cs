@@ -41,7 +41,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private readonly ServerConnectivityFsm _fsm;
 
         private LmsCliClient _cli;
-        private LmsJsonRpcClient _rpc;
 
         // CLI event delegates stored as fields so they can be unsubscribed
         // cleanly during transport rebuild. Anonymous lambdas would leak the
@@ -184,10 +183,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 cli.ConnectionStateChanged += _cliStateHandler;
                 cli.AuthenticationFailed += _cliAuthHandler;
 
-                var rpc = new LmsJsonRpcClient(_host, _httpPort, _username, _password, TimeSpan.FromSeconds(15), _log);
-
                 _cli = cli;
-                _rpc = rpc;
 
                 _ = cli.StartAsync(lifetime.Token);
             }
@@ -202,7 +198,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             var oldLifetime = _lifetime;
             var oldCli = _cli;
-            var oldRpc = _rpc;
             var oldStateHandler = _cliStateHandler;
             var oldAuthHandler = _cliAuthHandler;
 
@@ -211,7 +206,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // an undisposed CTS.
             _lifetime = _disposed ? null : new CancellationTokenSource();
             _cli = null;
-            _rpc = null;
             _cliStateHandler = null;
             _cliAuthHandler = null;
 
@@ -241,8 +235,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 catch (ObjectDisposedException) { }
                 _ = Task.Run(() => { try { oldLifetime.Dispose(); } catch { } });
             }
-
-            _ = oldRpc;
 
             _serverConnected = false;
             _registry.SetServerConnected(false);
@@ -289,6 +281,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             switch (message.Kind)
             {
+                case LmsMessageKind.StatusResponse:
+                    ApplyStatusResponse(message.Mac, message.Tokens);
+                    return;
+
                 case LmsMessageKind.Play:
                     _registry.NotePlaybackState(message.Mac, LyrionPlaybackState.Playing);
                     break;
@@ -351,8 +347,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                                 break;
 
                             case "disconnect":
-                            case "forget":
                                 _registry.NoteLifecycle(message.Mac, PlayerLifecycleState.Offline);
+                                break;
+
+                            case "forget":
+                                // Per CLAUDE.md: mark InvalidSession, rediscover
+                                // once, retry once. If still failing → Offline.
+                                if (_registry.NoteInvalidSession(message.Mac))
+                                {
+                                    _ = SendCliForPlayer(message.Mac, LmsCliCommands.QueryStatus(message.Mac));
+                                }
+                                else
+                                {
+                                    _registry.NoteLifecycle(message.Mac, PlayerLifecycleState.Offline);
+                                }
                                 break;
                         }
                     }
@@ -462,6 +470,121 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         }
 
         // ===== Diagnostic state =====
+
+        private void ApplyStatusResponse(string mac, string[] tokens)
+        {
+            // Status responses echo the command prefix as the first few tokens
+            // (e.g. "<mac> status - 1 ..."), followed by key:value pairs. We
+            // start scanning from index 2 to skip the MAC and "status" tokens.
+            var kv = LmsCliParser.ExtractKeyValues(tokens, 2);
+
+            // Lifecycle: if we got a status response the player is reachable.
+            _registry.NoteLifecycle(mac, PlayerLifecycleState.Online);
+
+            // Playback mode
+            if (kv.TryGetValue("mode", out var mode))
+            {
+                switch (mode)
+                {
+                    case "play":
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Playing);
+                        break;
+                    case "pause":
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Paused);
+                        break;
+                    case "stop":
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Stopped);
+                        break;
+                }
+            }
+
+            // Power
+            if (kv.TryGetValue("power", out var powerStr))
+            {
+                _registry.NoteExplicitPower(mac, powerStr == "1");
+            }
+
+            // Volume — the status response uses "mixer volume" as two tokens
+            // that get merged by the CLI into a single "mixer volume:NN" token,
+            // but ExtractKeyValues sees the key as "mixer volume". LMS also
+            // sometimes returns it simply as "volume" depending on the tags
+            // requested, so we check both.
+            string volStr = null;
+            if (!kv.TryGetValue("mixer volume", out volStr))
+            {
+                kv.TryGetValue("volume", out volStr);
+            }
+            if (volStr != null && int.TryParse(volStr, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var vol))
+            {
+                _registry.NoteVolume(mac, vol);
+            }
+
+            // Mute — not always present in every status response
+            // Not a standard tag in "status - 1 tags:..." but may appear via
+            // "mixer muting" prefset. We handle it if present.
+
+            // Shuffle
+            if (kv.TryGetValue("playlist shuffle", out var shuffleStr)
+                || kv.TryGetValue("shuffle", out shuffleStr))
+            {
+                if (int.TryParse(shuffleStr, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var sh))
+                {
+                    _registry.NoteShuffle(mac, sh);
+                }
+            }
+
+            // Repeat
+            if (kv.TryGetValue("playlist repeat", out var repeatStr)
+                || kv.TryGetValue("repeat", out repeatStr))
+            {
+                if (int.TryParse(repeatStr, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var rp))
+                {
+                    _registry.NoteRepeat(mac, rp);
+                }
+            }
+
+            // Metadata — tags requested: g=genre, a=artist, l=album, d=duration,
+            // I=artwork_url (but artwork_url needs the HTTP prefix), K=artwork_track_id,
+            // o=type, N=remote_title, c=coverid, r=bitrate, y=year, u=url
+            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
+            var artist = TryGet(kv, "artist");
+            var album = TryGet(kv, "album");
+            var artworkUrl = TryGet(kv, "artwork_url");
+
+            int duration = -1;
+            if (kv.TryGetValue("duration", out var durStr) &&
+                double.TryParse(durStr, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var durVal))
+            {
+                duration = (int)durVal;
+            }
+
+            int position = -1;
+            if (kv.TryGetValue("time", out var timeStr) &&
+                double.TryParse(timeStr, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var timeVal))
+            {
+                position = (int)timeVal;
+            }
+
+            _registry.NoteMetadata(mac, title, artist, album, artworkUrl, duration, position);
+
+            // Player capabilities — "can_seek" indicates a real player; LMS
+            // also returns "player_name", "player_connected", etc. We note
+            // canPowerOff based on "canpoweroff" if present.
+            if (kv.TryGetValue("canpoweroff", out var cpStr))
+            {
+                _registry.SetCapabilities(mac, cpStr == "1", null);
+            }
+        }
+
+        private static string TryGet(IDictionary<string, string> kv, string key)
+        {
+            return kv.TryGetValue(key, out var val) ? val : null;
+        }
 
         private void UpdateServerVersion(string version)
         {
