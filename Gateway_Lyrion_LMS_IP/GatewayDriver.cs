@@ -187,11 +187,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
                 _ = cli.StartAsync(lifetime.Token);
             }
+
+            _registry.SetServerConnected(false);
         }
 
         private void TeardownTransport()
         {
             lock (_gate) { TeardownTransport_NoLock(); }
+            _registry.SetServerConnected(false);
         }
 
         private void TeardownTransport_NoLock()
@@ -201,10 +204,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             var oldStateHandler = _cliStateHandler;
             var oldAuthHandler = _cliAuthHandler;
 
-            // Only allocate a replacement lifetime if we are still live; on
-            // final dispose the caller drops the field and we avoid leaking
-            // an undisposed CTS.
-            _lifetime = _disposed ? null : new CancellationTokenSource();
+            _lifetime = null;
             _cli = null;
             _cliStateHandler = null;
             _cliAuthHandler = null;
@@ -237,7 +237,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
 
             _serverConnected = false;
-            _registry.SetServerConnected(false);
         }
 
         private void EnsureFreezePumpRunning()
@@ -625,10 +624,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             try { _fsm.Dispose(); } catch { }
             try { TeardownTransport(); } catch { }
 
-            // TeardownTransport sets _lifetime = null when _disposed is true,
-            // but the original lifetime was disposed inside the teardown
-            // (cancelled and then disposed off-thread). Nothing further to
-            // dispose here; the field is null.
             base.Dispose();
         }
     }

@@ -171,8 +171,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             await _writeLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                if (_state != LmsConnectionState.Connected)
+                {
+                    return false;
+                }
                 var stream = _stream;
-                if (stream == null || _state != LmsConnectionState.Connected)
+                if (stream == null)
                 {
                     return false;
                 }
