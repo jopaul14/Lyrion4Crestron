@@ -57,7 +57,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         private readonly object _startLock = new object();
 
         private readonly object _stateLock = new object();
-        private LmsConnectionState _state = LmsConnectionState.Disconnected;
+        // volatile so SendLineAsync can read _state outside _stateLock without
+        // a stale-cache hazard on weakly-ordered hardware. Mutation still
+        // happens under _stateLock so the read-modify-write in SetState stays
+        // atomic with the equality check.
+        private volatile LmsConnectionState _state = LmsConnectionState.Disconnected;
 
         private CancellationTokenSource _cts;
         private Task _workerTask;

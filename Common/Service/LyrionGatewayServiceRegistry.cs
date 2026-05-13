@@ -30,6 +30,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             new List<Action<ILyrionGatewayService>>();
 
         /// <summary>Called by the Gateway driver during driver startup.</summary>
+        /// <remarks>
+        /// SECURITY: this registry is process-wide static state. Any driver
+        /// loaded into the same AppDomain can call <see cref="Register"/> and
+        /// replace the active service, which would then receive every
+        /// Subscribe callback. This is acceptable on Crestron Home because
+        /// drivers are loaded from a signed/curated package store and the
+        /// AppDomain is treated as a single trust zone; do NOT remove this
+        /// note without also revisiting that platform assumption.
+        /// </remarks>
         public static void Register(ILyrionGatewayService service)
         {
             if (service == null) throw new ArgumentNullException(nameof(service));
