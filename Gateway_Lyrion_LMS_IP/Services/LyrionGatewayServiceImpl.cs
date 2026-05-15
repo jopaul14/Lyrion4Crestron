@@ -47,6 +47,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             registry.PresetsUpdated += (mac, p) => PresetsUpdated?.Invoke(mac, p);
         }
 
+        // ===== Service identity =====
+
+        public string ServiceVersion => "1.0";
+
         // ===== Bind / snapshot =====
 
         public bool BindPlayer(string mac)
@@ -64,6 +68,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
 
         // ===== Events =====
 
+        public event Action<bool> ServerConnectivityChanged;
         public event Action<string, bool> AvailabilityChanged;
         public event Action<string, bool> PowerStateChanged;
         public event Action<string, LyrionPlaybackState> PlaybackStateChanged;
@@ -73,6 +78,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public event Action<string, int> VolumeChanged;
         public event Action<string, bool> MuteChanged;
         public event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
+
+        internal void RaiseServerConnectivityChanged(bool connected)
+        {
+            try { ServerConnectivityChanged?.Invoke(connected); } catch { }
+        }
 
         // ===== Commands: Media (Driver 2) =====
 
@@ -108,8 +118,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             var canon = MacAddress.Normalize(mac);
             if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
 
-            // Players that don't accept power-off treat power-on as a play
-            // resumption; fall back silently per CLAUDE.md appendix.
             _registry.TryGetCapabilities(canon, out var canPowerOff, out _);
             if (canPowerOff)
             {

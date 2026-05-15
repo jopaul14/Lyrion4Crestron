@@ -36,7 +36,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         public int DurationSeconds { get; }
         public int PositionSeconds { get; }
 
-        /// <summary>True when published from the frozen-on-disconnect path.</summary>
+        /// <summary>
+        /// True when this metadata was frozen at the moment the player became
+        /// unavailable. Consumers should display frozen metadata unchanged.
+        /// After 30 seconds offline the gateway publishes an empty
+        /// <see cref="LyrionMetadata"/> (with <see cref="IsFrozen"/> still
+        /// true), at which point consumers should clear their UI.
+        /// </summary>
         public bool IsFrozen { get; }
 
         public static LyrionMetadata Empty { get; } =

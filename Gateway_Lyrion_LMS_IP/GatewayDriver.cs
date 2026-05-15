@@ -400,6 +400,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
             catch { }
 
+            _service.RaiseServerConnectivityChanged(connected);
+
             if (connected)
             {
                 // Reconnect is a hard state boundary: re-issue listen + a full
