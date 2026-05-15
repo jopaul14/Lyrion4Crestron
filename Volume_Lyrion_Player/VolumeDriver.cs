@@ -88,7 +88,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
                         }
                         else
                         {
-                            _configuredMac = canon;
+                            lock (_gate) { _configuredMac = canon; }
                         }
 
                         if (values.TryGetValue("_VolumeStep_", out var vStep) && vStep.HasValue)
@@ -278,35 +278,53 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         public void PowerToggle() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Update helpers =====
+        //
+        // Each helper locks _gate so the check-and-set-and-notify sequence is
+        // atomic. Events from the FSM timer (availability) and the CLI
+        // receive thread (volume / mute / power) can otherwise interleave and
+        // cause NotifyPropertyChanged to emit a value that is immediately
+        // overwritten by the other thread.
 
         private void UpdateAvailability(bool value)
         {
-            if (Available == value) return;
-            Available = value;
-            try { NotifyPropertyChanged("lyrion:available", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (Available == value) return;
+                Available = value;
+                try { NotifyPropertyChanged("lyrion:available", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdatePowerOn(bool value)
         {
-            if (PowerOn == value) return;
-            PowerOn = value;
-            try { NotifyPropertyChanged("power:on", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (PowerOn == value) return;
+                PowerOn = value;
+                try { NotifyPropertyChanged("power:on", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdateVolume(int value)
         {
             if (value < 0) value = 0;
             if (value > 100) value = 100;
-            if (Volume == value) return;
-            Volume = value;
-            try { NotifyPropertyChanged("audio:volume", new DriverEntityValue((long)value)); } catch { }
+            lock (_gate)
+            {
+                if (Volume == value) return;
+                Volume = value;
+                try { NotifyPropertyChanged("audio:volume", new DriverEntityValue((long)value)); } catch { }
+            }
         }
 
         private void UpdateMute(bool value)
         {
-            if (Muted == value) return;
-            Muted = value;
-            try { NotifyPropertyChanged("audio:muted", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (Muted == value) return;
+                Muted = value;
+                try { NotifyPropertyChanged("audio:muted", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         // ===== Helpers =====

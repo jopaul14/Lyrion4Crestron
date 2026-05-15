@@ -132,6 +132,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 catch (ObjectDisposedException) { }
             }
 
+            // CloseSocket is required, not just defensive: on .NET Framework
+            // 4.7.2 NetworkStream.ReadAsync does not reliably honor its
+            // CancellationToken. Disposing the underlying stream is the
+            // canonical way to unblock an in-flight read.
             CloseSocket();
 
             var worker = _workerTask;
