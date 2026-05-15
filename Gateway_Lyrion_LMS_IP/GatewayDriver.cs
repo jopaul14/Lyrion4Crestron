@@ -40,7 +40,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private readonly LyrionGatewayServiceImpl _service;
         private readonly ServerConnectivityFsm _fsm;
 
-        private LmsCliClient _cli;
+        // volatile: written under _gate but read locklessly from the SDK
+        // command thread, the FSM timer thread, and the CLI receive thread.
+        // ARM hardware (potential Crestron target) requires the acquire barrier
+        // that volatile provides; x86 happens to be safe without it.
+        private volatile LmsCliClient _cli;
 
         // CLI event delegates stored as fields so they can be unsubscribed
         // cleanly during transport rebuild. Anonymous lambdas would leak the
@@ -48,7 +52,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private Action<LmsConnectionState> _cliStateHandler;
         private Action<string> _cliAuthHandler;
 
-        private CancellationTokenSource _lifetime = new CancellationTokenSource();
+        // volatile for the same reason as _cli. The send helpers snapshot
+        // both fields atomically under _gate to close the TOCTOU window where
+        // teardown could null _lifetime between the _cli read and the token read.
+        private volatile CancellationTokenSource _lifetime = new CancellationTokenSource();
         private Timer _freezePump;
         private Timer _reconcileTimer;
 
@@ -268,6 +275,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void SweepFrozenMetadata()
         {
+            // Timer.Dispose does not block in-flight callbacks. Guard against
+            // the freeze pump firing after Dispose() began nulling fields.
+            if (_disposed) return;
             try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
             catch { }
         }
@@ -284,9 +294,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                     if (message.Payload is string version) UpdateServerVersion(version);
                     return;
 
+                case LmsMessageKind.PlayersResponse:
+                    ApplyPlayersResponse(message.Tokens);
+                    return;
+
                 case LmsMessageKind.ListenAck:
                 case LmsMessageKind.LoginAck:
-                case LmsMessageKind.PlayersResponse:
                 case LmsMessageKind.GlobalRaw:
                     return;
             }
@@ -387,6 +400,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void OnSmoothedServerConnectivity(LogicalConnectivityState committed)
         {
+            // The FSM timer can fire this callback after Dispose() began. Without
+            // this guard the body would touch _service, _registry, _cli, and the
+            // reconcile timer in the middle of teardown.
+            if (_disposed) return;
+
             var connected = committed == LogicalConnectivityState.Connected;
             _serverConnected = connected;
             ConnectionState = committed;
@@ -396,6 +414,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 NotifyPropertyChanged("lyrion:connectionState", new DriverEntityValue((long)ConnectionState));
             }
             catch { }
+
+            _service.RaiseServerConnectivityChanged(connected);
 
             if (connected)
             {
@@ -415,6 +435,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private void ReconcileBoundPlayers()
         {
             var macs = _registry.BoundMacs();
+
+            // CLAUDE.md §14: refresh the full player list first so playerids
+            // are reconciled before the per-MAC status queries start
+            // overwriting cached records.
+            SendCliLineSync(LmsCliCommands.QueryPlayers(0, 999));
+
             foreach (var mac in macs)
             {
                 _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac));
@@ -458,9 +484,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private bool SendCliLineSync(string line)
         {
-            var cli = _cli;
-            if (cli == null) return false;
-            var token = _lifetime?.Token ?? CancellationToken.None;
+            // Snapshot _cli and _lifetime atomically under _gate so a concurrent
+            // teardown cannot null _lifetime between the two reads (which would
+            // produce CancellationToken.None and leave the send uncancellable).
+            LmsCliClient cli;
+            CancellationToken token;
+            lock (_gate)
+            {
+                cli = _cli;
+                if (cli == null) return false;
+                token = _lifetime?.Token ?? CancellationToken.None;
+            }
             // Observe the task so OperationCanceledException during transport
             // teardown does not become an unobserved task exception.
             cli.SendLineAsync(line, token).ContinueWith(
@@ -473,9 +507,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private Task<bool> SendCliForPlayer(string mac, string line)
         {
-            var cli = _cli;
-            if (cli == null) return Task.FromResult(false);
-            var token = _lifetime?.Token ?? CancellationToken.None;
+            LmsCliClient cli;
+            CancellationToken token;
+            lock (_gate)
+            {
+                cli = _cli;
+                if (cli == null) return Task.FromResult(false);
+                token = _lifetime?.Token ?? CancellationToken.None;
+            }
             var send = cli.SendLineAsync(line, token);
             send.ContinueWith(
                 t => { _ = t.Exception; },
@@ -563,8 +602,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
 
             // Metadata — tags requested: g=genre, a=artist, l=album, d=duration,
-            // I=artwork_url (but artwork_url needs the HTTP prefix), K=artwork_track_id,
-            // o=type, N=remote_title, c=coverid, r=bitrate, y=year, u=url
+            // J=artwork_track_id, K=artwork_url, o=type, N=remote_title,
+            // c=coverid, r=bitrate, y=year, u=url
             var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
             var artist = TryGet(kv, "artist");
             var album = TryGet(kv, "album");
@@ -597,6 +636,50 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
         }
 
+        private void ApplyPlayersResponse(string[] tokens)
+        {
+            // Per CLAUDE.md §14, on reconnect we must re-resolve player ids
+            // for every configured MAC. LMS returns a flat token stream
+            // delimited by repeated "playerindex:N" markers; within each
+            // block "playerid:<id>" identifies the player. For hardware
+            // players the id IS the MAC, so any bound MAC that matches a
+            // playerid is confirmed present on the server.
+            if (tokens == null) return;
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            const string Prefix = "playerid:";
+            for (var i = 0; i < tokens.Length; i++)
+            {
+                var t = tokens[i];
+                if (string.IsNullOrEmpty(t)) continue;
+                if (!t.StartsWith(Prefix, StringComparison.Ordinal)) continue;
+
+                var value = t.Substring(Prefix.Length);
+                if (value.Length == 0) continue;
+
+                var normalized = MacAddress.Normalize(value);
+                if (normalized != null) seen.Add(normalized);
+
+                if (_registry.IsBound(value))
+                {
+                    _registry.SetPlayerId(value, value);
+                }
+            }
+
+            // Warn about any bound MAC the server did not report. The most
+            // likely cause is a typo in the Media/Volume driver's configured
+            // MAC; without this log the installer sees the driver's "Bound to
+            // MAC" success message and assumes everything is fine.
+            var bound = _registry.BoundMacs();
+            foreach (var mac in bound)
+            {
+                if (!seen.Contains(mac))
+                {
+                    _log("Gateway WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
+                }
+            }
+        }
+
         private static string TryGet(IDictionary<string, string> kv, string key)
         {
             return kv.TryGetValue(key, out var val) ? val : null;
@@ -613,9 +696,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private static Action<string> BuildLogger()
         {
+            // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
+            // defined in both Debug and Release builds, so these calls are
+            // compiled into production. Debug.WriteLine is stripped in Release
+            // and would leave installers with no log output at all.
             return message =>
             {
-                try { Debug.WriteLine("[Lyrion.Gateway] " + message); }
+                try { Trace.WriteLine("[Lyrion.Gateway " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
                 catch { }
             };
         }
@@ -639,7 +726,50 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             try { reconcile?.Dispose(); } catch { }
 
             try { _fsm.Dispose(); } catch { }
-            try { TeardownTransport(); } catch { }
+
+            // Synchronously stop the CLI client. The RebuildTransport path uses
+            // an async ContinueWith chain because it must not block the SDK
+            // configuration thread, but Dispose() is expected to be synchronous —
+            // letting the chain run after Dispose returns risks the Crestron
+            // host unloading the AppDomain before the socket is released.
+            LmsCliClient cliToDispose;
+            CancellationTokenSource ctsToDispose;
+            Action<LmsConnectionState> stateHandler;
+            Action<string> authHandler;
+            lock (_gate)
+            {
+                cliToDispose = _cli;
+                ctsToDispose = _lifetime;
+                stateHandler = _cliStateHandler;
+                authHandler = _cliAuthHandler;
+                _cli = null;
+                _lifetime = null;
+                _cliStateHandler = null;
+                _cliAuthHandler = null;
+            }
+            if (ctsToDispose != null)
+            {
+                try { ctsToDispose.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+            if (cliToDispose != null)
+            {
+                try { cliToDispose.MessageReceived -= OnCliMessage; } catch { }
+                if (stateHandler != null)
+                {
+                    try { cliToDispose.ConnectionStateChanged -= stateHandler; } catch { }
+                }
+                if (authHandler != null)
+                {
+                    try { cliToDispose.AuthenticationFailed -= authHandler; } catch { }
+                }
+                try { cliToDispose.Dispose(); } catch { } // bounded ~3s wait
+            }
+            if (ctsToDispose != null)
+            {
+                try { ctsToDispose.Dispose(); } catch { }
+            }
+            _serverConnected = false;
 
             base.Dispose();
         }

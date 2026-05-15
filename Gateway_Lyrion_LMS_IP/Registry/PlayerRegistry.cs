@@ -107,7 +107,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     rec.ShuffleEnabled,
                     rec.RepeatEnabled,
                     SnapshotMetadata(rec),
-                    rec.Presets);
+                    rec.Presets,
+                    rec.CanPowerOff,
+                    rec.SupportsVolume);
                 return true;
             }
         }

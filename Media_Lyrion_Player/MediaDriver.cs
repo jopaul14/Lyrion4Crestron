@@ -130,7 +130,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                             return new ConfigurationItemErrors(err, null);
                         }
 
-                        _configuredMac = canon;
+                        lock (_gate) { _configuredMac = canon; }
                         TryBindToGateway();
                         return null;
                     }
@@ -149,16 +149,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            // Guard against late delivery to a disposed driver. Subscribe
-            // inside the lock so a concurrent Dispose() cannot complete
-            // between the _disposed check and the event wiring — that race
-            // would otherwise leave handlers attached on a disposed driver
-            // and pin it alive through the service's delegate chain.
+            // May be invoked multiple times: once on initial subscription, and
+            // again whenever the Gateway driver is reloaded and a new service
+            // is registered. On re-notification we must detach from the old
+            // (now-dead) service and rebind to the new one.
+            //
+            // Guard against late delivery to a disposed driver. Swap inside
+            // the lock so a concurrent Dispose() cannot complete between the
+            // _disposed check and the event wiring.
             if (_disposed) return;
+
+            ILyrionGatewayService oldService;
             lock (_gate)
             {
                 if (_disposed) return;
+                if (ReferenceEquals(_gateway, service)) return;
+
+                oldService = _gateway;
                 _gateway = service;
+
+                // Clear _boundMac so TryBindToGateway does not short-circuit on
+                // the "already bound to this MAC" guard — we need to rebind to
+                // the new service instance.
+                _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
                 service.PowerStateChanged += OnPowerStateChanged;
@@ -166,6 +179,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 service.MetadataUpdated += OnMetadataUpdated;
                 service.ShuffleChanged += OnShuffleChanged;
                 service.RepeatChanged += OnRepeatChanged;
+            }
+
+            if (oldService != null)
+            {
+                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
+                try { oldService.ShuffleChanged -= OnShuffleChanged; } catch { }
+                try { oldService.RepeatChanged -= OnRepeatChanged; } catch { }
             }
 
             TryBindToGateway();
@@ -307,75 +330,99 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         public void PowerToggle() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Property update helpers =====
+        //
+        // Each helper locks _gate so the check-and-set-and-notify sequence is
+        // atomic. Events from the FSM timer (e.g. availability change on
+        // server disconnect) and the CLI receive thread (e.g. playback state
+        // change) can otherwise interleave and cause NotifyPropertyChanged to
+        // emit a value that is immediately overwritten by the other thread.
 
         private void UpdateAvailability(bool value)
         {
-            if (Available == value) return;
-            Available = value;
-            try { NotifyPropertyChanged("available", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (Available == value) return;
+                Available = value;
+                try { NotifyPropertyChanged("available", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdatePowerOn(bool value)
         {
-            if (PowerOn == value) return;
-            PowerOn = value;
-            try { NotifyPropertyChanged("powerOn", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (PowerOn == value) return;
+                PowerOn = value;
+                try { NotifyPropertyChanged("powerOn", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdatePlaybackState(LyrionPlaybackState value)
         {
-            if (PlaybackState == value) return;
-            PlaybackState = value;
-            try { NotifyPropertyChanged("playbackState", new DriverEntityValue((long)value)); } catch { }
+            lock (_gate)
+            {
+                if (PlaybackState == value) return;
+                PlaybackState = value;
+                try { NotifyPropertyChanged("playbackState", new DriverEntityValue((long)value)); } catch { }
+            }
         }
 
         private void UpdateShuffle(bool value)
         {
-            if (ShuffleEnabled == value) return;
-            ShuffleEnabled = value;
-            try { NotifyPropertyChanged("shuffleEnabled", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (ShuffleEnabled == value) return;
+                ShuffleEnabled = value;
+                try { NotifyPropertyChanged("shuffleEnabled", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdateRepeat(bool value)
         {
-            if (RepeatEnabled == value) return;
-            RepeatEnabled = value;
-            try { NotifyPropertyChanged("repeatEnabled", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (RepeatEnabled == value) return;
+                RepeatEnabled = value;
+                try { NotifyPropertyChanged("repeatEnabled", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdateMetadata(LyrionMetadata meta)
         {
             meta = meta ?? LyrionMetadata.Empty;
 
-            if (Title != meta.Title)
+            lock (_gate)
             {
-                Title = meta.Title;
-                try { NotifyPropertyChanged("title", new DriverEntityValue(Title)); } catch { }
-            }
-            if (Artist != meta.Artist)
-            {
-                Artist = meta.Artist;
-                try { NotifyPropertyChanged("artist", new DriverEntityValue(Artist)); } catch { }
-            }
-            if (Album != meta.Album)
-            {
-                Album = meta.Album;
-                try { NotifyPropertyChanged("album", new DriverEntityValue(Album)); } catch { }
-            }
-            if (ArtworkUrl != meta.ArtworkUrl)
-            {
-                ArtworkUrl = meta.ArtworkUrl;
-                try { NotifyPropertyChanged("artworkUrl", new DriverEntityValue(ArtworkUrl)); } catch { }
-            }
-            if (DurationSec != meta.DurationSeconds)
-            {
-                DurationSec = meta.DurationSeconds;
-                try { NotifyPropertyChanged("durationSec", new DriverEntityValue((long)DurationSec)); } catch { }
-            }
-            if (ElapsedSec != meta.PositionSeconds)
-            {
-                ElapsedSec = meta.PositionSeconds;
-                try { NotifyPropertyChanged("elapsedSec", new DriverEntityValue((long)ElapsedSec)); } catch { }
+                if (Title != meta.Title)
+                {
+                    Title = meta.Title;
+                    try { NotifyPropertyChanged("title", new DriverEntityValue(Title)); } catch { }
+                }
+                if (Artist != meta.Artist)
+                {
+                    Artist = meta.Artist;
+                    try { NotifyPropertyChanged("artist", new DriverEntityValue(Artist)); } catch { }
+                }
+                if (Album != meta.Album)
+                {
+                    Album = meta.Album;
+                    try { NotifyPropertyChanged("album", new DriverEntityValue(Album)); } catch { }
+                }
+                if (ArtworkUrl != meta.ArtworkUrl)
+                {
+                    ArtworkUrl = meta.ArtworkUrl;
+                    try { NotifyPropertyChanged("artworkUrl", new DriverEntityValue(ArtworkUrl)); } catch { }
+                }
+                if (DurationSec != meta.DurationSeconds)
+                {
+                    DurationSec = meta.DurationSeconds;
+                    try { NotifyPropertyChanged("durationSec", new DriverEntityValue((long)DurationSec)); } catch { }
+                }
+                if (ElapsedSec != meta.PositionSeconds)
+                {
+                    ElapsedSec = meta.PositionSeconds;
+                    try { NotifyPropertyChanged("elapsedSec", new DriverEntityValue((long)ElapsedSec)); } catch { }
+                }
             }
         }
 
@@ -403,9 +450,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private static Action<string> BuildLogger()
         {
+            // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
+            // defined in both Debug and Release builds, so these calls survive
+            // Release compilation. Debug.WriteLine is stripped in Release.
             return msg =>
             {
-                try { Debug.WriteLine("[Lyrion.Source] " + msg); }
+                try { Trace.WriteLine("[Lyrion.Source " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + msg); }
                 catch { }
             };
         }

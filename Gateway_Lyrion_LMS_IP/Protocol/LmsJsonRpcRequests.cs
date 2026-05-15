@@ -44,7 +44,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                 "status",
                 "-",
                 "1",
-                "tags:galdIKoNcryu"
+                "tags:galdJKoNcryu"
             });
         }
 

@@ -88,7 +88,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
                         }
                         else
                         {
-                            _configuredMac = canon;
+                            lock (_gate) { _configuredMac = canon; }
                         }
 
                         if (values.TryGetValue("_VolumeStep_", out var vStep) && vStep.HasValue)
@@ -124,21 +124,42 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            // Guard against late delivery to a disposed driver. Subscribe
-            // inside the lock so a concurrent Dispose() cannot complete
-            // between the _disposed check and the event wiring — that race
-            // would otherwise leave handlers attached on a disposed driver
-            // and pin it alive through the service's delegate chain.
+            // May be invoked multiple times: once on initial subscription, and
+            // again whenever the Gateway driver is reloaded and a new service
+            // is registered. On re-notification we must detach from the old
+            // (now-dead) service and rebind to the new one.
+            //
+            // Guard against late delivery to a disposed driver. Swap inside
+            // the lock so a concurrent Dispose() cannot complete between the
+            // _disposed check and the event wiring.
             if (_disposed) return;
+
+            ILyrionGatewayService oldService;
             lock (_gate)
             {
                 if (_disposed) return;
+                if (ReferenceEquals(_gateway, service)) return;
+
+                oldService = _gateway;
                 _gateway = service;
+
+                // Clear _boundMac so TryBindToGateway does not short-circuit on
+                // the "already bound to this MAC" guard — we need to rebind to
+                // the new service instance.
+                _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
                 service.PowerStateChanged += OnPowerStateChanged;
                 service.VolumeChanged += OnVolumeChanged;
                 service.MuteChanged += OnMuteChanged;
+            }
+
+            if (oldService != null)
+            {
+                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
+                try { oldService.MuteChanged -= OnMuteChanged; } catch { }
             }
 
             TryBindToGateway();
@@ -257,35 +278,53 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         public void PowerToggle() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Update helpers =====
+        //
+        // Each helper locks _gate so the check-and-set-and-notify sequence is
+        // atomic. Events from the FSM timer (availability) and the CLI
+        // receive thread (volume / mute / power) can otherwise interleave and
+        // cause NotifyPropertyChanged to emit a value that is immediately
+        // overwritten by the other thread.
 
         private void UpdateAvailability(bool value)
         {
-            if (Available == value) return;
-            Available = value;
-            try { NotifyPropertyChanged("lyrion:available", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (Available == value) return;
+                Available = value;
+                try { NotifyPropertyChanged("lyrion:available", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdatePowerOn(bool value)
         {
-            if (PowerOn == value) return;
-            PowerOn = value;
-            try { NotifyPropertyChanged("power:on", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (PowerOn == value) return;
+                PowerOn = value;
+                try { NotifyPropertyChanged("power:on", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         private void UpdateVolume(int value)
         {
             if (value < 0) value = 0;
             if (value > 100) value = 100;
-            if (Volume == value) return;
-            Volume = value;
-            try { NotifyPropertyChanged("audio:volume", new DriverEntityValue((long)value)); } catch { }
+            lock (_gate)
+            {
+                if (Volume == value) return;
+                Volume = value;
+                try { NotifyPropertyChanged("audio:volume", new DriverEntityValue((long)value)); } catch { }
+            }
         }
 
         private void UpdateMute(bool value)
         {
-            if (Muted == value) return;
-            Muted = value;
-            try { NotifyPropertyChanged("audio:muted", new DriverEntityValue(value)); } catch { }
+            lock (_gate)
+            {
+                if (Muted == value) return;
+                Muted = value;
+                try { NotifyPropertyChanged("audio:muted", new DriverEntityValue(value)); } catch { }
+            }
         }
 
         // ===== Helpers =====
@@ -312,9 +351,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
 
         private static Action<string> BuildLogger()
         {
+            // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
+            // defined in both Debug and Release builds, so these calls survive
+            // Release compilation. Debug.WriteLine is stripped in Release.
             return msg =>
             {
-                try { Debug.WriteLine("[Lyrion.Receiver] " + msg); }
+                try { Trace.WriteLine("[Lyrion.Receiver " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + msg); }
                 catch { }
             };
         }
