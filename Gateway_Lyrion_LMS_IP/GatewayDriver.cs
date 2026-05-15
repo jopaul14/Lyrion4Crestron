@@ -706,7 +706,50 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             try { reconcile?.Dispose(); } catch { }
 
             try { _fsm.Dispose(); } catch { }
-            try { TeardownTransport(); } catch { }
+
+            // Synchronously stop the CLI client. The RebuildTransport path uses
+            // an async ContinueWith chain because it must not block the SDK
+            // configuration thread, but Dispose() is expected to be synchronous —
+            // letting the chain run after Dispose returns risks the Crestron
+            // host unloading the AppDomain before the socket is released.
+            LmsCliClient cliToDispose;
+            CancellationTokenSource ctsToDispose;
+            Action<LmsConnectionState> stateHandler;
+            Action<string> authHandler;
+            lock (_gate)
+            {
+                cliToDispose = _cli;
+                ctsToDispose = _lifetime;
+                stateHandler = _cliStateHandler;
+                authHandler = _cliAuthHandler;
+                _cli = null;
+                _lifetime = null;
+                _cliStateHandler = null;
+                _cliAuthHandler = null;
+            }
+            if (ctsToDispose != null)
+            {
+                try { ctsToDispose.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+            if (cliToDispose != null)
+            {
+                try { cliToDispose.MessageReceived -= OnCliMessage; } catch { }
+                if (stateHandler != null)
+                {
+                    try { cliToDispose.ConnectionStateChanged -= stateHandler; } catch { }
+                }
+                if (authHandler != null)
+                {
+                    try { cliToDispose.AuthenticationFailed -= authHandler; } catch { }
+                }
+                try { cliToDispose.Dispose(); } catch { } // bounded ~3s wait
+            }
+            if (ctsToDispose != null)
+            {
+                try { ctsToDispose.Dispose(); } catch { }
+            }
+            _serverConnected = false;
 
             base.Dispose();
         }
