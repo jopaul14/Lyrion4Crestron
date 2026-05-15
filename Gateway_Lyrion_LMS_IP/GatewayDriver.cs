@@ -40,7 +40,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private readonly LyrionGatewayServiceImpl _service;
         private readonly ServerConnectivityFsm _fsm;
 
-        private LmsCliClient _cli;
+        // volatile: written under _gate but read locklessly from the SDK
+        // command thread, the FSM timer thread, and the CLI receive thread.
+        // ARM hardware (potential Crestron target) requires the acquire barrier
+        // that volatile provides; x86 happens to be safe without it.
+        private volatile LmsCliClient _cli;
 
         // CLI event delegates stored as fields so they can be unsubscribed
         // cleanly during transport rebuild. Anonymous lambdas would leak the
@@ -48,7 +52,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private Action<LmsConnectionState> _cliStateHandler;
         private Action<string> _cliAuthHandler;
 
-        private CancellationTokenSource _lifetime = new CancellationTokenSource();
+        // volatile for the same reason as _cli. The send helpers snapshot
+        // both fields atomically under _gate to close the TOCTOU window where
+        // teardown could null _lifetime between the _cli read and the token read.
+        private volatile CancellationTokenSource _lifetime = new CancellationTokenSource();
         private Timer _freezePump;
         private Timer _reconcileTimer;
 
@@ -477,9 +484,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private bool SendCliLineSync(string line)
         {
-            var cli = _cli;
-            if (cli == null) return false;
-            var token = _lifetime?.Token ?? CancellationToken.None;
+            // Snapshot _cli and _lifetime atomically under _gate so a concurrent
+            // teardown cannot null _lifetime between the two reads (which would
+            // produce CancellationToken.None and leave the send uncancellable).
+            LmsCliClient cli;
+            CancellationToken token;
+            lock (_gate)
+            {
+                cli = _cli;
+                if (cli == null) return false;
+                token = _lifetime?.Token ?? CancellationToken.None;
+            }
             // Observe the task so OperationCanceledException during transport
             // teardown does not become an unobserved task exception.
             cli.SendLineAsync(line, token).ContinueWith(
@@ -492,9 +507,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private Task<bool> SendCliForPlayer(string mac, string line)
         {
-            var cli = _cli;
-            if (cli == null) return Task.FromResult(false);
-            var token = _lifetime?.Token ?? CancellationToken.None;
+            LmsCliClient cli;
+            CancellationToken token;
+            lock (_gate)
+            {
+                cli = _cli;
+                if (cli == null) return Task.FromResult(false);
+                token = _lifetime?.Token ?? CancellationToken.None;
+            }
             var send = cli.SendLineAsync(line, token);
             send.ContinueWith(
                 t => { _ = t.Exception; },
