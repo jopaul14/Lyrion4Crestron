@@ -149,16 +149,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
-            // Guard against late delivery to a disposed driver. Subscribe
-            // inside the lock so a concurrent Dispose() cannot complete
-            // between the _disposed check and the event wiring — that race
-            // would otherwise leave handlers attached on a disposed driver
-            // and pin it alive through the service's delegate chain.
+            // May be invoked multiple times: once on initial subscription, and
+            // again whenever the Gateway driver is reloaded and a new service
+            // is registered. On re-notification we must detach from the old
+            // (now-dead) service and rebind to the new one.
+            //
+            // Guard against late delivery to a disposed driver. Swap inside
+            // the lock so a concurrent Dispose() cannot complete between the
+            // _disposed check and the event wiring.
             if (_disposed) return;
+
+            ILyrionGatewayService oldService;
             lock (_gate)
             {
                 if (_disposed) return;
+                if (ReferenceEquals(_gateway, service)) return;
+
+                oldService = _gateway;
                 _gateway = service;
+
+                // Clear _boundMac so TryBindToGateway does not short-circuit on
+                // the "already bound to this MAC" guard — we need to rebind to
+                // the new service instance.
+                _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
                 service.PowerStateChanged += OnPowerStateChanged;
@@ -166,6 +179,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 service.MetadataUpdated += OnMetadataUpdated;
                 service.ShuffleChanged += OnShuffleChanged;
                 service.RepeatChanged += OnRepeatChanged;
+            }
+
+            if (oldService != null)
+            {
+                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
+                try { oldService.ShuffleChanged -= OnShuffleChanged; } catch { }
+                try { oldService.RepeatChanged -= OnRepeatChanged; } catch { }
             }
 
             TryBindToGateway();
