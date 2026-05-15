@@ -403,9 +403,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private static Action<string> BuildLogger()
         {
+            // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
+            // defined in both Debug and Release builds, so these calls survive
+            // Release compilation. Debug.WriteLine is stripped in Release.
             return msg =>
             {
-                try { Debug.WriteLine("[Lyrion.Source] " + msg); }
+                try { Trace.WriteLine("[Lyrion.Source " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + msg); }
                 catch { }
             };
         }

@@ -224,6 +224,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
                 try
                 {
+                    _log("LmsCliClient: connecting to " + _host + ":" + _port
+                        + (attempt > 0 ? " (attempt " + (attempt + 1) + ")" : string.Empty));
+
                     tcp = new TcpClient { NoDelay = true };
                     EnableKeepAliveFlag(tcp);
                     await ConnectWithCancellationAsync(tcp, _host, _port, ct).ConfigureAwait(false);

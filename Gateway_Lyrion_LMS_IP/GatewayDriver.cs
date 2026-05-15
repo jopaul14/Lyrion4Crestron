@@ -616,6 +616,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // playerid is confirmed present on the server.
             if (tokens == null) return;
 
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             const string Prefix = "playerid:";
             for (var i = 0; i < tokens.Length; i++)
             {
@@ -626,9 +627,25 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 var value = t.Substring(Prefix.Length);
                 if (value.Length == 0) continue;
 
+                var normalized = MacAddress.Normalize(value);
+                if (normalized != null) seen.Add(normalized);
+
                 if (_registry.IsBound(value))
                 {
                     _registry.SetPlayerId(value, value);
+                }
+            }
+
+            // Warn about any bound MAC the server did not report. The most
+            // likely cause is a typo in the Media/Volume driver's configured
+            // MAC; without this log the installer sees the driver's "Bound to
+            // MAC" success message and assumes everything is fine.
+            var bound = _registry.BoundMacs();
+            foreach (var mac in bound)
+            {
+                if (!seen.Contains(mac))
+                {
+                    _log("Gateway WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
                 }
             }
         }
@@ -649,9 +666,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private static Action<string> BuildLogger()
         {
+            // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
+            // defined in both Debug and Release builds, so these calls are
+            // compiled into production. Debug.WriteLine is stripped in Release
+            // and would leave installers with no log output at all.
             return message =>
             {
-                try { Debug.WriteLine("[Lyrion.Gateway] " + message); }
+                try { Trace.WriteLine("[Lyrion.Gateway " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
                 catch { }
             };
         }
