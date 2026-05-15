@@ -284,9 +284,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                     if (message.Payload is string version) UpdateServerVersion(version);
                     return;
 
+                case LmsMessageKind.PlayersResponse:
+                    ApplyPlayersResponse(message.Tokens);
+                    return;
+
                 case LmsMessageKind.ListenAck:
                 case LmsMessageKind.LoginAck:
-                case LmsMessageKind.PlayersResponse:
                 case LmsMessageKind.GlobalRaw:
                     return;
             }
@@ -415,6 +418,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private void ReconcileBoundPlayers()
         {
             var macs = _registry.BoundMacs();
+
+            // CLAUDE.md §14: refresh the full player list first so playerids
+            // are reconciled before the per-MAC status queries start
+            // overwriting cached records.
+            SendCliLineSync(LmsCliCommands.QueryPlayers(0, 999));
+
             foreach (var mac in macs)
             {
                 _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac));
@@ -563,8 +572,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
 
             // Metadata — tags requested: g=genre, a=artist, l=album, d=duration,
-            // I=artwork_url (but artwork_url needs the HTTP prefix), K=artwork_track_id,
-            // o=type, N=remote_title, c=coverid, r=bitrate, y=year, u=url
+            // J=artwork_track_id, K=artwork_url, o=type, N=remote_title,
+            // c=coverid, r=bitrate, y=year, u=url
             var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
             var artist = TryGet(kv, "artist");
             var album = TryGet(kv, "album");
@@ -594,6 +603,33 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (kv.TryGetValue("canpoweroff", out var cpStr))
             {
                 _registry.SetCapabilities(mac, cpStr == "1", null);
+            }
+        }
+
+        private void ApplyPlayersResponse(string[] tokens)
+        {
+            // Per CLAUDE.md §14, on reconnect we must re-resolve player ids
+            // for every configured MAC. LMS returns a flat token stream
+            // delimited by repeated "playerindex:N" markers; within each
+            // block "playerid:<id>" identifies the player. For hardware
+            // players the id IS the MAC, so any bound MAC that matches a
+            // playerid is confirmed present on the server.
+            if (tokens == null) return;
+
+            const string Prefix = "playerid:";
+            for (var i = 0; i < tokens.Length; i++)
+            {
+                var t = tokens[i];
+                if (string.IsNullOrEmpty(t)) continue;
+                if (!t.StartsWith(Prefix, StringComparison.Ordinal)) continue;
+
+                var value = t.Substring(Prefix.Length);
+                if (value.Length == 0) continue;
+
+                if (_registry.IsBound(value))
+                {
+                    _registry.SetPlayerId(value, value);
+                }
             }
         }
 
