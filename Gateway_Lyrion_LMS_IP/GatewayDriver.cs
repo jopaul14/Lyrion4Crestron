@@ -268,6 +268,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void SweepFrozenMetadata()
         {
+            // Timer.Dispose does not block in-flight callbacks. Guard against
+            // the freeze pump firing after Dispose() began nulling fields.
+            if (_disposed) return;
             try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
             catch { }
         }
@@ -390,6 +393,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void OnSmoothedServerConnectivity(LogicalConnectivityState committed)
         {
+            // The FSM timer can fire this callback after Dispose() began. Without
+            // this guard the body would touch _service, _registry, _cli, and the
+            // reconcile timer in the middle of teardown.
+            if (_disposed) return;
+
             var connected = committed == LogicalConnectivityState.Connected;
             _serverConnected = connected;
             ConnectionState = committed;
