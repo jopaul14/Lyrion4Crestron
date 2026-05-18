@@ -102,7 +102,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
         {
             LogicalConnectivityState committed;
             bool publish = false;
-            bool clearOsc = false;
 
             lock (_gate)
             {
@@ -120,7 +119,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
                     _committed = _pending;
                     _lastCommittedUtc = DateTime.UtcNow;
                     publish = true;
-                    if (_oscillationLogged) clearOsc = true;
+                    // Clear inside the same lock that commits the transition so
+                    // a concurrent OnRawTransition cannot observe a stale "true"
+                    // and skip a legitimate oscillation log.
+                    _oscillationLogged = false;
                 }
                 committed = _committed;
             }
@@ -132,11 +134,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
 
             try { SmoothedTransition?.Invoke(committed); }
             catch { }
-
-            if (clearOsc)
-            {
-                lock (_gate) { _oscillationLogged = false; }
-            }
         }
 
         private static LogicalConnectivityState Map(LmsConnectionState raw)

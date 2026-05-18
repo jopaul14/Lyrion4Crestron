@@ -14,6 +14,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
     /// gateway driver is exposed; browse/favorites/playlist builders were
     /// removed per CLAUDE.md "EXPLICITLY REMOVED FEATURES".
     /// </summary>
+    /// <remarks>
+    /// <b>NOT CURRENTLY WIRED</b> — reserved for future use alongside
+    /// <see cref="Transport.LmsJsonRpcClient"/>. See security audit P2-3.
+    /// </remarks>
     internal static class LmsJsonRpcRequests
     {
         private const string SlimMethod = "slim.request";

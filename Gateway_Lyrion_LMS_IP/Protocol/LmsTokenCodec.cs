@@ -59,9 +59,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
             }
         }
 
-        // MAC addresses contain only [0-9a-fA-F:] — all safe for LMS CLI.
-        // Encoding colons would break player addressing.
-        public static string EncodeMac(string mac) => mac ?? string.Empty;
+        /// <summary>
+        /// Returns <paramref name="mac"/> unchanged after asserting it contains
+        /// only hex digits and colon/dash separators. Throws if the value
+        /// contains characters that could inject additional CLI tokens (spaces,
+        /// newlines, percent signs, etc.).
+        /// </summary>
+        /// <remarks>
+        /// Upstream callers already normalize MACs via <c>MacAddress.Normalize</c>,
+        /// so this check should never fail in practice. It exists as a defense-
+        /// in-depth barrier: if a future code path passes an unvalidated string,
+        /// this throws rather than silently emitting an injectable command.
+        /// </remarks>
+        public static string EncodeMac(string mac)
+        {
+            if (string.IsNullOrEmpty(mac)) return string.Empty;
+
+            for (var i = 0; i < mac.Length; i++)
+            {
+                var c = mac[i];
+                if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                    || (c >= 'A' && c <= 'F') || c == ':' || c == '-')
+                {
+                    continue;
+                }
+                throw new ArgumentException(
+                    "MAC contains characters outside [0-9a-fA-F:-].", nameof(mac));
+            }
+
+            return mac;
+        }
 
         private static bool IsUnreserved(byte b)
         {

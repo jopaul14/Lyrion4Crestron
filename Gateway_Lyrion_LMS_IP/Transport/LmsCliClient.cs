@@ -74,6 +74,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         private volatile Stream _stream;
         private volatile TcpClient _tcpClient;
 
+        // Lifecycle counters for diagnostics. Updated with Interlocked so they
+        // can be read locklessly from any thread. Useful for diagnosing slow
+        // socket leaks or reconnect storms in the field.
+        private long _connectCount;
+        private long _disconnectCount;
+
         public LmsCliClient(string host, int port, string username, string password, Action<string> log)
         {
             if (string.IsNullOrWhiteSpace(host))
@@ -106,6 +112,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         {
             get { lock (_stateLock) { return _state; } }
         }
+
+        /// <summary>Total successful connects since this client was created.</summary>
+        public long ConnectCount => Interlocked.Read(ref _connectCount);
+
+        /// <summary>Total disconnects (clean or faulted) since this client was created.</summary>
+        public long DisconnectCount => Interlocked.Read(ref _disconnectCount);
 
         public Task StartAsync(CancellationToken externalToken)
         {
@@ -423,22 +435,33 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             }
 
             try { MessageReceived?.Invoke(message); }
-            catch (Exception ex) { _log("LmsCliClient: message handler threw: " + ex); }
+            catch (Exception ex) { _log("LmsCliClient: message handler threw: " + ex.GetType().Name + ": " + ex.Message); }
         }
 
         private void SetState(LmsConnectionState newState)
         {
+            LmsConnectionState previous;
             bool changed;
             lock (_stateLock)
             {
-                changed = _state != newState;
+                previous = _state;
+                changed = previous != newState;
                 if (changed) _state = newState;
             }
 
             if (!changed) return;
 
+            if (newState == LmsConnectionState.Connected)
+            {
+                Interlocked.Increment(ref _connectCount);
+            }
+            else if (previous == LmsConnectionState.Connected)
+            {
+                Interlocked.Increment(ref _disconnectCount);
+            }
+
             try { ConnectionStateChanged?.Invoke(newState); }
-            catch (Exception ex) { _log("LmsCliClient: state change handler threw: " + ex); }
+            catch (Exception ex) { _log("LmsCliClient: state change handler threw: " + ex.GetType().Name + ": " + ex.Message); }
         }
 
         private void TeardownCurrentConnection(TcpClient tcp, Stream stream)

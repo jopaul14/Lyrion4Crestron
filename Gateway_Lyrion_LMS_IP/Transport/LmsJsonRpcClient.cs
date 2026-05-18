@@ -16,6 +16,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
     /// Stateless HTTP JSON-RPC client for LMS (<c>/jsonrpc.js</c>). Each call
     /// opens its own request; no persistent state or cache.
     /// </summary>
+    /// <remarks>
+    /// <b>NOT CURRENTLY WIRED</b> — no caller instantiates this class as of
+    /// v1.0. It is reserved for future use (e.g. preset discovery). Before
+    /// activation, review: (1) credential handling (Base64 Basic auth stored
+    /// in a managed string), (2) response validation, (3) caller-side JSON
+    /// parsing safety. See security audit P2-3.
+    /// </remarks>
     internal sealed class LmsJsonRpcClient
     {
         // Cap response size to defend against a malicious or compromised LMS
