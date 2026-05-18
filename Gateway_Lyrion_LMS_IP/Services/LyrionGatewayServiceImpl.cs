@@ -36,15 +36,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             _isServerConnected = isServerConnected ?? throw new ArgumentNullException(nameof(isServerConnected));
             _onPlayerBound = onPlayerBound ?? (_ => { });
 
-            registry.AvailabilityChanged += (mac, b) => AvailabilityChanged?.Invoke(mac, b);
-            registry.PowerStateChanged += (mac, b) => PowerStateChanged?.Invoke(mac, b);
-            registry.PlaybackStateChanged += (mac, s) => PlaybackStateChanged?.Invoke(mac, s);
-            registry.MetadataUpdated += (mac, m) => MetadataUpdated?.Invoke(mac, m);
-            registry.ShuffleChanged += (mac, b) => ShuffleChanged?.Invoke(mac, b);
-            registry.RepeatChanged += (mac, b) => RepeatChanged?.Invoke(mac, b);
-            registry.VolumeChanged += (mac, v) => VolumeChanged?.Invoke(mac, v);
-            registry.MuteChanged += (mac, b) => MuteChanged?.Invoke(mac, b);
-            registry.PresetsUpdated += (mac, p) => PresetsUpdated?.Invoke(mac, p);
+            // Multicast delegates short-circuit on the first throwing subscriber
+            // (e.g. a buggy Media driver would prevent the Volume driver from
+            // seeing the same event). Iterate the invocation list manually so
+            // one misbehaving consumer cannot suppress the others.
+            registry.AvailabilityChanged += (mac, b) => Fan2(AvailabilityChanged, mac, b);
+            registry.PowerStateChanged += (mac, b) => Fan2(PowerStateChanged, mac, b);
+            registry.PlaybackStateChanged += (mac, s) => Fan2(PlaybackStateChanged, mac, s);
+            registry.MetadataUpdated += (mac, m) => Fan2(MetadataUpdated, mac, m);
+            registry.ShuffleChanged += (mac, b) => Fan2(ShuffleChanged, mac, b);
+            registry.RepeatChanged += (mac, b) => Fan2(RepeatChanged, mac, b);
+            registry.VolumeChanged += (mac, v) => Fan2(VolumeChanged, mac, v);
+            registry.MuteChanged += (mac, b) => Fan2(MuteChanged, mac, b);
+            registry.PresetsUpdated += (mac, p) => Fan2(PresetsUpdated, mac, p);
+        }
+
+        private static void Fan2<T1, T2>(Action<T1, T2> handler, T1 a, T2 b)
+        {
+            if (handler == null) return;
+            var list = handler.GetInvocationList();
+            for (var i = 0; i < list.Length; i++)
+            {
+                try { ((Action<T1, T2>)list[i])(a, b); }
+                catch { }
+            }
         }
 
         // ===== Service identity =====
@@ -81,7 +96,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
 
         internal void RaiseServerConnectivityChanged(bool connected)
         {
-            try { ServerConnectivityChanged?.Invoke(connected); } catch { }
+            var handler = ServerConnectivityChanged;
+            if (handler == null) return;
+            var list = handler.GetInvocationList();
+            for (var i = 0; i < list.Length; i++)
+            {
+                try { ((Action<bool>)list[i])(connected); }
+                catch { }
+            }
         }
 
         // ===== Commands: Media (Driver 2) =====

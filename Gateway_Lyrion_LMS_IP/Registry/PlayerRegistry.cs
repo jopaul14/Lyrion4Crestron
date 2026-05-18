@@ -84,6 +84,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             }
         }
 
+        /// <summary>
+        /// Diagnostic record count. Useful for spotting record accumulation if
+        /// a consumer is recreated without calling <see cref="Unbind"/>.
+        /// </summary>
+        public int Count
+        {
+            get { lock (_gate) { return _records.Count; } }
+        }
+
         public bool TryGetSnapshot(string mac, out LyrionPlayerSnapshot snapshot)
         {
             var canon = MacAddress.Normalize(mac);

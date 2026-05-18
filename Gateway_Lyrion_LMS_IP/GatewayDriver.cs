@@ -174,10 +174,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void RebuildTransport()
         {
+            LmsCliClient oldCli;
+            CancellationTokenSource oldLifetime;
             lock (_gate)
             {
                 if (_disposed) return;
-                TeardownTransport_NoLock();
+                DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
 
                 var lifetime = new CancellationTokenSource();
                 _lifetime = lifetime;
@@ -195,19 +197,34 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 _ = cli.StartAsync(lifetime.Token);
             }
 
+            // Dispose OUTSIDE _gate: oldCli.Dispose() can block up to ~3s
+            // waiting for the worker task, and holding _gate that long would
+            // stall SendCliLineSync, OnSmoothedServerConnectivity's reconcile
+            // scheduling, and any other lock-takers.
+            DisposeOldTransport(oldCli, oldLifetime);
+
             _registry.SetServerConnected(false);
         }
 
         private void TeardownTransport()
         {
-            lock (_gate) { TeardownTransport_NoLock(); }
+            LmsCliClient oldCli;
+            CancellationTokenSource oldLifetime;
+            lock (_gate) { DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime); }
+            DisposeOldTransport(oldCli, oldLifetime);
             _registry.SetServerConnected(false);
         }
 
-        private void TeardownTransport_NoLock()
+        /// <summary>
+        /// Atomically nulls the transport fields, detaches event handlers, and
+        /// cancels the lifetime CTS. Returns the captured references so the
+        /// caller can dispose them OUTSIDE _gate.
+        /// </summary>
+        private void DetachAndCaptureTransport_NoLock(
+            out LmsCliClient oldCli, out CancellationTokenSource oldLifetime)
         {
-            var oldLifetime = _lifetime;
-            var oldCli = _cli;
+            oldLifetime = _lifetime;
+            oldCli = _cli;
             var oldStateHandler = _cliStateHandler;
             var oldAuthHandler = _cliAuthHandler;
 
@@ -215,9 +232,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             _cli = null;
             _cliStateHandler = null;
             _cliAuthHandler = null;
+            _serverConnected = false;
 
             // Cancel oldLifetime first so the linked token inside oldCli is
-            // signaled before we start tearing down.
+            // signaled before the caller starts disposing.
             if (oldLifetime != null)
             {
                 try { oldLifetime.Cancel(); }
@@ -235,31 +253,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 {
                     try { oldCli.AuthenticationFailed -= oldAuthHandler; } catch { }
                 }
-
-                // Chain the lifetime disposal AFTER oldCli.Dispose() runs.
-                // By that point oldCli has stopped its worker and disposed
-                // its own (linked) CTS, so no thread holds a token derived
-                // from oldLifetime — disposing it cannot race with RunAsync.
-                var lifetimeToDispose = oldLifetime;
-                try
-                {
-                    _ = oldCli.StopAsync(TimeSpan.FromSeconds(2)).ContinueWith(
-                        _ =>
-                        {
-                            try { oldCli.Dispose(); } catch { }
-                            try { lifetimeToDispose?.Dispose(); } catch { }
-                        },
-                        TaskScheduler.Default);
-                }
-                catch { }
             }
-            else if (oldLifetime != null)
-            {
-                // No CLI client to wait on — safe to dispose immediately.
-                try { oldLifetime.Dispose(); } catch { }
-            }
+        }
 
-            _serverConnected = false;
+        private static void DisposeOldTransport(LmsCliClient oldCli, CancellationTokenSource oldLifetime)
+        {
+            // Dispose CLI first so its inner Wait completes before the linked
+            // source it depends on is released. Both calls are bounded (~3s and
+            // O(1) respectively) and tolerant of double-cancel/double-dispose.
+            if (oldCli != null) try { oldCli.Dispose(); } catch { }
+            if (oldLifetime != null) try { oldLifetime.Dispose(); } catch { }
         }
 
         private void EnsureFreezePumpRunning()
@@ -419,6 +422,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             if (connected)
             {
+                // Single INFO line per reconnect with registry size and CLI
+                // lifecycle counters. Cheap to emit once per reconnect; lets
+                // installers spot record accumulation (Unbind not called by a
+                // consumer) or reconnect storms.
+                LmsCliClient cliSnap;
+                lock (_gate) { cliSnap = _cli; }
+                var connects = cliSnap?.ConnectCount ?? 0;
+                var disconnects = cliSnap?.DisconnectCount ?? 0;
+                try
+                {
+                    _log("Gateway: reconcile players=" + _registry.Count
+                        + " connects=" + connects + " disconnects=" + disconnects);
+                }
+                catch { }
+
                 // Reconnect is a hard state boundary: re-issue listen + a full
                 // status query for every bound MAC and let the responses
                 // recompute state in the registry. Re-publish all derived
@@ -727,49 +745,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             try { _fsm.Dispose(); } catch { }
 
-            // Synchronously stop the CLI client. The RebuildTransport path uses
-            // an async ContinueWith chain because it must not block the SDK
-            // configuration thread, but Dispose() is expected to be synchronous —
-            // letting the chain run after Dispose returns risks the Crestron
-            // host unloading the AppDomain before the socket is released.
+            // Detach and dispose using the same helper as RebuildTransport so
+            // the lock window stays tiny and the ~3s CLI dispose wait happens
+            // outside _gate. Dispose is expected to be synchronous; we accept
+            // blocking the caller here but not concurrent SDK lock-takers.
             LmsCliClient cliToDispose;
             CancellationTokenSource ctsToDispose;
-            Action<LmsConnectionState> stateHandler;
-            Action<string> authHandler;
-            lock (_gate)
-            {
-                cliToDispose = _cli;
-                ctsToDispose = _lifetime;
-                stateHandler = _cliStateHandler;
-                authHandler = _cliAuthHandler;
-                _cli = null;
-                _lifetime = null;
-                _cliStateHandler = null;
-                _cliAuthHandler = null;
-            }
-            if (ctsToDispose != null)
-            {
-                try { ctsToDispose.Cancel(); }
-                catch (ObjectDisposedException) { }
-            }
-            if (cliToDispose != null)
-            {
-                try { cliToDispose.MessageReceived -= OnCliMessage; } catch { }
-                if (stateHandler != null)
-                {
-                    try { cliToDispose.ConnectionStateChanged -= stateHandler; } catch { }
-                }
-                if (authHandler != null)
-                {
-                    try { cliToDispose.AuthenticationFailed -= authHandler; } catch { }
-                }
-                try { cliToDispose.Dispose(); } catch { } // bounded ~3s wait
-            }
-            if (ctsToDispose != null)
-            {
-                try { ctsToDispose.Dispose(); } catch { }
-            }
-            _serverConnected = false;
+            lock (_gate) { DetachAndCaptureTransport_NoLock(out cliToDispose, out ctsToDispose); }
+            DisposeOldTransport(cliToDispose, ctsToDispose);
 
             base.Dispose();
         }
