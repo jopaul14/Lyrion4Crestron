@@ -157,6 +157,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                     && int.TryParse(tokens[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out var vol))
                 {
                     if (vol < 0) vol = -vol;
+                    if (vol > 100) vol = 100;
                     return new LmsMessage(LmsMessageKind.Volume, mac, tokens, vol);
                 }
             }

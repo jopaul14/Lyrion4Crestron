@@ -625,7 +625,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
             var artist = TryGet(kv, "artist");
             var album = TryGet(kv, "album");
-            var artworkUrl = TryGet(kv, "artwork_url");
+            var artworkUrl = SanitizeArtworkUrl(TryGet(kv, "artwork_url"));
 
             int duration = -1;
             if (kv.TryGetValue("duration", out var durStr) &&
@@ -701,6 +701,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private static string TryGet(IDictionary<string, string> kv, string key)
         {
             return kv.TryGetValue(key, out var val) ? val : null;
+        }
+
+        /// <summary>
+        /// Reject artwork URLs that point outside the configured LMS server.
+        /// A compromised LMS could set artwork_url to an attacker-controlled
+        /// host; when the Crestron Home UI fetches it, the processor's IP would
+        /// be disclosed. Relative paths and same-host URLs are preserved; all
+        /// others are dropped.
+        /// </summary>
+        private string SanitizeArtworkUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return null;
+
+            // Relative paths (e.g. "/music/abcde/cover.jpg") are safe — the UI
+            // will resolve them against the configured host.
+            if (url[0] == '/') return url;
+
+            // Absolute URL: only allow if host matches the configured LMS host.
+            if (Uri.TryCreate(url, UriKind.Absolute, out var parsed))
+            {
+                if (string.Equals(parsed.Host, _host, StringComparison.OrdinalIgnoreCase))
+                {
+                    return url;
+                }
+                return null;
+            }
+
+            // Non-URI strings (e.g. just a filename) are passed through.
+            if (url.IndexOf("://", StringComparison.Ordinal) >= 0) return null;
+            return url;
         }
 
         private void UpdateServerVersion(string version)

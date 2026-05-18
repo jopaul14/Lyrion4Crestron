@@ -435,7 +435,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             }
 
             try { MessageReceived?.Invoke(message); }
-            catch (Exception ex) { _log("LmsCliClient: message handler threw: " + ex); }
+            catch (Exception ex) { _log("LmsCliClient: message handler threw: " + ex.GetType().Name + ": " + ex.Message); }
         }
 
         private void SetState(LmsConnectionState newState)
@@ -461,7 +461,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
             }
 
             try { ConnectionStateChanged?.Invoke(newState); }
-            catch (Exception ex) { _log("LmsCliClient: state change handler threw: " + ex); }
+            catch (Exception ex) { _log("LmsCliClient: state change handler threw: " + ex.GetType().Name + ": " + ex.Message); }
         }
 
         private void TeardownCurrentConnection(TcpClient tcp, Stream stream)

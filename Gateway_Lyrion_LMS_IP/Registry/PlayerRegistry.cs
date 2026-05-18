@@ -21,6 +21,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
     /// </remarks>
     internal sealed class PlayerRegistry
     {
+        private const int MaxStringLength = 1024;
+
         private readonly object _gate = new object();
         private readonly Dictionary<string, PlayerRecord> _records =
             new Dictionary<string, PlayerRecord>(StringComparer.OrdinalIgnoreCase);
@@ -416,10 +418,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             {
                 if (!_records.TryGetValue(canon, out var rec)) return;
 
-                rec.Title = title ?? rec.Title ?? string.Empty;
-                rec.Artist = artist ?? rec.Artist ?? string.Empty;
-                rec.Album = album ?? rec.Album ?? string.Empty;
-                rec.ArtworkUrl = artworkUrl ?? rec.ArtworkUrl ?? string.Empty;
+                rec.Title = Cap(title ?? rec.Title ?? string.Empty);
+                rec.Artist = Cap(artist ?? rec.Artist ?? string.Empty);
+                rec.Album = Cap(album ?? rec.Album ?? string.Empty);
+                rec.ArtworkUrl = Cap(artworkUrl ?? rec.ArtworkUrl ?? string.Empty);
                 if (durationSeconds >= 0) rec.DurationSeconds = durationSeconds;
                 if (positionSeconds >= 0) rec.PositionSeconds = positionSeconds;
                 rec.IsFrozen = false;
@@ -589,6 +591,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 rec.DurationSeconds,
                 rec.PositionSeconds,
                 rec.IsFrozen);
+        }
+
+        private static string Cap(string value)
+        {
+            return value.Length <= MaxStringLength ? value : value.Substring(0, MaxStringLength);
         }
     }
 }
