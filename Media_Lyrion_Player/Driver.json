@@ -18,7 +18,7 @@
       "Website": "https://github.com/jopaul14/Lyrion4Crestron",
       "PhoneNumber": "(555) 867-5309"
     },
-    "DriverVersion": "2.0.0.0",
+    "DriverVersion": "2.0.1.0",
     "VersionDate": "2026-05-12 00:00:00.000",
     "Description": "Lyrion Source. Per-room Extension Media Player for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service for all transport, metadata, shuffle, repeat, and power. Volume is handled by the companion Lyrion Receiver driver."
   },
