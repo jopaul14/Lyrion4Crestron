@@ -34,7 +34,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "playbackState")]
-        public LyrionPlaybackState PlaybackState { get; private set; } = LyrionPlaybackState.Stopped;
+        public string PlaybackState { get; private set; } = "Stopped";
 
         [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "available")]
@@ -360,11 +360,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         private void UpdatePlaybackState(LyrionPlaybackState value)
         {
+            var s = value.ToString();
             lock (_gate)
             {
-                if (PlaybackState == value) return;
-                PlaybackState = value;
-                try { NotifyPropertyChanged("playbackState", new DriverEntityValue((long)value)); } catch { }
+                if (PlaybackState == s) return;
+                PlaybackState = s;
+                try { NotifyPropertyChanged("playbackState", new DriverEntityValue(s)); } catch { }
             }
         }
 
