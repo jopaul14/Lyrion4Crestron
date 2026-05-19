@@ -70,7 +70,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         // Diagnostic-only entity properties.
         [EntityProperty(Id = "lyrion:connectionState")]
-        public LogicalConnectivityState ConnectionState { get; private set; } = LogicalConnectivityState.Disconnected;
+        public string ConnectionState { get; private set; } = "Disconnected";
 
         [EntityProperty(Id = "lyrion:serverVersion")]
         public string ServerVersion { get; private set; } = string.Empty;
@@ -410,11 +410,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             var connected = committed == LogicalConnectivityState.Connected;
             _serverConnected = connected;
-            ConnectionState = committed;
+            ConnectionState = committed.ToString().ToUpperInvariant();
 
             try
             {
-                NotifyPropertyChanged("lyrion:connectionState", new DriverEntityValue((long)ConnectionState));
+                NotifyPropertyChanged("lyrion:connectionState", new DriverEntityValue(ConnectionState));
             }
             catch { }
 
