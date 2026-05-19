@@ -44,9 +44,10 @@ If `ManifestUtil.exe` is missing, the `.dll` will still build but no `.pkg` is p
 
 ### 2.1 Visual Studio
 
-1. Open `Lyrion4Crestron.sln`.
-2. Select the **Release** configuration.
-3. Build > **Build Solution** (Ctrl+Shift+B).
+1. Microsoft Word must be installed on the computer where you're building, to generate the required DAT file inside the .pkg files.
+2. Open `Lyrion4Crestron.sln`.
+3. Select the **Release** configuration.
+4. Build > **Build Solution** (Ctrl+Shift+B).
 
 Output (per project):
 
@@ -76,6 +77,13 @@ You will see ManifestUtil print `Null Exception: String reference not set to an 
 
 You may also see `System.IO.FileLoadException` for `Microsoft.Office.Interop.Word` followed by `Error creating DAT file`. This is also harmless: ManifestUtil writes the `.pkg` first, then tries to generate a companion `.dat` file via Word COM interop. With no Word installed the `.dat` is skipped. The `.dat` is not required for the driver to run on a Crestron controller; the build target ignores ManifestUtil's exit code and verifies that the `.pkg` was actually produced.
 
+### 2.4 .pkg location
+
+After building, the .pkg files will be located under the following locations (dependent on your higher-level directory structure)
+Gateway_Lyrion_LMS_IP\bin\Release\net472\Gateway_Lyrion_LMS_IP.pkg
+Media_Lyrion_Player\bin\Release\net472\Media_Lyrion_Player.pkg
+Volume_Lyrion_Player\bin\Release\net472\Volume_Lyrion_Player.pkg
+
 ## 3. Overriding the SDK path
 
 ### Option A: environment variable
@@ -96,13 +104,18 @@ msbuild Lyrion4Crestron.sln /p:Configuration=Release /p:CrestronSdkPath=D:\Crest
 
 Deploy in this order:
 
-1. **Gateway first.** Copy `Gateway_Lyrion_LMS_IP.pkg` to `/user/` on the control system. Add it to the program, then configure it via the **Crestron Device Driver Configuration Tool**:
+1. **Copy .pkg files** to `Internal Flash/user/ThirdPartyDrivers/Import` on the control system using Crestron Toolbox
+   - Gateway_Lyrion_LMS_IP.pkg
+   - Media_Lyrion_Player.pkg
+   - Volume_Lyrion_Player.pkg (if using Lyrion to control volume/mute)
+
+2. **Gateway first.** Using the Crestron Home Setup app, Configure Pro, etc., add the Gateway - it's recommended to add this to an equipment or similar room.  Only one is needed per Crestron processor:
    - Server hostname or IP
    - HTTP port (default 9000)
    - CLI port (default 9090)
    - Optional username/password
 
-2. **Then Source / Receiver drivers.** For each player you want to control, deploy:
+2. **Then Source / Receiver drivers.** For each player you want to control, deploy the files listed below :
    - `Media_Lyrion_Player.pkg` (configure with the player MAC), and/or
    - `Volume_Lyrion_Player.pkg` (configure with the player MAC and volume step size).
 
