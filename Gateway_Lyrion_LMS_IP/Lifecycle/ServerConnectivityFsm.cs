@@ -159,7 +159,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
         }
     }
 
-    internal enum LogicalConnectivityState
+    public enum LogicalConnectivityState
     {
         Disconnected,
         Connecting,
