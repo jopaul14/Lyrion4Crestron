@@ -6,6 +6,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using Crestron.DeviceDrivers.API;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.EntityModel.Data;
 using Crestron.DeviceDrivers.SDK;
