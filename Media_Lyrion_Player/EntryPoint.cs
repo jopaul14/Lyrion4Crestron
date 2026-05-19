@@ -3,6 +3,8 @@
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
+using System;
+using System.IO;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.SDK;
 using Crestron.DeviceDrivers.SDK.EntityModel;
@@ -14,9 +16,23 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
 {
     public override DriverController CreateDriverControllerInstance(DriverControllerCreationArgs args)
     {
-        var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
-        var driver = new MediaDriver(args, resources);
-        var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
-        return new DispatchingDeviceController(entity, args, null);
+        try
+        {
+            var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
+            var driver = new MediaDriver(args, resources);
+            var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
+            return new DispatchingDeviceController(entity, args, null);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(typeof(EntryPoint).Assembly.Location) ?? ".";
+                File.WriteAllText(Path.Combine(dir, "media_init_error.log"),
+                    DateTime.UtcNow.ToString("o") + Environment.NewLine + ex);
+            }
+            catch { }
+            throw;
+        }
     }
 }
