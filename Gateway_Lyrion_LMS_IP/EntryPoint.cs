@@ -4,7 +4,6 @@
 // ---------------------------------------------------------------------------
 
 using System;
-using System.IO;
 using System.Reflection;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.SDK;
@@ -42,21 +41,7 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
 
     public override DriverController CreateDriverControllerInstance(DriverControllerCreationArgs args)
     {
-        try
-        {
-            return CreateImpl(args);
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                var dir = Path.GetDirectoryName(typeof(EntryPoint).Assembly.Location) ?? ".";
-                File.WriteAllText(Path.Combine(dir, "gateway_init_error.log"),
-                    DateTime.UtcNow.ToString("o") + Environment.NewLine + ex);
-            }
-            catch { }
-            throw;
-        }
+        return CreateImpl(args);
     }
 
     private static DriverController CreateImpl(DriverControllerCreationArgs args)
