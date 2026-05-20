@@ -81,6 +81,10 @@
     <EmbeddedResource Include="Driver.json">
       <LogicalName>$(AssemblyName).json</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\Common\bin\$(Configuration)\net472\Lyrion_Common.dll">
+      <LogicalName>Lyrion_Common.dll</LogicalName>
+      <Visible>false</Visible>
+    </EmbeddedResource>
   </ItemGroup>
 
   <Target Name="ValidateCrestronSdk" BeforeTargets="PrepareForBuild">
