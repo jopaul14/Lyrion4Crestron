@@ -109,23 +109,21 @@ Deploy in this order:
    - Media_Lyrion_Player.pkg
    - Volume_Lyrion_Player.pkg (if using Lyrion to control volume/mute)
 
-2. **Gateway first.** Using the Crestron Home Setup app, Configure Pro, etc., add the Gateway - it's recommended to add this to an equipment or similar room.  Only one is needed per Crestron processor:
+2. **Reboot the Crestron Home processor** - while it may not always be necessary, it sometimes helps.
+
+3. **Gateway first.** Using the Crestron Home Setup app, Configure Pro, etc., add the Gateway - it's recommended to add this to an equipment or similar room.  Only one is needed per Crestron processor:
    - Server hostname or IP
    - HTTP port (default 9000)
    - CLI port (default 9090)
    - Optional username/password
 
-2. **Then Source / Receiver drivers.** For each player you want to control, deploy the files listed below :
+4. **Then Source / Receiver drivers.** For each player you want to control, deploy the files listed below :
    - `Media_Lyrion_Player.pkg` (configure with the player MAC), and/or
    - `Volume_Lyrion_Player.pkg` (configure with the player MAC and volume step size).
 
    If you are using an external amp / AVR for the room you do not need the Receiver driver — just install the Source driver.
 
-3. **Route audio.** In Crestron Home, route the Source's digital or analog output to the Receiver's analog input, and from there to the room speakers.
-
-4. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.
-
-The Source and Receiver drivers will log a single `Bound to MAC ...` line and then surface state as it changes; the Gateway logs server connectivity transitions only.
+5. **Route audio.** In Crestron Home, route the Source's analog output to the Receiver's analog input, and from there to the room speakers.  If using a 3rd-party receiver, you can route the analog or digital output to the appropriate input on the 3rd-party receiver.
 
 ## 5. Troubleshooting
 
