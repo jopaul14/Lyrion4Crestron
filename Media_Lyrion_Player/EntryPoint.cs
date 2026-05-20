@@ -5,23 +5,46 @@
 
 using System;
 using System.IO;
+using System.Reflection;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.SDK;
 using Crestron.DeviceDrivers.SDK.EntityModel;
-using LyrionCommunity.Crestron.Lyrion.Media;
 
 [assembly: DriverAssemblyEntryPoint(typeof(EntryPoint))]
 
 public sealed class EntryPoint : DriverAssemblyEntryPoint
 {
+    static EntryPoint()
+    {
+        AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbeddedAssembly;
+    }
+
+    private static Assembly ResolveEmbeddedAssembly(object sender, ResolveEventArgs args)
+    {
+        var requested = new AssemblyName(args.Name).Name;
+        if (requested != "Lyrion_Common") return null;
+
+        var self = typeof(EntryPoint).Assembly;
+        using (var stream = self.GetManifestResourceStream("Lyrion_Common.dll"))
+        {
+            if (stream == null) return null;
+            var bytes = new byte[stream.Length];
+            var read = 0;
+            while (read < bytes.Length)
+            {
+                var n = stream.Read(bytes, read, bytes.Length - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            return Assembly.Load(bytes);
+        }
+    }
+
     public override DriverController CreateDriverControllerInstance(DriverControllerCreationArgs args)
     {
         try
         {
-            var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
-            var driver = new MediaDriver(args, resources);
-            var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
-            return new DispatchingDeviceController(entity, args, null);
+            return CreateImpl(args);
         }
         catch (Exception ex)
         {
@@ -34,5 +57,13 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
             catch { }
             throw;
         }
+    }
+
+    private static DriverController CreateImpl(DriverControllerCreationArgs args)
+    {
+        var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
+        var driver = new LyrionCommunity.Crestron.Lyrion.Media.MediaDriver(args, resources);
+        var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
+        return new DispatchingDeviceController(entity, args, null);
     }
 }
