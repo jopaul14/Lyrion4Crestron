@@ -8,9 +8,6 @@
     "OtherSupportedModels": [],
     "SupportedSeries": ["3-Series", "4-Series"],
     "DependencyGroup": "LyrionLMS",
-    "ExtensionDeviceData": {
-      "IsExtensionDevice": true
-    },
     "Developer": {
       "Company": "Lyrion Community",
       "Contact": "Bob Dylan",
@@ -20,7 +17,7 @@
     },
     "DriverVersion": "1.0.0",
     "VersionDate": "2026-05-12 00:00:00.000",
-    "Description": "Lyrion Source. Per-room Extension Media Player for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service for all transport, metadata, shuffle, repeat, and power. Volume is handled by the companion Lyrion Receiver driver."
+    "Description": "Lyrion Source. Per-room media player for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service for all transport, metadata, shuffle, repeat, and power. Volume is handled by the companion Lyrion Receiver driver."
   },
   "AudioOutputs": [
     {

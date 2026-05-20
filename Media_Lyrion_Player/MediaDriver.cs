@@ -8,7 +8,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.EntityModel.Data;
-using Crestron.DeviceDrivers.EntityModel.Logging;
 using Crestron.DeviceDrivers.SDK;
 using Crestron.DeviceDrivers.SDK.EntityModel;
 using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
@@ -32,47 +31,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         // ===== Public entity properties =====
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "playbackState")]
         public string PlaybackState { get; private set; } = "Stopped";
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "available")]
         public bool Available { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "powerOn")]
         public bool PowerOn { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "shuffleEnabled")]
         public bool ShuffleEnabled { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "repeatEnabled")]
         public bool RepeatEnabled { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "title")]
         public string Title { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "artist")]
         public string Artist { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "album")]
         public string Album { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "artworkUrl")]
         public string ArtworkUrl { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "durationSec")]
         public int DurationSec { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "elapsedSec")]
         public int ElapsedSec { get; private set; }
 
@@ -87,18 +75,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 ApplyConfigurationItems,
                 null,
                 null);
-
-            var uiDefinition = UiDefinitionProperty.LoadFromDirectoryIfExists(
-                args.DriverDataDirectoryPath, resources.InitLogger, LogEntryLevel.Error);
-            if (uiDefinition != null)
-            {
-                AddProperty(uiDefinition, UiDefinitionProperty.Name, uiDefinition);
-            }
-
-            AddCommand(this, ExtensionDoCommandExecutor.CommandName,
-                new ExtensionDoCommandExecutor(GetCommand, resources.Logger));
-            AddCommand(this, ExtensionSetPropertyValueExecutor.CommandName,
-                new ExtensionSetPropertyValueExecutor(GetCommand, resources.Logger));
 
             LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
         }
