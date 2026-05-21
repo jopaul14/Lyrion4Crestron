@@ -51,14 +51,24 @@
     <Reference Include="System.Core" />
   </ItemGroup>
 
+  <!--
+    RAD framework references. The Source driver is a RAD "Bluray Player"
+    (ABasicBlurayPlayer), not an Entity Model driver, so it links the RAD
+    assemblies instead of Crestron.DeviceDrivers.SDK/EntityModel/Core.
+  -->
   <ItemGroup>
-    <Reference Include="Crestron.DeviceDrivers.SDK">
-      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.SDK.dll</HintPath>
+    <Reference Include="RADCommon">
+      <HintPath>$(CrestronSdkPath)\Libraries\RADCommon.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Crestron.DeviceDrivers.EntityModel">
-      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.EntityModel.dll</HintPath>
+    <Reference Include="RADBlurayPlayer">
+      <HintPath>$(CrestronSdkPath)\Libraries\RADBlurayPlayer.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="RADProTransports">
+      <HintPath>$(CrestronSdkPath)\Libraries\RADProTransports.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
       <Private>True</Private>
     </Reference>
@@ -67,13 +77,15 @@
       <SpecificVersion>False</SpecificVersion>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Crestron.DeviceDrivers.Core">
-      <HintPath>$(CrestronSdkPath)\Libraries\Crestron.DeviceDrivers.Core.dll</HintPath>
-      <SpecificVersion>False</SpecificVersion>
-      <Private>True</Private>
-    </Reference>
   </ItemGroup>
 
+  <!--
+    Lyrion_Common.dll is shared by all four drivers. RAD drivers have no
+    DriverAssemblyEntryPoint to hook AssemblyResolve, so it is bundled into
+    the package as a plain dependency (declared in Driver.json's
+    CrestronSerialDeviceApi.Dependencies) rather than embedded. The project
+    reference copies it into the output directory for ManifestUtil to pick up.
+  -->
   <ItemGroup>
     <ProjectReference Include="..\Common\Lyrion_Common.csproj" />
   </ItemGroup>
@@ -81,10 +93,6 @@
   <ItemGroup>
     <EmbeddedResource Include="Driver.json">
       <LogicalName>$(AssemblyName).json</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="..\Common\bin\$(Configuration)\net472\Lyrion_Common.dll">
-      <LogicalName>Lyrion_Common.dll</LogicalName>
-      <Visible>false</Visible>
     </EmbeddedResource>
   </ItemGroup>
 
