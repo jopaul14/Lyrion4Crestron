@@ -1,14 +1,15 @@
 # Building the Lyrion Crestron Drivers
 
-The repository ships three Crestron Certified Drivers that build into three `.pkg` files:
+The repository ships four Crestron Certified Drivers that build into four `.pkg` files:
 
 | Driver | Output |
 |---|---|
-| `Gateway_Lyrion_LMS_IP` | `Gateway_Lyrion_LMS_IP.pkg` |
-| `Media_Lyrion_Player`   | `Media_Lyrion_Player.pkg`   |
-| `Volume_Lyrion_Player`  | `Volume_Lyrion_Player.pkg`  |
+| `Gateway_Lyrion_LMS_IP`   | `Gateway_Lyrion_LMS_IP.pkg`   |
+| `Source_Lyrion_Player`    | `Source_Lyrion_Player.pkg`    |
+| `Helper_Lyrion_Player`    | `Helper_Lyrion_Player.pkg`    |
+| `Receiver_Lyrion_Player`  | `Receiver_Lyrion_Player.pkg`  |
 
-Each `.pkg` is deployed to a Crestron control system independently. The Gateway must be installed once per home; the Media and Volume drivers are installed once per room/player.
+Each `.pkg` is deployed to a Crestron control system independently. The Gateway must be installed once per home; the Source, Helper, and Receiver drivers are installed once per room/player.
 
 ## 1. One-time prerequisites
 
@@ -81,8 +82,9 @@ You may also see `System.IO.FileLoadException` for `Microsoft.Office.Interop.Wor
 
 After building, the .pkg files will be located under the following locations (dependent on your higher-level directory structure)
 Gateway_Lyrion_LMS_IP\bin\Release\net472\Gateway_Lyrion_LMS_IP.pkg
-Media_Lyrion_Player\bin\Release\net472\Media_Lyrion_Player.pkg
-Volume_Lyrion_Player\bin\Release\net472\Volume_Lyrion_Player.pkg
+Source_Lyrion_Player\bin\Release\net472\Source_Lyrion_Player.pkg
+Helper_Lyrion_Player\bin\Release\net472\Helper_Lyrion_Player.pkg
+Receiver_Lyrion_Player\bin\Release\net472\Receiver_Lyrion_Player.pkg
 
 ## 3. Overriding the SDK path
 
@@ -106,8 +108,9 @@ Deploy in this order:
 
 1. **Copy .pkg files** to `Internal Flash/user/ThirdPartyDrivers/Import` on the control system using Crestron Toolbox
    - Gateway_Lyrion_LMS_IP.pkg
-   - Media_Lyrion_Player.pkg
-   - Volume_Lyrion_Player.pkg (if using Lyrion to control volume/mute)
+   - Source_Lyrion_Player.pkg
+   - Helper_Lyrion_Player.pkg
+   - Receiver_Lyrion_Player.pkg (if using Lyrion to control volume/mute)
 
 2. **Reboot the Crestron Home processor** - while it may not always be necessary, it sometimes helps.
 
@@ -117,13 +120,18 @@ Deploy in this order:
    - CLI port (default 9090)
    - Optional username/password
 
-4. **Then Source / Receiver drivers.** For each player you want to control, deploy the files listed below :
-   - `Media_Lyrion_Player.pkg` (configure with the player MAC), and/or
-   - `Volume_Lyrion_Player.pkg` (configure with the player MAC and volume step size).
+3. **Then Source / Helper / Receiver drivers.** For each player you want to control, deploy the files listed below — use the same player MAC address on all three:
+   - `Source_Lyrion_Player.pkg` (configure with the player MAC) — required for source routing
+   - `Helper_Lyrion_Player.pkg` (configure with the same player MAC) — required for the rich now-playing UI, shuffle, repeat, seek
+   - `Receiver_Lyrion_Player.pkg` (configure with the same player MAC and a volume step size) — optional
 
-   If you are using an external amp / AVR for the room you do not need the Receiver driver — just install the Source driver.
+   If you are using an external amp / AVR for the room you do not need the Receiver driver — just install the Source and Helper.
 
-5. **Route audio.** In Crestron Home, route the Source's analog output to the Receiver's analog input, and from there to the room speakers.  If using a 3rd-party receiver, you can route the analog or digital output to the appropriate input on the 3rd-party receiver.
+4. **Route audio.** In Crestron Home, route the Source's digital or analog output to the Receiver's matching input (or to a 3rd-party AVR), and from there to the room speakers.
+
+5. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.
+
+The Source, Helper, and Receiver drivers will each log a single `Bound to MAC ...` line and then surface state as it changes; the Gateway logs server connectivity transitions only.
 
 ## 5. Troubleshooting
 
@@ -131,5 +139,5 @@ Deploy in this order:
 - **`ManifestUtil.exe not found ...` warning** — `.dll` built, but no `.pkg` was produced. Install the full Crestron SDK (ManifestUtil is bundled).
 - **`Null Exception` from ManifestUtil for each SDK DLL** — Harmless (see section 2.3).
 - **`Microsoft.Office.Interop.Word` load failure** — Harmless. The `.pkg` is produced before this point; only the optional `.dat` doc file is skipped.
-- **Driver loads but Source/Receiver shows "unavailable"** — The Gateway is not connected to LMS, or the configured MAC does not match a player. Check the Gateway's `lyrion:connectionState` diagnostic property; the LMS web UI shows each player's MAC under Settings → Information.
-- **Source/Receiver does nothing** — The Gateway must be deployed and successfully connected to LMS before commands take effect. Commands issued while the Gateway is `DISCONNECTED` are dropped silently per design (CLAUDE.md "Commands dropped when server is not connected").
+- **Driver loads but Source/Helper/Receiver shows "unavailable"** — The Gateway is not connected to LMS, or the configured MAC does not match a player. Check the Gateway's `lyrion:connectionState` diagnostic property; the LMS web UI shows each player's MAC under Settings → Information.
+- **Source/Helper/Receiver does nothing** — The Gateway must be deployed and successfully connected to LMS before commands take effect. Commands issued while the Gateway is `DISCONNECTED` are dropped silently per design (CLAUDE.md "Commands dropped when server is not connected").

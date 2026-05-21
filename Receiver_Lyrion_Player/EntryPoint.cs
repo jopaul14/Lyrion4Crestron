@@ -1,10 +1,9 @@
 // ---------------------------------------------------------------------------
-//  Volume_Lyrion_Player - Lyrion Receiver (Driver 3 of 3)
+//  Receiver_Lyrion_Player - Lyrion Receiver (Driver 4 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
-using System.IO;
 using System.Reflection;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.SDK;
@@ -42,27 +41,13 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
 
     public override DriverController CreateDriverControllerInstance(DriverControllerCreationArgs args)
     {
-        try
-        {
-            return CreateImpl(args);
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                var dir = Path.GetDirectoryName(typeof(EntryPoint).Assembly.Location) ?? ".";
-                File.WriteAllText(Path.Combine(dir, "volume_init_error.log"),
-                    DateTime.UtcNow.ToString("o") + Environment.NewLine + ex);
-            }
-            catch { }
-            throw;
-        }
+        return CreateImpl(args);
     }
 
     private static DriverController CreateImpl(DriverControllerCreationArgs args)
     {
         var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
-        var driver = new LyrionCommunity.Crestron.Lyrion.Volume.VolumeDriver(args, resources);
+        var driver = new LyrionCommunity.Crestron.Lyrion.Receiver.ReceiverDriver(args, resources);
         var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
         return new DispatchingDeviceController(entity, args, null);
     }

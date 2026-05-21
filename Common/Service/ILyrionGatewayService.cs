@@ -10,9 +10,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
     /// Cross-driver contract published by the Gateway driver (Driver 1) and
-    /// consumed by the Media (Driver 2) and Volume (Driver 3) drivers. All
-    /// state mutation goes through this interface; Drivers 2 and 3 never
-    /// open sockets to LMS.
+    /// consumed by the Source (Driver 2), Helper (Driver 3), and Receiver
+    /// (Driver 4) drivers. All state mutation goes through this interface;
+    /// Drivers 2, 3, and 4 never open sockets to LMS.
     /// </summary>
     /// <remarks>
     /// <para><b>Threading contract:</b> Events are raised on the CLI receive
@@ -113,7 +113,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// </summary>
         event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
 
-        // ===== Commands from Driver 2 (Media Source) =====
+        // ===== Commands from Driver 2 (Source) and Driver 3 (Helper) =====
 
         void Play(string mac);
         void Pause(string mac);
@@ -144,7 +144,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// </param>
         void ActivatePreset(string mac, string presetId);
 
-        // ===== Commands from Driver 3 (Volume Receiver) =====
+        // ===== Commands from Driver 4 (Receiver) =====
 
         /// <summary>Sets the absolute volume level.</summary>
         /// <param name="mac">Player MAC address (any valid format).</param>

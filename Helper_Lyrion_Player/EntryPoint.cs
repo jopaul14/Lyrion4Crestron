@@ -1,6 +1,9 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 3)
+//  Helper_Lyrion_Player - Lyrion Helper (Driver 3 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
+//
+//  Phase 1 status: skeleton placeholder. Entity Model entry point until the
+//  Phase 4 conversion to RAD AExtensionDevice.
 // ---------------------------------------------------------------------------
 
 using System;
@@ -47,7 +50,7 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
     private static DriverController CreateImpl(DriverControllerCreationArgs args)
     {
         var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
-        var driver = new LyrionCommunity.Crestron.Lyrion.Gateway.GatewayDriver(args, resources);
+        var driver = new LyrionCommunity.Crestron.Lyrion.Helper.HelperDriver(args, resources);
         var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
         return new DispatchingDeviceController(entity, args, null);
     }

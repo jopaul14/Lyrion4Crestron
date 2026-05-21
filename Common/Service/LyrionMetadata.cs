@@ -7,7 +7,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
     /// Immutable snapshot of metadata for a single player. Instances are
-    /// produced by the Gateway driver and consumed read-only by Media drivers.
+    /// produced by the Gateway driver and consumed read-only by Helper drivers.
     /// </summary>
     public sealed class LyrionMetadata
     {

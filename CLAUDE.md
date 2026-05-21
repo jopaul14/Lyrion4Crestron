@@ -31,7 +31,13 @@ This architecture must be refactored.
 TARGET END STATE (NEW ARCHITECTURE)
 
 
-Refactor to a three-driver architecture designed specifically for Crestron Home.
+Refactor to a four-driver architecture designed specifically for Crestron Home.
+Crestron Home does not support 3rd-party "Media Player" devices as routable
+sources. To get a routable audio source plus a rich now-playing UI, the work
+must be split across a routing-capable RAD driver (Bluray Player) and an
+extension device (Media Player) that owns the UI. This split is the same
+pattern used by BluOS, Linn, WiiM, and VSSL integrations.
+
 DRIVER 1 – LYRION SERVER (GATEWAY)
 
 Single instance per home
@@ -48,22 +54,44 @@ Logging
 
 Exposes a service API using Crestron SDK service registration
 
-DRIVER 2 – LYRION SOURCE (PER-ROOM MEDIA SOURCE)
+DRIVER 2 – LYRION SOURCE (PER-ROOM ROUTABLE AUDIO SOURCE)
 
 One instance per room / per player
 Configured by MAC address only
 Never connects to LMS directly
-Sends user intent to Driver 1
-Receives state/events from Driver 1
+Sends transport intent to Driver 1
+Receives playback / power / availability state from Driver 1
+Routable audio source — declares analog and digital audio outputs
+Exposes only the transport / power controls natively supported by the
+RAD Bluray Player type (Play / Pause / Stop / Next / Prev / Power)
 No volume control
+No rich now-playing UI (that lives in Driver 3)
 
-DRIVER 3 – LYRION RECEIVER (OPTIONAL PER-ROOM ENDPOINT)
+DRIVER 3 – LYRION HELPER (PER-ROOM RICH UI / EXTENSION)
+
+One instance per room / per player
+Configured by MAC address only
+Extension device (IsExtensionDevice = true); no routing role
+Never connects to LMS directly
+Hosts the full Crestron Home media-player UI:
+
+Now-playing title / artist / album / artwork / elapsed / duration
+Transport controls (Play / Pause / Stop / Next / Prev / Seek)
+Shuffle (boolean) and Repeat (boolean)
+Power commands
+
+
+Sends user intent to Driver 1
+Receives state and metadata events from Driver 1
+
+DRIVER 4 – LYRION RECEIVER (OPTIONAL PER-ROOM ENDPOINT)
 
 One instance per room / per player
 Configured by MAC address only
 Never connects to LMS directly
-Provides room volume, mute, and power
-Optional (external amps/AVRs may be used instead)
+Provides room volume, mute, power, and routing endpoint
+Declares analog and digital audio inputs plus speaker outputs
+Optional (a 3rd-party AVR may be used as the room endpoint instead)
 
 
 
@@ -72,18 +100,19 @@ PACKAGING & ARCHITECTURE (FINAL)
 
 
 
-Implement three separate Crestron driver packages / assemblies:
+Implement four separate Crestron driver packages / assemblies:
 
-Gateway_Lyrion_LMS_IP    → Driver 1 (Lyrion Server)
-Media_Lyrion_Player     → Driver 2 (Lyrion Source)
-Volume_Lyrion_Player    → Driver 3 (Lyrion Receiver)
+Gateway_Lyrion_LMS_IP   → Driver 1 (Lyrion Server)    — Entity Model SDK, DeviceType "Platform"
+Source_Lyrion_Player    → Driver 2 (Lyrion Source)    — RAD framework, DeviceType "Bluray Player"
+Helper_Lyrion_Player    → Driver 3 (Lyrion Helper)    — RAD framework extension, DeviceType "Media Player"
+Receiver_Lyrion_Player  → Driver 4 (Lyrion Receiver)  — RAD framework, DeviceType "AV Receiver"
 
 
 
 Driver 1 is the ONLY LMS network client
 
 
-Driver 2 and Driver 3 must NEVER:
+Drivers 2, 3, and 4 must NEVER:
 
 Open sockets to LMS
 Issue LMS CLI or JSON-RPC commands
@@ -92,8 +121,9 @@ Issue LMS CLI or JSON-RPC commands
 
 Inter-driver communication MUST use Crestron SDK service registration
 
-Driver 1 exposes a service
-Driver 2 and Driver 3 consume it
+Driver 1 exposes a service (ILyrionGatewayService) via LyrionGatewayServiceRegistry
+Drivers 2, 3, and 4 consume it
+All four packages share DependencyGroup "LyrionLMS" so they load into the same AppDomain
 
 
 
@@ -105,42 +135,65 @@ CRESTRON HOME DEVICE TYPES & UI IDENTITY (FINAL)
 DRIVER 1 – LYRION SERVER
 
 Display name: Lyrion Server
+DeviceType: Platform
 Represents the LMS instance
 No room assignment
 
 DRIVER 2 – LYRION SOURCE
 
 Display name: Lyrion Source
-Device type: Extension Media Player
+DeviceType: Bluray Player (RAD)
+Acts as the routable audio source in the Crestron Home Source Routes graph
+Must expose only what RAD Bluray Player supports natively:
+
+Play / Pause / Stop
+ForwardSkip (Next) / ReverseSkip (Previous)
+PowerOn / PowerOff / TogglePower
+
+
+Must declare audio outputs in CrestronSerialDeviceApi.Api.AudioInOut.Outputs:
+
+One digital audio output (Coaxial Digital, connector 30)
+One analog audio output (RCA Analog, connector 40)
+
+
+Must NOT expose volume, mute, shuffle, repeat, seek, or rich metadata.
+
+DRIVER 3 – LYRION HELPER
+
+Display name: Lyrion Helper
+DeviceType: Media Player (RAD extension)
+ExtensionDeviceData.IsExtensionDevice: true
+Not part of the audio routing graph
+Hosts the rich Crestron Home media-player UI for one room
 Must expose:
 
-Transport controls
-Now Playing metadata
-Shuffle and Repeat (boolean only)
-Power commands
+Now-playing metadata (Title, Artist, Album, ArtworkUrl, Elapsed, Duration)
+Transport controls (Play / Pause / Stop / Next / Previous / Seek)
+Shuffle (boolean) and Repeat (boolean)
+PowerOn / PowerOff / PowerToggle
 
 
-Must provide:
+Custom controls / now-playing layout are defined via a PairedExtensionUi.xml
+file shipped inside the package.
 
-One digital audio output
-One analog audio output
-
-
-
-DRIVER 3 – LYRION RECEIVER
+DRIVER 4 – LYRION RECEIVER
 
 Display name: Lyrion Receiver
-Device type: AV receiver–style endpoint
+DeviceType: AV Receiver (RAD)
+Acts as a routing endpoint in the Crestron Home Source Routes graph
 Must expose:
 
-Volume (0–100)
+Volume (0–100, absolute + step up/down)
 Mute
-Power
+PowerOn / PowerOff / TogglePower
+Input selection (routes Source's digital or analog output)
 
 
-Must provide:
+Must declare in CrestronSerialDeviceApi.Api.AudioInOut:
 
-One analog audio input
+One digital audio input (Coaxial Digital, connector 30)
+One analog audio input (RCA Analog, connector 40)
 Speaker outputs for the room
 
 
@@ -162,9 +215,13 @@ DRIVER 2 – LYRION SOURCE
 
 Player MAC address (required)
 
-DRIVER 3 – LYRION RECEIVER
+DRIVER 3 – LYRION HELPER
 
-Player MAC address (required)
+Player MAC address (required) — must match the Source for the same room
+
+DRIVER 4 – LYRION RECEIVER
+
+Player MAC address (required) — must match the Source for the same room
 Volume step size (required, default 2, user-changeable)
 
 
@@ -183,7 +240,8 @@ No browse trees
 
 
 Any per-player LMS network logic outside Driver 1
-Volume control in Driver 2
+Volume control in Drivers 2 and 3
+Now-playing / shuffle / repeat / seek in Driver 2 (these live in Driver 3 only)
 
 
 
@@ -204,11 +262,18 @@ Persistent CLI client structure
 Stateless JSON-RPC HTTP client structure
 Modify retry, backoff, and logging behavior only
 
+Inter-driver service:
+
+ILyrionGatewayService contract in Common/Service
+LyrionGatewayServiceRegistry
+LyrionPlayerSnapshot / LyrionMetadata / LyrionPlaybackState / MacAddress
+
 Build & SDK:
 
-SDK V2 / Entity Model usage
+Entity Model SDK for Driver 1 (Gateway)
+RAD framework (CrestronSerialDeviceApi JSON + RAD base classes) for Drivers 2, 3, 4
 net472 targeting
-Existing build and packaging flow (adapted to 3 packages)
+Existing build and packaging flow (adapted to 4 packages)
 
 
 
@@ -227,7 +292,7 @@ Availability
 Logging
 
 
-Driver 2 and Driver 3 are thin adapters:
+Drivers 2, 3, and 4 are thin adapters:
 
 Bind by MAC
 Send commands
@@ -236,7 +301,7 @@ Display state
 
 
 B) SHUFFLE / REPEAT (BOOLEAN ONLY)
-Expose to Crestron Home:
+Expose to Crestron Home via Driver 3 (Helper):
 
 ShuffleEnabled (boolean)
 RepeatEnabled (boolean)
@@ -247,7 +312,7 @@ Shuffle ON → LMS Shuffle Song
 Repeat ON → LMS Repeat Playlist
 
 C) POWER SEMANTICS (DRIVER 1 OWNS)
-Expose to Driver 2 and Driver 3:
+Expose to Drivers 2, 3, and 4:
 
 PowerOn
 PowerOff
@@ -259,7 +324,7 @@ Derivation:
 isOn = true  → play or pause
 isOn = false → stop or unavailable
 
-D) VOLUME (DRIVER 3 ONLY)
+D) VOLUME (DRIVER 4 ONLY)
 
 Scale: 0–100
 Absolute volume + step up/down
@@ -290,7 +355,7 @@ On reconnect, Driver 1 must:
 - Recompute playback state (play / pause / stop)
 - Recompute volume and mute state
 - Recompute shuffle and repeat state
-- Republish all derived state to Driver 2 and Driver 3
+- Republish all derived state to Drivers 2, 3, and 4
 - Then republish metadata according to the metadata freeze/clear rules
 
 Reconnect handling must be idempotent and safe to execute more than once.
@@ -373,8 +438,8 @@ STRUCTURED LOGGING (MINIMAL & FLASH-SAFE)
 GENERAL
 
 Driver 1 is the only meaningful logger
-Driver 2 and Driver 3 log only once:
-"Bound to MAC …"
+Drivers 2, 3, and 4 log only once at startup:
+"Source: Bound to MAC …" / "Helper: Bound to MAC …" / "Receiver: Bound to MAC …"
 
 SERVER LOGGING (DRIVER 1)
 
@@ -408,7 +473,18 @@ No retry-attempt logs
 DRIVER CONTRACTS (MANDATORY)
 
 
-DRIVER 1 → DRIVER 2 EVENTS
+DRIVER 1 → DRIVER 2 EVENTS (Source)
+
+OnAvailabilityChanged(mac, bool)
+OnPowerStateChanged(mac, bool)
+OnPlaybackStateChanged(mac, Playing|Paused|Stopped)
+
+DRIVER 2 → DRIVER 1 COMMANDS (Source)
+
+Play / Pause / Stop / Next / Previous
+PowerOn / PowerOff / PowerToggle
+
+DRIVER 1 → DRIVER 3 EVENTS (Helper)
 
 OnAvailabilityChanged(mac, bool)
 OnPowerStateChanged(mac, bool)
@@ -418,7 +494,7 @@ OnShuffleChanged(bool)
 OnRepeatChanged(bool)
 OnPresetsUpdated(optional)
 
-DRIVER 2 → DRIVER 1 COMMANDS
+DRIVER 3 → DRIVER 1 COMMANDS (Helper)
 
 Play / Pause / Stop / Next / Previous / Seek
 SetShuffle(bool)
@@ -426,14 +502,14 @@ SetRepeat(bool)
 PowerOn / PowerOff / PowerToggle
 ActivatePreset(optional)
 
-DRIVER 1 → DRIVER 3 EVENTS
+DRIVER 1 → DRIVER 4 EVENTS (Receiver)
 
 OnAvailabilityChanged(mac, bool)
 OnPowerStateChanged(mac, bool)
 OnVolumeChanged(mac, 0..100)
 OnMuteChanged(mac, bool)
 
-DRIVER 3 → DRIVER 1 COMMANDS
+DRIVER 4 → DRIVER 1 COMMANDS (Receiver)
 
 SetVolume(0..100)
 VolumeUp / VolumeDown
@@ -446,9 +522,11 @@ CRESTRON HOME ROUTING EXPECTATIONS
 
 
 
-Lyrion Source outputs are routed to Lyrion Receiver inputs
-Lyrion Receiver controls room volume, mute, and power
-Driver 2 never controls volume directly
+Driver 2 (Source) appears as a routable audio source with one digital and one analog output
+Driver 4 (Receiver) appears as a routing endpoint with one digital input, one analog input, and speaker outputs
+Source outputs are routed to Receiver inputs (or to a 3rd-party AVR in place of Driver 4)
+Driver 4 controls room volume, mute, and power
+Drivers 2 and 3 never control volume directly
 
 
 
@@ -462,8 +540,10 @@ Player reboot logs only for affected MAC
 No per-player logs during server outage
 Sleep is completely removed
 Favorites / browsing not present
-Volume works 0–100 end‑to‑end
-Shuffle and Repeat map correctly
+Driver 2 appears as a routable source in Crestron Home Source Routes
+Driver 3 surfaces the rich media-player UI in the Crestron Home room view
+Driver 4 appears as a routable endpoint and controls room volume 0–100
+Shuffle and Repeat map correctly via Driver 3
 Metadata freeze/clear works as specified
 
 
@@ -489,7 +569,7 @@ This confirms the correctness of this project's design where:
 
 Driver 1 is the only LMS client
 All player state is owned and derived centrally
-Driver 2 and Driver 3 are thin adapters
+Drivers 2, 3, and 4 are thin adapters
 
 
 SERVER‑DOMINANT AVAILABILITY
@@ -585,8 +665,9 @@ NO MONOLITHIC DEVICE MODEL
 Home Assistant represents each player as a single "media_player" entity.
 This project intentionally separates:
 
-Media source (Driver 2)
-Audio endpoint / volume control (Driver 3)
+Routable audio source (Driver 2)
+Rich now-playing UI extension (Driver 3)
+Audio endpoint / volume control (Driver 4)
 
 Do NOT collapse these into a single device abstraction.
 

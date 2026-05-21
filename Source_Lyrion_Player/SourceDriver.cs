@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Media_Lyrion_Player - Lyrion Source (Driver 2 of 3)
+//  Source_Lyrion_Player - Lyrion Source (Driver 2 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -8,19 +8,18 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.EntityModel.Data;
-using Crestron.DeviceDrivers.EntityModel.Logging;
 using Crestron.DeviceDrivers.SDK;
 using Crestron.DeviceDrivers.SDK.EntityModel;
 using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Media
+namespace LyrionCommunity.Crestron.Lyrion.Source
 {
     /// <summary>
     /// Per-room media source entity. Surfaces transport, now-playing,
     /// shuffle/repeat (boolean), and power. Never opens a socket to LMS.
     /// </summary>
-    public sealed class MediaDriver : ReflectedAttributeDriverEntity, IDisposable
+    public sealed class SourceDriver : ReflectedAttributeDriverEntity, IDisposable
     {
         private readonly Action<string> _log;
         private readonly object _gate = new object();
@@ -32,51 +31,40 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
         // ===== Public entity properties =====
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "playbackState")]
         public string PlaybackState { get; private set; } = "Stopped";
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "available")]
         public bool Available { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "powerOn")]
         public bool PowerOn { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "shuffleEnabled")]
         public bool ShuffleEnabled { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "repeatEnabled")]
         public bool RepeatEnabled { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "title")]
         public string Title { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "artist")]
         public string Artist { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "album")]
         public string Album { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "artworkUrl")]
         public string ArtworkUrl { get; private set; } = string.Empty;
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "durationSec")]
         public int DurationSec { get; private set; }
 
-        [EntityPropertyMetadata(ExtensionUiProperty = true)]
         [EntityProperty(Id = "elapsedSec")]
         public int ElapsedSec { get; private set; }
 
-        public MediaDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
+        public SourceDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
             _log = BuildLogger();
@@ -87,18 +75,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
                 ApplyConfigurationItems,
                 null,
                 null);
-
-            var uiDefinition = UiDefinitionProperty.LoadFromDirectoryIfExists(
-                args.DriverDataDirectoryPath, resources.InitLogger, LogEntryLevel.Error);
-            if (uiDefinition != null)
-            {
-                AddProperty(uiDefinition, UiDefinitionProperty.Name, uiDefinition);
-            }
-
-            AddCommand(this, ExtensionDoCommandExecutor.CommandName,
-                new ExtensionDoCommandExecutor(GetCommand, resources.Logger));
-            AddCommand(this, ExtensionSetPropertyValueExecutor.CommandName,
-                new ExtensionSetPropertyValueExecutor(GetCommand, resources.Logger));
 
             LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
         }
@@ -222,7 +198,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
             if (svc.BindPlayer(mac))
             {
-                _log("Media: Bound to MAC " + mac);
+                _log("Source: Bound to MAC " + mac);
 
                 if (svc.TryGetSnapshot(mac, out var snap))
                 {

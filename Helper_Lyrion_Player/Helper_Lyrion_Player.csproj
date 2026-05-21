@@ -1,22 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Gateway_Lyrion_LMS_IP - Driver 1 of the four-driver Lyrion architecture.
-  This is the only assembly that opens sockets to LMS. It registers an
-  ILyrionGatewayService at startup; the Source, Helper, and Receiver drivers
-  consume it.
+  Helper_Lyrion_Player - Driver 3 of the four-driver Lyrion architecture.
+  Per-room rich UI extension device (RAD Media Player extension). Hosts the
+  Crestron Home now-playing UI for one Lyrion player: metadata, transport,
+  shuffle, repeat, seek, power. Bound by MAC address; consumes the gateway
+  service. Never connects to LMS.
 
-  Build requirements:
-    * Visual Studio 2019 or 2022
-    * .NET Framework 4.7.2 Developer Pack
-    * Crestron Certified Drivers SDK installed at $(CrestronSdkPath).
-      Defaults to C:\Lyrion4Crestron\Crestron_SDK; override via the
-      CrestronSdkPath environment variable or /p:CrestronSdkPath=... .
+  Phase 1 status: skeleton placeholder. The Entity Model implementation here
+  is replaced with a RAD AExtensionDevice in Phase 4.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Gateway</RootNamespace>
-    <AssemblyName>Gateway_Lyrion_LMS_IP</AssemblyName>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Helper</RootNamespace>
+    <AssemblyName>Helper_Lyrion_Player</AssemblyName>
     <TargetFramework>net472</TargetFramework>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -43,7 +40,6 @@
     <Optimize>false</Optimize>
     <DefineConstants>$(DefineConstants);DEBUG;TRACE</DefineConstants>
     <WarningLevel>4</WarningLevel>
-    <ErrorReport>prompt</ErrorReport>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
@@ -51,17 +47,12 @@
     <Optimize>true</Optimize>
     <DefineConstants>$(DefineConstants);TRACE</DefineConstants>
     <WarningLevel>4</WarningLevel>
-    <ErrorReport>prompt</ErrorReport>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="mscorlib" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="System.Runtime.Serialization" />
-    <Reference Include="System.Xml" />
-    <Reference Include="System.Xml.Linq" />
   </ItemGroup>
 
   <ItemGroup>
@@ -107,9 +98,6 @@
       Text="Crestron SDK not found at '$(CrestronSdkPath)\Libraries'. Install the Crestron Certified Drivers SDK or set the CrestronSdkPath environment variable (or pass /p:CrestronSdkPath=... on the command line)." />
   </Target>
 
-  <!-- Run ManifestUtil after build to produce the .pkg.
-       See BUILD.md for the rationale behind the staging dance and
-       IgnoreExitCode/explicit-pkg-existence check. -->
   <Target Name="RunManifestUtil" AfterTargets="Build"
           Condition="Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
     <Message Importance="high" Text="ManifestUtil: generating driver package for $(AssemblyName)..." />
@@ -127,14 +115,14 @@
     <Delete Files="$(TargetDir)ManifestUtil.exe" />
 
     <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pkg')"
-           Text="ManifestUtil.exe did not produce $(AssemblyName).pkg. Check that Driver.json is embedded correctly and that the Crestron SDK DLLs are copy-local alongside the driver assembly." />
+           Text="ManifestUtil.exe did not produce $(AssemblyName).pkg." />
 
     <Message Importance="high" Text="ManifestUtil: produced $(TargetDir)$(AssemblyName).pkg" />
   </Target>
 
   <Target Name="WarnIfManifestUtilMissing" AfterTargets="Build"
           Condition="!Exists('$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe')">
-    <Warning Text="ManifestUtil.exe not found at '$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe'. The .dll was built but no .pkg was produced. Install the Crestron Certified Drivers SDK to enable .pkg generation." />
+    <Warning Text="ManifestUtil.exe not found at '$(CrestronSdkPath)\ManifestUtil\ManifestUtil.exe'." />
   </Target>
 
 </Project>

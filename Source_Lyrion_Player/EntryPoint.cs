@@ -1,10 +1,9 @@
 // ---------------------------------------------------------------------------
-//  Media_Lyrion_Player - Lyrion Source (Driver 2 of 3)
+//  Source_Lyrion_Player - Lyrion Source (Driver 2 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
-using System.IO;
 using System.Reflection;
 using Crestron.DeviceDrivers.EntityModel;
 using Crestron.DeviceDrivers.SDK;
@@ -42,27 +41,13 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
 
     public override DriverController CreateDriverControllerInstance(DriverControllerCreationArgs args)
     {
-        try
-        {
-            return CreateImpl(args);
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                var dir = Path.GetDirectoryName(typeof(EntryPoint).Assembly.Location) ?? ".";
-                File.WriteAllText(Path.Combine(dir, "media_init_error.log"),
-                    DateTime.UtcNow.ToString("o") + Environment.NewLine + ex);
-            }
-            catch { }
-            throw;
-        }
+        return CreateImpl(args);
     }
 
     private static DriverController CreateImpl(DriverControllerCreationArgs args)
     {
         var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
-        var driver = new LyrionCommunity.Crestron.Lyrion.Media.MediaDriver(args, resources);
+        var driver = new LyrionCommunity.Crestron.Lyrion.Source.SourceDriver(args, resources);
         var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
         return new DispatchingDeviceController(entity, args, null);
     }

@@ -4,13 +4,10 @@
     "MinSdkVersion": "25.0000.0033",
     "DeviceType": "Media Player",
     "Manufacturer": "Lyrion Community",
-    "BaseModel": "Lyrion Source",
+    "BaseModel": "Lyrion Helper",
     "OtherSupportedModels": [],
     "SupportedSeries": ["3-Series", "4-Series"],
     "DependencyGroup": "LyrionLMS",
-    "ExtensionDeviceData": {
-      "IsExtensionDevice": true
-    },
     "Developer": {
       "Company": "Lyrion Community",
       "Contact": "Bob Dylan",
@@ -20,20 +17,8 @@
     },
     "DriverVersion": "1.0.0",
     "VersionDate": "2026-05-12 00:00:00.000",
-    "Description": "Lyrion Source. Per-room Extension Media Player for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service for all transport, metadata, shuffle, repeat, and power. Volume is handled by the companion Lyrion Receiver driver."
+    "Description": "Lyrion Helper. Per-room extension device hosting the rich Crestron Home media-player UI (now-playing metadata, transport, shuffle, repeat, seek, power) for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Companion to the Lyrion Source driver."
   },
-  "AudioOutputs": [
-    {
-      "Id": "digitalOut",
-      "Title": "Digital Audio Output",
-      "ConnectorType": "DigitalCoax"
-    },
-    {
-      "Id": "analogOut",
-      "Title": "Analog Audio Output",
-      "ConnectorType": "AnalogStereo"
-    }
-  ],
   "ConfigurationSteps": {
     "Items": [
       {
