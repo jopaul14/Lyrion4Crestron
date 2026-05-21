@@ -73,7 +73,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 - Transport: Play / Pause / Stop / Next / Previous / Seek
 - Shuffle (bool) and Repeat (bool)
 - PowerOn / PowerOff / TogglePower
-- Custom now-playing layout via embedded `PairedExtensionUi.xml`.
+- Custom now-playing layout via `UiDefinition.xml`.
 
 ### Lyrion Receiver (Driver 4) — routable audio endpoint
 
@@ -126,15 +126,16 @@ Lyrion4Crestron/
   Source_Lyrion_Player/                 (Driver 2)
     Source_Lyrion_Player.csproj
     Driver.json
-    EntryPoint.cs / SourceDriver.cs
+    SourceDriver.cs / SourceProtocol.cs / SourceTransport.cs
   Helper_Lyrion_Player/                 (Driver 3)
     Helper_Lyrion_Player.csproj
     Driver.json
-    EntryPoint.cs / HelperDriver.cs
+    HelperDriver.cs / HelperProtocol.cs / HelperTransport.cs
+    IncludeInPkg/UiDefinitions/UiDefinition.xml
   Receiver_Lyrion_Player/               (Driver 4)
     Receiver_Lyrion_Player.csproj
     Driver.json
-    EntryPoint.cs / ReceiverDriver.cs
+    ReceiverDriver.cs / ReceiverProtocol.cs / ReceiverTransport.cs
 ```
 
 ## Building and deploying
