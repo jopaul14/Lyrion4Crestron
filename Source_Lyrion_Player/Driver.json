@@ -1,54 +1,93 @@
 {
-  "SchemaVersion": "2.0",
-  "GeneralInformation": {
-    "MinSdkVersion": "25.0000.0033",
-    "DeviceType": "Media Player",
-    "Manufacturer": "Lyrion Community",
-    "BaseModel": "Lyrion Source",
-    "OtherSupportedModels": [],
-    "SupportedSeries": ["3-Series", "4-Series"],
-    "DependencyGroup": "LyrionLMS",
-    "Developer": {
-      "Company": "Lyrion Community",
-      "Contact": "Bob Dylan",
-      "Email": "ownerofalonelyinbox@90125.example",
-      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
-      "PhoneNumber": "(555) 867-5309"
+  "CrestronSerialDeviceApi": {
+    "DeviceSupport": {
+      "SupportsPlay": true,
+      "SupportsPause": true,
+      "SupportsStop": true,
+      "SupportsForwardSkip": true,
+      "SupportsReverseSkip": true,
+      "SupportsDiscretePower": true,
+      "SupportsTogglePower": true,
+      "SupportsPowerFeedback": true,
+      "SupportsPlayBackStatusFeedback": true,
+      "SupportsFeedback": true,
+      "SupportsDisconnect": true,
+      "SupportsReconnect": true
     },
-    "DriverVersion": "1.0.0",
-    "VersionDate": "2026-05-12 00:00:00.000",
-    "Description": "Lyrion Source. Per-room media player for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service for all transport, metadata, shuffle, repeat, and power. Volume is handled by the companion Lyrion Receiver driver."
-  },
-  "AudioOutputs": [
-    {
-      "Id": "digitalOut",
-      "Title": "Digital Audio Output",
-      "ConnectorType": "DigitalCoax"
+    "DeviceSupport2": null,
+    "GeneralInformation": {
+      "DeviceType": "Bluray Player",
+      "Manufacturer": "Lyrion Community",
+      "BaseModel": "Lyrion Source",
+      "VersionDate": "2026-05-21 00:00:00.000",
+      "DriverVersion": "2.0.0",
+      "SdkVersion": "4.00.000",
+      "Description": "Lyrion Source. Per-room routable audio source for a single Lyrion player. Bound by MAC address; forwards Play/Pause/Stop/Next/Previous/Power to the Lyrion Server gateway and never connects to LMS directly. Declares one digital and one analog audio output for Crestron Home source routing. Volume and rich now-playing UI live in the companion Lyrion Receiver and Lyrion Helper drivers.",
+      "Guid": "a1b2c3d4-2026-0512-0000-100000000002",
+      "DependencyGroup": "LyrionLMS",
+      "Developer": {
+        "Company": "Lyrion Community",
+        "Contact": "Bob Dylan",
+        "Email": "ownerofalonelyinbox@90125.example",
+        "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+        "PhoneNumber": "(555) 867-5309"
+      },
+      "SupportedSeries": ["Lyrion"],
+      "SupportedModels": ["Lyrion Source"]
     },
-    {
-      "Id": "analogOut",
-      "Title": "Analog Audio Output",
-      "ConnectorType": "AnalogStereo"
-    }
-  ],
-  "ConfigurationSteps": {
-    "Items": [
+    "Api": {
+      "Communication": {
+        "CommunicationType": 5,
+        "Protocol": -1,
+        "Baud": -1,
+        "Parity": -1,
+        "HwHandshake": -1,
+        "SwHandshake": -1,
+        "DataBits": 0,
+        "StopBits": -1,
+        "Port": 0,
+        "EnableAutoPolling": false,
+        "EnableAutoReconnect": false,
+        "TimeBetweenCommands": 250,
+        "ResponseTimeout": 3000,
+        "WaitForResponse": false,
+        "IpProtocol": 0,
+        "IsUserAdjustable": false,
+        "Authentication": { "Type": "None", "Required": false },
+        "IsSecure": false,
+        "UserAdjustableProperties": [],
+        "DeviceId": 0
+      },
+      "AudioInOut": {
+        "Inputs": [],
+        "Outputs": [
+          {
+            "type": 29801,
+            "description": "Coaxial Digital Audio",
+            "connector": 30,
+            "friendlyName": "Coaxial Digital Audio"
+          },
+          {
+            "type": 29901,
+            "description": "RCA Analog Audio",
+            "connector": 40,
+            "friendlyName": "RCA Analog Audio"
+          }
+        ]
+      },
+      "VideoInOut": { "Inputs": [], "Outputs": [] }
+    },
+    "UserAttributes": [
       {
-        "Id": "_Mac_",
-        "UsageContext": "Generic.Prompt",
-        "Title": "Player MAC Address (aa:bb:cc:dd:ee:ff)",
-        "Required": true,
+        "TypeName": "Custom",
+        "ParameterId": "MacAddress",
+        "Label": "Player MAC Address",
+        "Description": "MAC address of the Lyrion player for this room (form aa:bb:cc:dd:ee:ff). Must match the Lyrion Helper and Lyrion Receiver drivers for the same room.",
         "Persistent": true,
-        "ValueType": "String"
+        "RequiredForConnection": "Before",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
       }
     ],
-    "Steps": [
-      {
-        "StepId": "Player",
-        "Items": ["_Mac_"],
-        "NextStep": null
-      }
-    ],
-    "FirstStep": "Player"
+    "Dependencies": ["Lyrion_Common.dll"]
   }
 }
