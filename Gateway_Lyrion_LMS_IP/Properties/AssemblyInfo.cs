@@ -18,4 +18,4 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyVersion("1.0.0.0")]
 
 [assembly: ComVisible(false)]
-[assembly: Guid("a1b2c3d4-2026-0512-0000-100000000001")]
+[assembly: Guid("4b7aa667-3cce-4886-858e-0c415c7d29a8")]
