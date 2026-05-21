@@ -58,6 +58,43 @@
         "UserAdjustableProperties": [],
         "DeviceId": 0
       },
+      "PowerWaitPeriod": {
+        "UseLocalWarmupTimer": false,
+        "WarmUpTime": 0,
+        "UseLocalCooldownTimer": false,
+        "CoolDownTime": 0
+      },
+      "StandardCommands": {
+        "PowerOn": { "StandardCommand": 6602, "Command": "", "Parameters": [] },
+        "PowerOff": { "StandardCommand": 6601, "Command": "", "Parameters": [] },
+        "Power": { "StandardCommand": 6600, "Command": "", "Parameters": [] },
+        "Play": { "StandardCommand": 12901, "Command": "", "Parameters": [] },
+        "Pause": { "StandardCommand": 12900, "Command": "", "Parameters": [] },
+        "Stop": { "StandardCommand": 14000, "Command": "", "Parameters": [] },
+        "ForwardSkip": { "StandardCommand": 14600, "Command": "", "Parameters": [] },
+        "ReverseSkip": { "StandardCommand": 14800, "Command": "", "Parameters": [] }
+      },
+      "CustomCommands": [],
+      "ArrowKeys": [],
+      "ColorButtons": [],
+      "Feedback": {
+        "CommandAckNak": { "Ack": "", "Nak": "" },
+        "Header": "",
+        "PowerFeedback": {
+          "Feedback": { "On": "", "Off": "" },
+          "GroupHeader": ""
+        },
+        "PlayBackStatusFeedback": { "GroupHeader": "" },
+        "TrackFeedback": { "GroupHeader": "" },
+        "ChapterFeedback": { "GroupHeader": "" },
+        "TrackElapsedTimeFeedback": { "GroupHeader": "" },
+        "TrackRemainingTimeFeedback": { "GroupHeader": "" },
+        "ChapterElapsedTimeFeedback": { "GroupHeader": "" },
+        "ChapterRemainingTimeFeedback": { "GroupHeader": "" },
+        "TotalElapsedTimeFeedback": { "GroupHeader": "" },
+        "TotalRemainingTimeFeedback": { "GroupHeader": "" },
+        "EnergyStarFeedback": { "Feedback": {}, "GroupHeader": "" }
+      },
       "AudioInOut": {
         "Inputs": [],
         "Outputs": [
