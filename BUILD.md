@@ -112,7 +112,9 @@ Deploy in this order:
    - Helper_Lyrion_Player.pkg
    - Receiver_Lyrion_Player.pkg (if using Lyrion to control volume/mute)
 
-2. **Gateway first.** Using the Crestron Home Setup app, Configure Pro, etc., add the Gateway - it's recommended to add this to an equipment or similar room.  Only one is needed per Crestron processor:
+2. **Reboot the Crestron Home processor** - while it may not always be necessary, it sometimes helps.
+
+3. **Gateway first.** Using the Crestron Home Setup app, Configure Pro, etc., add the Gateway - it's recommended to add this to an equipment or similar room.  Only one is needed per Crestron processor:
    - Server hostname or IP
    - HTTP port (default 9000)
    - CLI port (default 9090)
