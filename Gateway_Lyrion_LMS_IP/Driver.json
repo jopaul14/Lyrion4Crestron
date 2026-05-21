@@ -23,7 +23,7 @@
     "Items": [
       {
         "Id": "_Host_",
-        "UsageContext": "Generic.Prompt",
+        "UsageContext": "Network.Address",
         "Title": "LMS Hostname or IP Address",
         "Required": true,
         "Persistent": true,

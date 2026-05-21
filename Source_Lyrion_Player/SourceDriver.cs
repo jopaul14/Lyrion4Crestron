@@ -5,7 +5,6 @@
 
 using System;
 using System.Diagnostics;
-using System.Reflection;
 using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.DeviceTypes.BlurayPlayer;
@@ -26,32 +25,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
     /// </summary>
     public class SourceDriver : ABasicBlurayPlayer, ICloudConnected
     {
-        static SourceDriver()
-        {
-            AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbeddedAssembly;
-        }
-
-        private static Assembly ResolveEmbeddedAssembly(object sender, ResolveEventArgs args)
-        {
-            var requested = new AssemblyName(args.Name).Name;
-            if (requested != "Lyrion_Common") return null;
-
-            var self = typeof(SourceDriver).Assembly;
-            using (var stream = self.GetManifestResourceStream("Lyrion_Common.dll"))
-            {
-                if (stream == null) return null;
-                var bytes = new byte[stream.Length];
-                var read = 0;
-                while (read < bytes.Length)
-                {
-                    var n = stream.Read(bytes, read, bytes.Length - read);
-                    if (n <= 0) break;
-                    read += n;
-                }
-                return Assembly.Load(bytes);
-            }
-        }
-
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
