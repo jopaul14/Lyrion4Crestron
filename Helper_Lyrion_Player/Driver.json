@@ -21,7 +21,7 @@
       },
       "ExtensionDeviceData": {
         "IsExtensionDevice": true,
-        "IsMediaDevice": true,
+        "IsMediaDevice": false,
         "IsMediaSource": false
       },
       "SupportedSeries": ["Lyrion"],
