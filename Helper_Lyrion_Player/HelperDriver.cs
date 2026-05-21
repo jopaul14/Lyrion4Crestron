@@ -144,6 +144,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                     if (repeat.HasValue)
                         InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, repeat.Value));
                     return new OperationResult(OperationResultCode.Success);
+
+                case PropPower:
+                    var power = value as bool?;
+                    if (power.HasValue)
+                        InvokeOnGateway((svc, mac) =>
+                        {
+                            if (power.Value) svc.PowerOn(mac);
+                            else svc.PowerOff(mac);
+                        });
+                    return new OperationResult(OperationResultCode.Success);
             }
             return new OperationResult(OperationResultCode.Error, "Unknown property.");
         }
