@@ -23,7 +23,7 @@
     "Items": [
       {
         "Id": "_Host_",
-        "UsageContext": "Network.Address",
+        "UsageContext": "Generic.Prompt",
         "Title": "LMS Hostname or IP Address",
         "Required": true,
         "Persistent": true,
@@ -31,25 +31,25 @@
       },
       {
         "Id": "_HttpPort_",
-        "UsageContext": "Network.Port",
+        "UsageContext": "Generic.Prompt",
         "Title": "HTTP Port (JSON-RPC)",
         "Required": true,
         "Persistent": true,
         "ValueType": "Number",
         "MinValue": 1,
         "MaxValue": 65535,
-        "DefaultValue": "9000"
+        "DefaultValue": 9000
       },
       {
         "Id": "_CliPort_",
-        "UsageContext": "Network.Port",
+        "UsageContext": "Generic.Prompt",
         "Title": "CLI Port (Telnet)",
         "Required": true,
         "Persistent": true,
         "ValueType": "Number",
         "MinValue": 1,
         "MaxValue": 65535,
-        "DefaultValue": "9090"
+        "DefaultValue": 9090
       },
       {
         "Id": "_Username_",
