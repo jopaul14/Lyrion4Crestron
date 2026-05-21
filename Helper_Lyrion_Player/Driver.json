@@ -1,42 +1,67 @@
 {
-  "SchemaVersion": "2.0",
-  "GeneralInformation": {
-    "MinSdkVersion": "25.0000.0033",
-    "DeviceType": "Media Player",
-    "Manufacturer": "Lyrion Community",
-    "BaseModel": "Lyrion Helper",
-    "OtherSupportedModels": [],
-    "SupportedSeries": ["3-Series", "4-Series"],
-    "DependencyGroup": "LyrionLMS",
-    "Developer": {
-      "Company": "Lyrion Community",
-      "Contact": "Bob Dylan",
-      "Email": "ownerofalonelyinbox@90125.example",
-      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
-      "PhoneNumber": "(555) 867-5309"
+  "CrestronSerialDeviceApi": {
+    "DeviceSupport": {},
+    "DeviceSupport2": [],
+    "GeneralInformation": {
+      "DeviceType": "Media Player",
+      "Manufacturer": "Lyrion Community",
+      "BaseModel": "Lyrion Helper",
+      "VersionDate": "2026-05-21 00:00:00.000",
+      "DriverVersion": "2.0.0",
+      "SdkVersion": "4.00.000",
+      "Description": "Lyrion Helper. Per-room extension device hosting the rich Crestron Home media-player UI (now-playing metadata, transport, shuffle, repeat, power) for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Companion to the Lyrion Source and Lyrion Receiver drivers.",
+      "Guid": "a1b2c3d4-2026-0521-0000-100000000005",
+      "DependencyGroup": "LyrionLMS",
+      "Developer": {
+        "Company": "Lyrion Community",
+        "Contact": "Bob Dylan",
+        "Email": "ownerofalonelyinbox@90125.example",
+        "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+        "PhoneNumber": "(555) 867-5309"
+      },
+      "ExtensionDeviceData": {
+        "IsExtensionDevice": true,
+        "IsMediaDevice": true,
+        "IsMediaSource": false
+      },
+      "SupportedSeries": ["Lyrion"],
+      "SupportedModels": ["Lyrion Helper"]
     },
-    "DriverVersion": "1.0.0",
-    "VersionDate": "2026-05-12 00:00:00.000",
-    "Description": "Lyrion Helper. Per-room extension device hosting the rich Crestron Home media-player UI (now-playing metadata, transport, shuffle, repeat, seek, power) for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Companion to the Lyrion Source driver."
-  },
-  "ConfigurationSteps": {
-    "Items": [
+    "Api": {
+      "Communication": {
+        "CommunicationType": 5,
+        "Protocol": -1,
+        "Baud": -1,
+        "Parity": -1,
+        "HwHandshake": -1,
+        "SwHandshake": -1,
+        "DataBits": 0,
+        "StopBits": -1,
+        "Port": 0,
+        "EnableAutoPolling": false,
+        "EnableAutoReconnect": false,
+        "TimeBetweenCommands": 250,
+        "ResponseTimeout": 3000,
+        "WaitForResponse": false,
+        "IpProtocol": 0,
+        "IsUserAdjustable": false,
+        "Authentication": { "Type": "None", "Required": false },
+        "IsSecure": false,
+        "UserAdjustableProperties": [],
+        "DeviceId": 0
+      }
+    },
+    "UserAttributes": [
       {
-        "Id": "_Mac_",
-        "UsageContext": "Generic.Prompt",
-        "Title": "Player MAC Address (aa:bb:cc:dd:ee:ff)",
-        "Required": true,
+        "TypeName": "Custom",
+        "ParameterId": "MacAddress",
+        "Label": "Player MAC Address",
+        "Description": "MAC address of the Lyrion player for this room (form aa:bb:cc:dd:ee:ff). Must match the Lyrion Source and Lyrion Receiver drivers for the same room.",
         "Persistent": true,
-        "ValueType": "String"
+        "RequiredForConnection": "Before",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
       }
     ],
-    "Steps": [
-      {
-        "StepId": "Player",
-        "Items": ["_Mac_"],
-        "NextStep": null
-      }
-    ],
-    "FirstStep": "Player"
+    "Dependencies": ["Lyrion_Common.dll"]
   }
 }

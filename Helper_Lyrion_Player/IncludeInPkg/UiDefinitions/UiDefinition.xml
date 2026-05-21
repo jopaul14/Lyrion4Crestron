@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<uidefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://prd-use-rad-assets.azurewebsites.net/ExtensionsSchemaDefinition_v1_0.xsd">
+  <version ver="1.0"/>
+
+  <tile icon="{PlaybackIcon}" status="{Title}" action="command:TogglePlay" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
+
+  <layouts>
+
+    <layout id="NowPlaying" isdefaultlayout="#true">
+      <controls>
+
+        <textdisplay id="TrackInfo" title="{Title}" line1label="{Artist}" line2label="{Album}"/>
+
+        <textdisplay id="TimeInfo" title="{Elapsed}" line1label="{Duration}"/>
+
+        <controlgroup>
+          <button id="PrevBtn" label="Previous" action="command:Previous" icon="#icSkipBackRegular"/>
+          <button id="PlayBtn" label="Play" action="command:TogglePlay" icon="{PlaybackIcon}"/>
+          <button id="NextBtn" label="Next" action="command:Next" icon="#icSkipForwardRegular"/>
+        </controlgroup>
+
+        <controlgroup>
+          <toggle id="ShuffleToggle" label="Shuffle" value="{Shuffle}"/>
+          <toggle id="RepeatToggle" label="Repeat" value="{Repeat}"/>
+        </controlgroup>
+
+        <controlgroup>
+          <button id="PowerOnBtn" label="Power On" action="command:PowerOn"/>
+          <button id="PowerOffBtn" label="Power Off" action="command:PowerOff"/>
+        </controlgroup>
+
+      </controls>
+    </layout>
+
+  </layouts>
+
+  <alerts>
+  </alerts>
+
+</uidefinition>
