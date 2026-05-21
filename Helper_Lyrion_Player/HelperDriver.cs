@@ -1,101 +1,201 @@
 // ---------------------------------------------------------------------------
 //  Helper_Lyrion_Player - Lyrion Helper (Driver 3 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
-//
-//  Phase 1 status: skeleton placeholder. This class is a minimal Entity Model
-//  driver that compiles and accepts MAC configuration. In Phase 4 it is
-//  replaced with a RAD AExtensionDevice (DeviceType "Media Player",
-//  IsExtensionDevice = true) that surfaces the full now-playing UI, transport
-//  controls, shuffle, repeat, and seek.
 // ---------------------------------------------------------------------------
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using Crestron.DeviceDrivers.EntityModel;
-using Crestron.DeviceDrivers.EntityModel.Data;
-using Crestron.DeviceDrivers.SDK;
-using Crestron.DeviceDrivers.SDK.EntityModel;
+using Crestron.RAD.Common.Enums;
+using Crestron.RAD.Common.Interfaces;
+using Crestron.RAD.Common.Interfaces.ExtensionDevice;
+using Crestron.RAD.DeviceTypes.ExtensionDevice;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
 namespace LyrionCommunity.Crestron.Lyrion.Helper
 {
-    public sealed class HelperDriver : ReflectedAttributeDriverEntity, IDisposable
+    public class HelperDriver : AExtensionDevice, ICloudConnected
     {
+        private const string CmdPlay = "Play";
+        private const string CmdPause = "Pause";
+        private const string CmdStop = "Stop";
+        private const string CmdNext = "Next";
+        private const string CmdPrevious = "Previous";
+        private const string CmdTogglePlay = "TogglePlay";
+        private const string CmdPowerOn = "PowerOn";
+        private const string CmdPowerOff = "PowerOff";
+        private const string CmdPowerToggle = "PowerToggle";
+
+        private const string PropTitle = "Title";
+        private const string PropArtist = "Artist";
+        private const string PropAlbum = "Album";
+        private const string PropArtwork = "ArtworkUrl";
+        private const string PropElapsed = "Elapsed";
+        private const string PropDuration = "Duration";
+        private const string PropPlaybackState = "PlaybackState";
+        private const string PropPlaybackIcon = "PlaybackIcon";
+        private const string PropShuffle = "Shuffle";
+        private const string PropRepeat = "Repeat";
+        private const string PropPower = "Power";
+
+        private const string IconPlay = "icPlayRegular";
+        private const string IconPause = "icPauseRegular";
+        private const string IconStop = "icStopRegular";
+
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
+        private HelperProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
         private ILyrionGatewayService _gateway;
         private volatile bool _disposed;
 
-        public HelperDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
-            : base(DriverController.RootControllerId)
+        private PropertyValue<string> _titleProp;
+        private PropertyValue<string> _artistProp;
+        private PropertyValue<string> _albumProp;
+        private PropertyValue<string> _artworkProp;
+        private PropertyValue<string> _elapsedProp;
+        private PropertyValue<string> _durationProp;
+        private PropertyValue<string> _playbackStateProp;
+        private PropertyValue<string> _playbackIconProp;
+        private PropertyValue<bool> _shuffleProp;
+        private PropertyValue<bool> _repeatProp;
+        private PropertyValue<bool> _powerProp;
+
+        public HelperDriver()
         {
             _log = BuildLogger();
+            CreateDeviceDefinition();
+        }
 
-            var cfgArgs = DataDrivenConfigurationControllerArgs.FromResources(args, resources, ControllerId);
-            ConfigurationController = new DelegateDataDrivenConfigurationController(
-                cfgArgs,
-                ApplyConfigurationItems,
-                null,
-                null);
+        // ===== ICloudConnected =====
+
+        public void Initialize()
+        {
+            ConnectionTransport = new HelperTransport();
+
+            _protocol = new HelperProtocol(ConnectionTransport, Id);
+            _protocol.MacAddressReceived += OnMacAddressReceived;
+            DeviceProtocol = _protocol;
+            DeviceProtocol.Initialize(DriverData);
 
             LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
         }
 
-        internal DataDrivenConfigurationController ConfigurationController { get; }
-
-        private ConfigurationItemErrors ApplyConfigurationItems(
-            DataDrivenConfigurationController.ApplyConfigurationAction action,
-            string stepId,
-            IDictionary<string, DriverEntityValue?> values)
+        public override void Connect()
         {
-            switch (action)
-            {
-                case DataDrivenConfigurationController.ApplyConfigurationAction.ApplyAll:
-                case DataDrivenConfigurationController.ApplyConfigurationAction.ApplyStep:
-                    {
-                        string rawMac = null;
-                        if (values.TryGetValue("_Mac_", out var v) && v.HasValue)
-                        {
-                            rawMac = v.Value.GetValue<string>();
-                        }
-
-                        var canon = MacAddress.Normalize(rawMac);
-                        if (canon == null)
-                        {
-                            var err = new Dictionary<string, string>(StringComparer.Ordinal);
-                            err["_Mac_"] = "Enter a valid MAC address (form aa:bb:cc:dd:ee:ff).";
-                            return new ConfigurationItemErrors(err, null);
-                        }
-
-                        lock (_gate) { _configuredMac = canon; }
-                        TryBindToGateway();
-                        return null;
-                    }
-
-                case DataDrivenConfigurationController.ApplyConfigurationAction.ClearValues:
-                    if (values.ContainsKey("_Mac_"))
-                    {
-                        Unbind();
-                    }
-                    return null;
-            }
-            return null;
+            Connected = true;
         }
+
+        // ===== Extension device definition =====
+
+        private void CreateDeviceDefinition()
+        {
+            _titleProp = CreateProperty<string>(new PropertyDefinition(PropTitle, null, DevicePropertyType.String));
+            _artistProp = CreateProperty<string>(new PropertyDefinition(PropArtist, null, DevicePropertyType.String));
+            _albumProp = CreateProperty<string>(new PropertyDefinition(PropAlbum, null, DevicePropertyType.String));
+            _artworkProp = CreateProperty<string>(new PropertyDefinition(PropArtwork, null, DevicePropertyType.String));
+            _elapsedProp = CreateProperty<string>(new PropertyDefinition(PropElapsed, null, DevicePropertyType.String));
+            _durationProp = CreateProperty<string>(new PropertyDefinition(PropDuration, null, DevicePropertyType.String));
+            _playbackStateProp = CreateProperty<string>(new PropertyDefinition(PropPlaybackState, null, DevicePropertyType.String));
+            _playbackIconProp = CreateProperty<string>(new PropertyDefinition(PropPlaybackIcon, null, DevicePropertyType.String));
+            _shuffleProp = CreateProperty<bool>(new PropertyDefinition(PropShuffle, null, DevicePropertyType.Boolean));
+            _repeatProp = CreateProperty<bool>(new PropertyDefinition(PropRepeat, null, DevicePropertyType.Boolean));
+            _powerProp = CreateProperty<bool>(new PropertyDefinition(PropPower, null, DevicePropertyType.Boolean));
+        }
+
+        // ===== AExtensionDevice overrides =====
+
+        protected override IOperationResult DoCommand(string command, string[] parameters)
+        {
+            switch (command)
+            {
+                case CmdPlay: InvokeOnGateway((svc, mac) => svc.Play(mac)); break;
+                case CmdPause: InvokeOnGateway((svc, mac) => svc.Pause(mac)); break;
+                case CmdStop: InvokeOnGateway((svc, mac) => svc.Stop(mac)); break;
+                case CmdNext: InvokeOnGateway((svc, mac) => svc.Next(mac)); break;
+                case CmdPrevious: InvokeOnGateway((svc, mac) => svc.Previous(mac)); break;
+                case CmdTogglePlay:
+                    InvokeOnGateway((svc, mac) =>
+                    {
+                        if (_playbackStateProp.Value == "Playing") svc.Pause(mac);
+                        else svc.Play(mac);
+                    });
+                    break;
+                case CmdPowerOn: InvokeOnGateway((svc, mac) => svc.PowerOn(mac)); break;
+                case CmdPowerOff: InvokeOnGateway((svc, mac) => svc.PowerOff(mac)); break;
+                case CmdPowerToggle: InvokeOnGateway((svc, mac) => svc.PowerToggle(mac)); break;
+            }
+            return new OperationResult(OperationResultCode.Success);
+        }
+
+        protected override IOperationResult SetDriverPropertyValue<T>(string propertyKey, T value)
+        {
+            switch (propertyKey)
+            {
+                case PropShuffle:
+                    var shuffle = value as bool?;
+                    if (shuffle.HasValue)
+                        InvokeOnGateway((svc, mac) => svc.SetShuffle(mac, shuffle.Value));
+                    return new OperationResult(OperationResultCode.Success);
+
+                case PropRepeat:
+                    var repeat = value as bool?;
+                    if (repeat.HasValue)
+                        InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, repeat.Value));
+                    return new OperationResult(OperationResultCode.Success);
+            }
+            return new OperationResult(OperationResultCode.Error, "Unknown property.");
+        }
+
+        protected override IOperationResult SetDriverPropertyValue<T>(string objectId, string propertyKey, T value)
+        {
+            return new OperationResult(OperationResultCode.Error, "Not supported.");
+        }
+
+        // ===== Configuration =====
+
+        private void OnMacAddressReceived(string rawMac)
+        {
+            var canon = MacAddress.Normalize(rawMac);
+            if (canon == null) return;
+
+            lock (_gate) { _configuredMac = canon; }
+            TryBindToGateway();
+        }
+
+        // ===== Gateway binding =====
 
         private void OnGatewayAvailable(ILyrionGatewayService service)
         {
             if (_disposed) return;
 
+            ILyrionGatewayService oldService;
             lock (_gate)
             {
                 if (_disposed) return;
                 if (ReferenceEquals(_gateway, service)) return;
+
+                oldService = _gateway;
                 _gateway = service;
                 _boundMac = null;
+
+                service.AvailabilityChanged += OnAvailabilityChanged;
+                service.PowerStateChanged += OnPowerStateChanged;
+                service.PlaybackStateChanged += OnPlaybackStateChanged;
+                service.MetadataUpdated += OnMetadataUpdated;
+                service.ShuffleChanged += OnShuffleChanged;
+                service.RepeatChanged += OnRepeatChanged;
+            }
+
+            if (oldService != null)
+            {
+                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
+                try { oldService.ShuffleChanged -= OnShuffleChanged; } catch { }
+                try { oldService.RepeatChanged -= OnRepeatChanged; } catch { }
             }
 
             TryBindToGateway();
@@ -129,10 +229,146 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (svc.BindPlayer(mac))
             {
                 _log("Helper: Bound to MAC " + mac);
+
+                if (svc.TryGetSnapshot(mac, out var snap))
+                {
+                    ApplySnapshot(snap);
+                }
             }
         }
 
-        private void Unbind()
+        private void ApplySnapshot(LyrionPlayerSnapshot snap)
+        {
+            UpdateAvailability(snap.IsAvailable);
+            UpdatePower(snap.IsPoweredOn);
+            UpdatePlayback(snap.PlaybackState);
+            UpdateMetadata(snap.Metadata);
+            UpdateShuffle(snap.ShuffleEnabled);
+            UpdateRepeat(snap.RepeatEnabled);
+        }
+
+        // ===== Gateway event handlers =====
+
+        private void OnAvailabilityChanged(string mac, bool isAvailable)
+        {
+            if (!IsMine(mac)) return;
+            UpdateAvailability(isAvailable);
+        }
+
+        private void OnPowerStateChanged(string mac, bool isOn)
+        {
+            if (!IsMine(mac)) return;
+            UpdatePower(isOn);
+        }
+
+        private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
+        {
+            if (!IsMine(mac)) return;
+            UpdatePlayback(state);
+        }
+
+        private void OnMetadataUpdated(string mac, LyrionMetadata meta)
+        {
+            if (!IsMine(mac)) return;
+            UpdateMetadata(meta);
+        }
+
+        private void OnShuffleChanged(string mac, bool enabled)
+        {
+            if (!IsMine(mac)) return;
+            UpdateShuffle(enabled);
+        }
+
+        private void OnRepeatChanged(string mac, bool enabled)
+        {
+            if (!IsMine(mac)) return;
+            UpdateRepeat(enabled);
+        }
+
+        // ===== Feedback into the extension device UI =====
+
+        private void UpdateAvailability(bool isAvailable)
+        {
+            Connected = isAvailable;
+
+            if (!isAvailable)
+            {
+                UpdatePlayback(LyrionPlaybackState.Stopped);
+                UpdatePower(false);
+            }
+        }
+
+        private void UpdatePower(bool isOn)
+        {
+            _powerProp.Value = isOn;
+            Commit();
+        }
+
+        private void UpdatePlayback(LyrionPlaybackState state)
+        {
+            string label;
+            string icon;
+            switch (state)
+            {
+                case LyrionPlaybackState.Playing:
+                    label = "Playing";
+                    icon = IconPlay;
+                    break;
+                case LyrionPlaybackState.Paused:
+                    label = "Paused";
+                    icon = IconPause;
+                    break;
+                default:
+                    label = "Stopped";
+                    icon = IconStop;
+                    break;
+            }
+            _playbackStateProp.Value = label;
+            _playbackIconProp.Value = icon;
+            Commit();
+        }
+
+        private void UpdateMetadata(LyrionMetadata meta)
+        {
+            _titleProp.Value = meta.Title;
+            _artistProp.Value = meta.Artist;
+            _albumProp.Value = meta.Album;
+            _artworkProp.Value = meta.ArtworkUrl;
+            _elapsedProp.Value = FormatTime(meta.PositionSeconds);
+            _durationProp.Value = FormatTime(meta.DurationSeconds);
+            Commit();
+        }
+
+        private void UpdateShuffle(bool enabled)
+        {
+            _shuffleProp.Value = enabled;
+            Commit();
+        }
+
+        private void UpdateRepeat(bool enabled)
+        {
+            _repeatProp.Value = enabled;
+            Commit();
+        }
+
+        private static string FormatTime(int totalSeconds)
+        {
+            if (totalSeconds <= 0) return "0:00";
+            var m = totalSeconds / 60;
+            var s = totalSeconds % 60;
+            return m.ToString() + ":" + s.ToString("D2");
+        }
+
+        // ===== Helpers =====
+
+        private bool IsMine(string mac)
+        {
+            string bound;
+            lock (_gate) { bound = _boundMac; }
+            return string.Equals(bound, mac, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void InvokeOnGateway(Action<ILyrionGatewayService, string> action)
         {
             ILyrionGatewayService svc;
             string mac;
@@ -140,12 +376,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             {
                 svc = _gateway;
                 mac = _boundMac;
-                _boundMac = null;
             }
-            if (svc != null && !string.IsNullOrEmpty(mac))
-            {
-                svc.UnbindPlayer(mac);
-            }
+            if (svc == null || string.IsNullOrEmpty(mac)) return;
+            try { action(svc, mac); } catch { }
         }
 
         private static Action<string> BuildLogger()
@@ -164,6 +397,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
             try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
 
+            if (_protocol != null)
+            {
+                try { _protocol.MacAddressReceived -= OnMacAddressReceived; } catch { }
+            }
+
             ILyrionGatewayService svc;
             string mac;
             lock (_gate)
@@ -174,9 +412,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 _boundMac = null;
             }
 
-            if (svc != null && !string.IsNullOrEmpty(mac))
+            if (svc != null)
             {
-                try { svc.UnbindPlayer(mac); } catch { }
+                try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                try { svc.MetadataUpdated -= OnMetadataUpdated; } catch { }
+                try { svc.ShuffleChanged -= OnShuffleChanged; } catch { }
+                try { svc.RepeatChanged -= OnRepeatChanged; } catch { }
+                if (!string.IsNullOrEmpty(mac))
+                {
+                    try { svc.UnbindPlayer(mac); } catch { }
+                }
             }
 
             base.Dispose();
