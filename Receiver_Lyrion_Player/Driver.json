@@ -1,66 +1,167 @@
 {
-  "SchemaVersion": "2.0",
-  "GeneralInformation": {
-    "MinSdkVersion": "25.0000.0033",
-    "DeviceType": "AV Receiver",
-    "Manufacturer": "Lyrion Community",
-    "BaseModel": "Lyrion Receiver",
-    "OtherSupportedModels": [],
-    "SupportedSeries": ["3-Series", "4-Series"],
-    "DependencyGroup": "LyrionLMS",
-    "Developer": {
-      "Company": "Lyrion Community",
-      "Contact": "Bob Dylan",
-      "Email": "ownerofalonelyinbox@90125.example",
-      "Website": "https://github.com/jopaul14/Lyrion4Crestron",
-      "PhoneNumber": "(555) 867-5309"
+  "CrestronSerialDeviceApi": {
+    "DeviceSupport": {
+      "SupportsDiscretePower": true,
+      "SupportsTogglePower": true,
+      "SupportsPowerFeedback": true,
+      "SupportsSetVolume": true,
+      "SupportsChangeVolume": true,
+      "SupportsVolumePercentFeedback": true,
+      "SupportsDiscreteMute": true,
+      "SupportsMuteFeedback": true,
+      "SupportsFeedback": true,
+      "SupportsDisconnect": true,
+      "SupportsReconnect": true,
+      "SupportsSetInputSource": true,
+      "SupportsInputFeedback": true
     },
-    "DriverVersion": "1.0.0",
-    "VersionDate": "2026-05-12 00:00:00.000",
-    "Description": "Lyrion Receiver. Per-room AV-receiver style endpoint exposing volume (0-100), mute, and power for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Optional: external amps/AVRs may be used instead."
-  },
-  "AudioInputs": [
-    {
-      "Id": "analogIn",
-      "Title": "Analog Audio Input",
-      "ConnectorType": "AnalogStereo"
-    }
-  ],
-  "SpeakerOutputs": [
-    {
-      "Id": "roomSpeakers",
-      "Title": "Room Speakers"
-    }
-  ],
-  "ConfigurationSteps": {
-    "Items": [
+    "DeviceSupport2": null,
+    "GeneralInformation": {
+      "DeviceType": "AV Receiver",
+      "Manufacturer": "Lyrion Community",
+      "BaseModel": "Lyrion Receiver",
+      "VersionDate": "2026-05-21 00:00:00.000",
+      "DriverVersion": "2.0.0",
+      "SdkVersion": "4.00.000",
+      "Description": "Lyrion Receiver. Per-room routable AV-receiver style endpoint exposing volume (0-100), mute, and power for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Declares audio inputs matching the Lyrion Source outputs plus speaker outputs for Crestron Home routing. Optional: external amps/AVRs may be used instead.",
+      "Guid": "a1b2c3d4-2026-0512-0000-100000000003",
+      "DependencyGroup": "LyrionLMS",
+      "Developer": {
+        "Company": "Lyrion Community",
+        "Contact": "Bob Dylan",
+        "Email": "ownerofalonelyinbox@90125.example",
+        "Website": "https://github.com/jopaul14/Lyrion4Crestron",
+        "PhoneNumber": "(555) 867-5309"
+      },
+      "SupportedSeries": ["Lyrion"],
+      "SupportedModels": ["Lyrion Receiver"]
+    },
+    "Api": {
+      "Communication": {
+        "CommunicationType": 5,
+        "Protocol": -1,
+        "Baud": -1,
+        "Parity": -1,
+        "HwHandshake": -1,
+        "SwHandshake": -1,
+        "DataBits": 0,
+        "StopBits": -1,
+        "Port": 0,
+        "EnableAutoPolling": false,
+        "EnableAutoReconnect": false,
+        "TimeBetweenCommands": 250,
+        "ResponseTimeout": 3000,
+        "WaitForResponse": false,
+        "IpProtocol": 0,
+        "IsUserAdjustable": false,
+        "Authentication": { "Type": "None", "Required": false },
+        "IsSecure": false,
+        "UserAdjustableProperties": [],
+        "DeviceId": 0
+      },
+      "PowerWaitPeriod": {
+        "UseLocalWarmupTimer": false,
+        "WarmUpTime": 0,
+        "UseLocalCooldownTimer": false,
+        "CoolDownTime": 0
+      },
+      "StandardCommands": {
+        "PowerOn": { "StandardCommand": 6602, "Command": "", "Parameters": [] },
+        "PowerOff": { "StandardCommand": 6601, "Command": "", "Parameters": [] },
+        "Power": { "StandardCommand": 6600, "Command": "", "Parameters": [] },
+        "Vol": { "StandardCommand": 7000, "Command": "", "Parameters": [] },
+        "MuteOn": { "StandardCommand": 4602, "Command": "", "Parameters": [] },
+        "MuteOff": { "StandardCommand": 4601, "Command": "", "Parameters": [] },
+        "Input1": { "StandardCommand": 1800, "Command": "", "Parameters": [] },
+        "Input2": { "StandardCommand": 1801, "Command": "", "Parameters": [] }
+      },
+      "CustomCommands": [],
+      "ArrowKeys": [],
+      "ColorButtons": [],
+      "Feedback": {
+        "CommandAckNak": { "Ack": "", "Nak": "" },
+        "Header": "",
+        "PowerFeedback": {
+          "Feedback": { "On": "", "Off": "" },
+          "GroupHeader": ""
+        },
+        "MuteFeedback": {
+          "Feedback": { "On": "", "Off": "" },
+          "GroupHeader": ""
+        },
+        "VolumeFeedback": { "GroupHeader": "" },
+        "InputFeedback": {
+          "GroupHeader": "",
+          "Feedback": [
+            { "InputType": 1800, "Feedback": "Digital" },
+            { "InputType": 1801, "Feedback": "Analog" }
+          ]
+        },
+        "AudioInputFeedback": {
+          "GroupHeader": "",
+          "Feedback": [
+            { "AudioInputType": 1800, "Feedback": "Digital" },
+            { "AudioInputType": 1801, "Feedback": "Analog" }
+          ]
+        },
+        "AudioFeedback": {
+          "ToneStateFeedback": { "GroupHeader": "", "Feedback": {} },
+          "ToneControlFeedback": { "GroupHeader": "", "IndividualGroupHeaders": {} },
+          "LoudnessFeedback": { "GroupHeader": "", "Feedback": {} }
+        },
+        "SurroundModeFeedback": { "GroupHeader": "", "Feedback": {} },
+        "TunerFeedback": {
+          "GroupHeader": "",
+          "FrequencyBandFeedback": { "GroupHeader": "", "Feedback": {} }
+        },
+        "EnergyStarFeedback": { "Feedback": {}, "GroupHeader": "" }
+      },
+      "AudioInOut": {
+        "Inputs": [
+          {
+            "type": 1800,
+            "description": "Coaxial Digital Audio",
+            "connector": 30,
+            "friendlyName": "Coaxial Digital Audio"
+          },
+          {
+            "type": 1801,
+            "description": "RCA Analog Audio",
+            "connector": 40,
+            "friendlyName": "RCA Analog Audio"
+          }
+        ],
+        "Outputs": [
+          {
+            "type": 29901,
+            "description": "Speaker Output",
+            "connector": 60,
+            "friendlyName": "Speaker Output"
+          }
+        ]
+      },
+      "VideoInOut": { "Inputs": [], "Outputs": [] }
+    },
+    "UserAttributes": [
       {
-        "Id": "_Mac_",
-        "UsageContext": "Generic.Prompt",
-        "Title": "Player MAC Address (aa:bb:cc:dd:ee:ff)",
-        "Required": true,
+        "TypeName": "Custom",
+        "ParameterId": "MacAddress",
+        "Label": "Player MAC Address",
+        "Description": "MAC address of the Lyrion player for this room (form aa:bb:cc:dd:ee:ff). Must match the Lyrion Source and Lyrion Helper drivers for the same room.",
         "Persistent": true,
-        "ValueType": "String"
+        "RequiredForConnection": "Before",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
       },
       {
-        "Id": "_VolumeStep_",
-        "UsageContext": "Generic.Prompt",
-        "Title": "Volume step size",
-        "Required": true,
+        "TypeName": "Custom",
+        "ParameterId": "VolumeStep",
+        "Label": "Volume Step Size",
+        "Description": "Amount the volume changes per step-up/step-down press (1-50, default 2).",
         "Persistent": true,
-        "ValueType": "Number",
-        "MinValue": 1,
-        "MaxValue": 50,
-        "DefaultValue": "2"
+        "RequiredForConnection": "None",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "2" }
       }
     ],
-    "Steps": [
-      {
-        "StepId": "Player",
-        "Items": ["_Mac_", "_VolumeStep_"],
-        "NextStep": null
-      }
-    ],
-    "FirstStep": "Player"
+    "Dependencies": ["Lyrion_Common.dll"]
   }
 }
