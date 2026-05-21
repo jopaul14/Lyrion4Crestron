@@ -21,7 +21,7 @@
       "Manufacturer": "Lyrion Community",
       "BaseModel": "Lyrion Receiver",
       "VersionDate": "2026-05-21 00:00:00.000",
-      "DriverVersion": "2.0.0",
+      "DriverVersion": "1.0.0",
       "SdkVersion": "4.00.000",
       "Description": "Lyrion Receiver. Per-room routable AV-receiver style endpoint exposing volume (0-100), mute, and power for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Declares audio inputs matching the Lyrion Source outputs plus speaker outputs for Crestron Home routing. Optional: external amps/AVRs may be used instead.",
       "Guid": "a1b2c3d4-2026-0512-0000-100000000003",
