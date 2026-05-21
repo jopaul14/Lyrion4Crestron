@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Media_Lyrion_Player - Lyrion Source (Driver 2 of 3)
+//  Source_Lyrion_Player - Lyrion Source (Driver 2 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -13,13 +13,13 @@ using Crestron.DeviceDrivers.SDK.EntityModel;
 using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Media
+namespace LyrionCommunity.Crestron.Lyrion.Source
 {
     /// <summary>
     /// Per-room media source entity. Surfaces transport, now-playing,
     /// shuffle/repeat (boolean), and power. Never opens a socket to LMS.
     /// </summary>
-    public sealed class MediaDriver : ReflectedAttributeDriverEntity, IDisposable
+    public sealed class SourceDriver : ReflectedAttributeDriverEntity, IDisposable
     {
         private readonly Action<string> _log;
         private readonly object _gate = new object();
@@ -64,7 +64,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
         [EntityProperty(Id = "elapsedSec")]
         public int ElapsedSec { get; private set; }
 
-        public MediaDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
+        public SourceDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
             _log = BuildLogger();
@@ -198,7 +198,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Media
 
             if (svc.BindPlayer(mac))
             {
-                _log("Media: Bound to MAC " + mac);
+                _log("Source: Bound to MAC " + mac);
 
                 if (svc.TryGetSnapshot(mac, out var snap))
                 {

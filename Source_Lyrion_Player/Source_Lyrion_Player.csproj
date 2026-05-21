@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Volume_Lyrion_Player - Driver 3 of the three-driver Lyrion architecture.
-  Per-room AV receiver-style endpoint exposing volume, mute, and power for a
-  single Lyrion player. Bound by MAC address; consumes the gateway service.
+  Source_Lyrion_Player - Driver 2 of the four-driver Lyrion architecture.
+  Per-room routable audio source (RAD Bluray Player). Binds to one MAC
+  address; consumes the ILyrionGatewayService published by Driver 1. Never
+  connects to LMS.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Volume</RootNamespace>
-    <AssemblyName>Volume_Lyrion_Player</AssemblyName>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Source</RootNamespace>
+    <AssemblyName>Source_Lyrion_Player</AssemblyName>
     <TargetFramework>net472</TargetFramework>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>

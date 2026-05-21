@@ -15,9 +15,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
     /// strongly-typed change events outside the lock.
     /// </summary>
     /// <remarks>
-    /// Only MACs that have been <see cref="Bind"/>ed by a Media or Volume
-    /// driver have records here. Player notifications for MACs we don't care
-    /// about are dropped silently in the gateway driver before they reach us.
+    /// Only MACs that have been <see cref="Bind"/>ed by a Source, Helper, or
+    /// Receiver driver have records here. Player notifications for MACs we
+    /// don't care about are dropped silently in the gateway driver before
+    /// they reach us.
     /// </remarks>
     internal sealed class PlayerRegistry
     {

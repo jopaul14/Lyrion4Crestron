@@ -5,7 +5,7 @@
 
 namespace LyrionCommunity.Crestron.Lyrion.Service
 {
-    /// <summary>Playback state surfaced to Media driver consumers.</summary>
+    /// <summary>Playback state surfaced to Source and Helper driver consumers.</summary>
     public enum LyrionPlaybackState
     {
         Stopped = 0,

@@ -4,11 +4,13 @@ VisualStudioVersion = 16.0.30114.105
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Gateway_Lyrion_LMS_IP", "Gateway_Lyrion_LMS_IP\Gateway_Lyrion_LMS_IP.csproj", "{A1B2C3D4-2026-0512-0000-100000000001}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Media_Lyrion_Player", "Media_Lyrion_Player\Media_Lyrion_Player.csproj", "{A1B2C3D4-2026-0512-0000-100000000002}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Source_Lyrion_Player", "Source_Lyrion_Player\Source_Lyrion_Player.csproj", "{A1B2C3D4-2026-0512-0000-100000000002}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Volume_Lyrion_Player", "Volume_Lyrion_Player\Volume_Lyrion_Player.csproj", "{A1B2C3D4-2026-0512-0000-100000000003}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Receiver_Lyrion_Player", "Receiver_Lyrion_Player\Receiver_Lyrion_Player.csproj", "{A1B2C3D4-2026-0512-0000-100000000003}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Lyrion_Common", "Common\Lyrion_Common.csproj", "{A1B2C3D4-2026-0512-0000-100000000004}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Helper_Lyrion_Player", "Helper_Lyrion_Player\Helper_Lyrion_Player.csproj", "{A1B2C3D4-2026-0521-0000-100000000005}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -32,6 +34,10 @@ Global
 		{A1B2C3D4-2026-0512-0000-100000000004}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1B2C3D4-2026-0512-0000-100000000004}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1B2C3D4-2026-0512-0000-100000000004}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-2026-0521-0000-100000000005}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-2026-0521-0000-100000000005}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-2026-0521-0000-100000000005}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-2026-0521-0000-100000000005}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -10,11 +10,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
     /// Process-wide rendezvous for the Lyrion gateway service. The Gateway
-    /// driver registers itself on startup; Media and Volume drivers wait for
-    /// registration via <see cref="Subscribe"/>.
+    /// driver registers itself on startup; Source, Helper, and Receiver
+    /// drivers wait for registration via <see cref="Subscribe"/>.
     /// </summary>
     /// <remarks>
-    /// All three drivers reference this assembly (Lyrion_Common.dll) via
+    /// All four drivers reference this assembly (Lyrion_Common.dll) via
     /// ProjectReference and share the same DependencyGroup ("LyrionLMS"),
     /// ensuring they are loaded into the same AppDomain. The CLR loads
     /// Lyrion_Common.dll once, so the static fields below are truly
@@ -38,8 +38,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// <para>Notifies every current subscriber, not just the ones that
         /// subscribed before this Register call. This means a Gateway reload
         /// (where the Gateway driver is disposed and re-created without the
-        /// Media/Volume drivers being reloaded) correctly hands the new
-        /// service instance to all surviving consumers.</para>
+        /// Source/Helper/Receiver drivers being reloaded) correctly hands the
+        /// new service instance to all surviving consumers.</para>
         /// <para>Idempotent: calling Register twice with the same instance is
         /// a no-op and does not re-notify subscribers.</para>
         /// <para>SECURITY: this registry is process-wide static state. Any

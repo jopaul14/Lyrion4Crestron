@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Volume_Lyrion_Player - Lyrion Receiver (Driver 3 of 3)
+//  Receiver_Lyrion_Player - Lyrion Receiver (Driver 4 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -13,13 +13,13 @@ using Crestron.DeviceDrivers.SDK.EntityModel;
 using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Volume
+namespace LyrionCommunity.Crestron.Lyrion.Receiver
 {
     /// <summary>
     /// Per-room AV receiver-style endpoint. Surfaces volume (0-100), mute,
     /// and power for a single MAC. Never opens a socket to LMS.
     /// </summary>
-    public sealed class VolumeDriver : ReflectedAttributeDriverEntity, IDisposable
+    public sealed class ReceiverDriver : ReflectedAttributeDriverEntity, IDisposable
     {
         private const int DefaultVolumeStep = 2;
 
@@ -46,7 +46,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
         [EntityProperty(Id = "lyrion:available")]
         public bool Available { get; private set; }
 
-        public VolumeDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
+        public ReceiverDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
             _log = BuildLogger();
@@ -192,7 +192,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Volume
 
             if (svc.BindPlayer(mac))
             {
-                _log("Volume: Bound to MAC " + mac);
+                _log("Receiver: Bound to MAC " + mac);
 
                 if (svc.TryGetSnapshot(mac, out var snap))
                 {

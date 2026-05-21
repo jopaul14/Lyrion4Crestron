@@ -489,8 +489,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
         private void OnPlayerBound(string mac)
         {
-            // If the server is already connected when a Media/Volume driver
-            // binds, immediately request a fresh status for that MAC.
+            // If the server is already connected when a Source/Helper/Receiver
+            // driver binds, immediately request a fresh status for that MAC.
             if (string.IsNullOrEmpty(mac)) return;
             if (_serverConnected)
             {
@@ -685,9 +685,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
 
             // Warn about any bound MAC the server did not report. The most
-            // likely cause is a typo in the Media/Volume driver's configured
-            // MAC; without this log the installer sees the driver's "Bound to
-            // MAC" success message and assumes everything is fine.
+            // likely cause is a typo in the Source/Helper/Receiver driver's
+            // configured MAC; without this log the installer sees the driver's
+            // "Bound to MAC" success message and assumes everything is fine.
             var bound = _registry.BoundMacs();
             foreach (var mac in bound)
             {

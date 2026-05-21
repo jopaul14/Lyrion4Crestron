@@ -37,9 +37,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             _onPlayerBound = onPlayerBound ?? (_ => { });
 
             // Multicast delegates short-circuit on the first throwing subscriber
-            // (e.g. a buggy Media driver would prevent the Volume driver from
-            // seeing the same event). Iterate the invocation list manually so
-            // one misbehaving consumer cannot suppress the others.
+            // (e.g. a buggy Source driver would prevent the Helper and Receiver
+            // drivers from seeing the same event). Iterate the invocation list
+            // manually so one misbehaving consumer cannot suppress the others.
             registry.AvailabilityChanged += (mac, b) => Fan2(AvailabilityChanged, mac, b);
             registry.PowerStateChanged += (mac, b) => Fan2(PowerStateChanged, mac, b);
             registry.PlaybackStateChanged += (mac, s) => Fan2(PlaybackStateChanged, mac, s);
@@ -106,7 +106,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             }
         }
 
-        // ===== Commands: Media (Driver 2) =====
+        // ===== Commands: Source (Driver 2) and Helper (Driver 3) =====
 
         public void Play(string mac) => SendForPlayer(mac, LmsCliCommands.Play);
         public void Pause(string mac) => SendForPlayer(mac, LmsCliCommands.Pause);
@@ -182,7 +182,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             _sendCliLine(LmsCliCommands.ActivatePreset(canon, presetId));
         }
 
-        // ===== Commands: Volume (Driver 3) =====
+        // ===== Commands: Receiver (Driver 4) =====
 
         public void SetVolume(string mac, int level)
         {

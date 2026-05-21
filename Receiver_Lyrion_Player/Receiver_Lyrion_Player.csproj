@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Media_Lyrion_Player - Driver 2 of the three-driver Lyrion architecture.
-  Per-room Extension Media Player. Binds to one MAC address; consumes the
-  ILyrionGatewayService published by Driver 1. Never connects to LMS.
+  Receiver_Lyrion_Player - Driver 4 of the four-driver Lyrion architecture.
+  Per-room routable AV receiver (RAD AV Receiver) exposing volume, mute, and
+  power for a single Lyrion player. Bound by MAC address; consumes the
+  gateway service.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Media</RootNamespace>
-    <AssemblyName>Media_Lyrion_Player</AssemblyName>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Receiver</RootNamespace>
+    <AssemblyName>Receiver_Lyrion_Player</AssemblyName>
     <TargetFramework>net472</TargetFramework>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Volume_Lyrion_Player - Lyrion Receiver (Driver 3 of 3)
+//  Source_Lyrion_Player - Lyrion Source (Driver 2 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -47,7 +47,7 @@ public sealed class EntryPoint : DriverAssemblyEntryPoint
     private static DriverController CreateImpl(DriverControllerCreationArgs args)
     {
         var resources = DriverImplementationResources.FromCreationArgs(args, typeof(EntryPoint));
-        var driver = new LyrionCommunity.Crestron.Lyrion.Volume.VolumeDriver(args, resources);
+        var driver = new LyrionCommunity.Crestron.Lyrion.Source.SourceDriver(args, resources);
         var entity = new ConfigurableDriverEntity(driver.ControllerId, driver, driver.ConfigurationController);
         return new DispatchingDeviceController(entity, args, null);
     }

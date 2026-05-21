@@ -10,8 +10,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// <summary>
     /// Immutable point-in-time view of one player. Returned to consumers from
     /// <see cref="ILyrionGatewayService.TryGetSnapshot"/> so a newly-bound
-    /// Media / Volume driver can paint its UI without waiting for the next
-    /// event tick.
+    /// Source / Helper / Receiver driver can paint its UI without waiting for
+    /// the next event tick.
     /// </summary>
     /// <remarks>
     /// Snapshots are produced inside the gateway's player registry under its
