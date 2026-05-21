@@ -25,8 +25,7 @@
         </controlgroup>
 
         <controlgroup>
-          <button id="PowerOnBtn" label="Power On" action="command:PowerOn"/>
-          <button id="PowerOffBtn" label="Power Off" action="command:PowerOff"/>
+          <toggle id="PowerToggle" label="Power" value="{Power}"/>
         </controlgroup>
 
       </controls>
