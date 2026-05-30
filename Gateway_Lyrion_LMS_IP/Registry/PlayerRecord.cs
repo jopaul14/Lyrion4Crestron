@@ -42,6 +42,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public bool IsAvailable { get; set; }
         public bool IsPoweredOn { get; set; }
 
+        // True once LMS has reported an explicit power state for this player
+        // (via a "power"/"prefset power" notification or the status "power"
+        // field). When set, the playback-derived power fallback must not pull
+        // power off for an idle (stopped) player — the explicit state wins.
+        public bool HasExplicitPower { get; set; }
+
         // Playback
         public LyrionPlaybackState PlaybackState { get; set; }
         public int PositionSeconds { get; set; }

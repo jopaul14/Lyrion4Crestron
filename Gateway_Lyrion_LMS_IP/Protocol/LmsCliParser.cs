@@ -146,6 +146,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
 
         private static LmsMessage ParsePrefset(string mac, string[] tokens)
         {
+            // "<mac> prefset server power 1" / "<mac> prefset server volume 50"
             if (tokens.Length >= 5 && tokens[2] == "server")
             {
                 if (tokens[3] == "power")
@@ -160,6 +161,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                     if (vol > 100) vol = 100;
                     return new LmsMessage(LmsMessageKind.Volume, mac, tokens, vol);
                 }
+            }
+
+            // "<mac> prefset power 1" — device/app-initiated power changes (e.g.
+            // from LMS Material or the front panel) are commonly reported
+            // WITHOUT the "server" namespace token. Without this, a player
+            // powered on at the device never reaches the registry as an explicit
+            // power signal.
+            if (tokens.Length >= 4 && tokens[2] == "power")
+            {
+                return new LmsMessage(LmsMessageKind.Power, mac, tokens, tokens[3] == "1");
+            }
+
+            if (tokens.Length >= 4 && tokens[2] == "volume"
+                && int.TryParse(tokens[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var v2))
+            {
+                if (v2 < 0) v2 = -v2;
+                if (v2 > 100) v2 = 100;
+                return new LmsMessage(LmsMessageKind.Volume, mac, tokens, v2);
             }
 
             return new LmsMessage(LmsMessageKind.PlayerRaw, mac, tokens, null);
