@@ -103,9 +103,23 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
 
         // --- Per-player: status query / preset --------------------------------
 
-        public static string QueryStatus(string mac)
+        /// <summary>
+        /// Build a per-player status query. When <paramref name="subscribeSeconds"/>
+        /// is greater than zero the query is issued as a <c>subscribe</c>: LMS
+        /// replies immediately and then pushes a fresh full status whenever the
+        /// player status changes, with the value acting as a maximum keep-alive
+        /// interval (push-on-change, not polling). This is the authoritative,
+        /// notification-format-independent way to track power and mode - it
+        /// captures changes triggered at the device itself that the granular
+        /// <c>listen</c> notifications can miss. A value of 0 is a one-shot.
+        /// </summary>
+        public static string QueryStatus(string mac, int subscribeSeconds = 0)
         {
-            return Player(mac) + " status - 1 tags:galdJKoNcryu";
+            var subscribe = subscribeSeconds > 0
+                ? " subscribe:" + subscribeSeconds.ToString(CultureInfo.InvariantCulture)
+                : string.Empty;
+
+            return Player(mac) + " status - 1" + subscribe + " tags:galdJKoNcryu";
         }
 
         public static string ActivatePreset(string mac, string presetId)

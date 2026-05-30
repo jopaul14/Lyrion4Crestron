@@ -635,6 +635,28 @@ Frequent polling
 High‑frequency logging
 Per‑event UI updates beyond required state changes
 
+PERMITTED EXCEPTION — CHANGE‑GATED STATUS SUBSCRIPTION
+
+Driver 1 SHOULD open a per‑player subscribing status query
+("<mac> status - 1 subscribe:N tags:..."). This is the authoritative,
+notification‑format‑independent source of power, playback mode, and
+metadata: LMS pushes a full status whenever the player status changes
+(including changes triggered at the device itself, which the granular
+"listen" notifications can miss), with N acting only as a keep‑alive
+ceiling. This is NOT the "frequent polling" prohibited above:
+
+- It is push‑on‑change, not a poll loop.
+- N=30 (matching LMS Material) yields ~2 keep‑alive pushes/min per
+  player at idle — far less than the existing global "listen 1" stream.
+- Every registry mutator is change‑gated, so a push that carries no
+  change raises no events: zero UI updates, zero logging, zero flash
+  writes. The flash‑safety and minimal‑logging guarantees are preserved.
+
+The subscription is established per bound MAC when the server connects
+(and re‑established on every reconnect, since it dies with the CLI
+connection). Do NOT lower N to obtain per‑second position updates; the
+Helper UI interpolates elapsed position client‑side.
+
 
 NO BROWSE / FAVORITES / QUEUE MODEL
 
