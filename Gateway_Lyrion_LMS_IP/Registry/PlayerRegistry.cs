@@ -298,14 +298,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 changed = rec.PlaybackState != state;
                 if (changed) rec.PlaybackState = state;
 
-                // Power derivation: isOn = play or pause; isOff = stop.
-                var derivedPower = state == LyrionPlaybackState.Playing
-                                || state == LyrionPlaybackState.Paused;
-                if (derivedPower != rec.IsPoweredOn)
+                // Power derivation (CLAUDE.md §C) is a FALLBACK that must not
+                // override an explicit LMS power signal. Active playback always
+                // implies power on (raise). A stop only implies power off for
+                // players that never report an explicit power state — a player
+                // powered on but idle (stopped) keeps its explicit "on" state.
+                var playing = state == LyrionPlaybackState.Playing
+                           || state == LyrionPlaybackState.Paused;
+                var desiredPower = rec.IsPoweredOn;
+                if (playing)
                 {
-                    rec.IsPoweredOn = derivedPower;
+                    desiredPower = true;
+                }
+                else if (!rec.HasExplicitPower)
+                {
+                    desiredPower = false;
+                }
+
+                if (desiredPower != rec.IsPoweredOn)
+                {
+                    rec.IsPoweredOn = desiredPower;
                     powerChanged = true;
-                    nowPowered = derivedPower;
+                    nowPowered = desiredPower;
                 }
             }
 
@@ -324,6 +338,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             lock (_gate)
             {
                 if (!_records.TryGetValue(canon, out var rec)) return;
+                rec.HasExplicitPower = true;
                 changed = rec.IsPoweredOn != isOn;
                 if (changed) rec.IsPoweredOn = isOn;
             }
@@ -513,6 +528,57 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                         if (toPublish == null) toPublish = new List<(string, LyrionMetadata)>();
                         toPublish.Add((rec.MacAddress, SnapshotMetadata(rec)));
                     }
+                }
+            }
+
+            if (toPublish == null) return Array.Empty<(string, LyrionMetadata)>();
+
+            foreach (var item in toPublish)
+            {
+                try { MetadataUpdated?.Invoke(item.Item1, item.Item2); } catch { }
+            }
+
+            return toPublish;
+        }
+
+        /// <summary>
+        /// Advance the playback position by one second for every player that is
+        /// currently Playing and available, then republish its metadata. Called
+        /// once per second by the gateway driver's pump so the Helper's elapsed
+        /// time counts up smoothly between the sparse status snapshots LMS
+        /// pushes (otherwise elapsed only refreshes on the ~30s keep-alive).
+        /// </summary>
+        /// <remarks>
+        /// Bounded by design: at most one MetadataUpdated per second per
+        /// actively-playing player, and only the position advances. Paused and
+        /// stopped players are skipped, so an idle system raises nothing. The
+        /// authoritative position from each status push re-seeds the counter
+        /// and corrects any drift.
+        /// </remarks>
+        public IReadOnlyList<(string mac, LyrionMetadata payload)> TickPlayingPositions()
+        {
+            List<(string, LyrionMetadata)> toPublish = null;
+
+            lock (_gate)
+            {
+                foreach (var kvp in _records)
+                {
+                    var rec = kvp.Value;
+                    if (rec.PlaybackState != LyrionPlaybackState.Playing) continue;
+                    if (!rec.IsAvailable) continue;
+
+                    // Don't run past a known track duration; live streams report
+                    // duration 0, so they advance without a cap.
+                    if (rec.DurationSeconds > 0 && rec.PositionSeconds >= rec.DurationSeconds)
+                    {
+                        continue;
+                    }
+
+                    rec.PositionSeconds += 1;
+                    rec.LastMetadataUpdateUtc = DateTime.UtcNow;
+
+                    if (toPublish == null) toPublish = new List<(string, LyrionMetadata)>();
+                    toPublish.Add((rec.MacAddress, SnapshotMetadata(rec)));
                 }
             }
 

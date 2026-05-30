@@ -294,6 +294,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (_disposed) return;
             try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
             catch { }
+
+            // Same 1s pump advances the elapsed position for playing players so
+            // the Helper's time display counts up between status snapshots.
+            try { _registry.TickPlayingPositions(); }
+            catch { }
         }
 
         // ===== CLI events =====

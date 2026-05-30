@@ -654,8 +654,32 @@ ceiling. This is NOT the "frequent polling" prohibited above:
 
 The subscription is established per bound MAC when the server connects
 (and re‑established on every reconnect, since it dies with the CLI
-connection). Do NOT lower N to obtain per‑second position updates; the
-Helper UI interpolates elapsed position client‑side.
+connection).
+
+PERMITTED EXCEPTION — 1‑SECOND ELAPSED POSITION TICK
+
+LMS does not push elapsed position every second (the status subscribe
+above only re‑pushes on change plus the keep‑alive), and the Helper UI
+does NOT interpolate position itself, so without help the elapsed time
+jumps in ~30s steps. Driver 1 therefore advances PositionSeconds by one
+second for each Playing player on its existing 1s pump and republishes
+metadata. This is bounded and spec‑safe:
+
+- Only Playing + available players tick; paused/stopped players and an
+  idle system raise nothing.
+- At most one MetadataUpdated per second per actively‑playing player,
+  and only the position field advances.
+- It performs no logging and no flash writes.
+- Each authoritative status push re‑seeds the position and corrects drift.
+
+PERMITTED EXCEPTION — EXPLICIT POWER IS AUTHORITATIVE
+
+The §C power derivation (play/pause ⇒ on, stop ⇒ off) is a FALLBACK only.
+When LMS reports an explicit power state (a "power"/"prefset power"
+notification or the status "power" field), that state wins: playback may
+only RAISE power (playing ⇒ on); a stop lowers power ONLY for players
+that have never reported an explicit power state. This prevents a player
+that is powered on but idle (stopped) from being shown as off.
 
 
 NO BROWSE / FAVORITES / QUEUE MODEL
