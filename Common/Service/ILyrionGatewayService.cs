@@ -97,6 +97,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         event Action<bool> ServerConnectivityChanged;
 
         event Action<string, bool> AvailabilityChanged;
+
+        /// <summary>
+        /// Raised when a player's human-readable LMS name changes. The second
+        /// argument is the new name. Rarely fires after the initial report.
+        /// </summary>
+        event Action<string, string> NameChanged;
+
         event Action<string, bool> PowerStateChanged;
         event Action<string, LyrionPlaybackState> PlaybackStateChanged;
         event Action<string, LyrionMetadata> MetadataUpdated;

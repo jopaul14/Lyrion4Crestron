@@ -19,17 +19,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public PlayerRecord(string macAddress)
         {
             MacAddress = macAddress;
+            Name = string.Empty;
             LifecycleState = PlayerLifecycleState.Unknown;
             PlaybackState = LyrionPlaybackState.Stopped;
             Title = string.Empty;
             Artist = string.Empty;
             Album = string.Empty;
-            ArtworkUrl = string.Empty;
             Presets = Array.Empty<LyrionPreset>();
         }
 
         // Identity & capabilities
         public string MacAddress { get; }
+        public string Name { get; set; }
         public string PlayerId { get; set; }
         public bool CanPowerOff { get; set; } = true;
         public bool SupportsVolume { get; set; } = true;
@@ -65,7 +66,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public string Title { get; set; }
         public string Artist { get; set; }
         public string Album { get; set; }
-        public string ArtworkUrl { get; set; }
+        public int TrackNumber { get; set; }
         public bool IsFrozen { get; set; }
         public DateTime FrozenAtUtc { get; set; }
         public DateTime LastMetadataUpdateUtc { get; set; }

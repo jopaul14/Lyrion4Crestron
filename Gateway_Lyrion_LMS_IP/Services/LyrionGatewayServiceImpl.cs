@@ -41,6 +41,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             // drivers from seeing the same event). Iterate the invocation list
             // manually so one misbehaving consumer cannot suppress the others.
             registry.AvailabilityChanged += (mac, b) => Fan2(AvailabilityChanged, mac, b);
+            registry.NameChanged += (mac, s) => Fan2(NameChanged, mac, s);
             registry.PowerStateChanged += (mac, b) => Fan2(PowerStateChanged, mac, b);
             registry.PlaybackStateChanged += (mac, s) => Fan2(PlaybackStateChanged, mac, s);
             registry.MetadataUpdated += (mac, m) => Fan2(MetadataUpdated, mac, m);
@@ -85,6 +86,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
 
         public event Action<bool> ServerConnectivityChanged;
         public event Action<string, bool> AvailabilityChanged;
+        public event Action<string, string> NameChanged;
         public event Action<string, bool> PowerStateChanged;
         public event Action<string, LyrionPlaybackState> PlaybackStateChanged;
         public event Action<string, LyrionMetadata> MetadataUpdated;

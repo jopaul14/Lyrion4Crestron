@@ -23,6 +23,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     {
         public LyrionPlayerSnapshot(
             string mac,
+            string name,
             bool isAvailable,
             bool isPoweredOn,
             LyrionPlaybackState playbackState,
@@ -36,6 +37,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             bool supportsVolume)
         {
             Mac = mac ?? string.Empty;
+            Name = name ?? string.Empty;
             IsAvailable = isAvailable;
             IsPoweredOn = isPoweredOn;
             PlaybackState = playbackState;
@@ -50,6 +52,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         }
 
         public string Mac { get; }
+
+        /// <summary>Human-readable LMS player name (e.g. "Living Room").</summary>
+        public string Name { get; }
+
         public bool IsAvailable { get; }
         public bool IsPoweredOn { get; }
         public LyrionPlaybackState PlaybackState { get; }

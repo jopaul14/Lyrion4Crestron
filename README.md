@@ -37,7 +37,7 @@ All drivers require Crestron driver runtime **25.0000.0033** or later.
 | (RAD Bluray Player) || (RAD Media Player   || (RAD AV Receiver)   |
 |                    || extension)          ||                     |
 | Play/Pause/Stop    || Title/Artist/Album  || Volume (0-100)      |
-| Next/Prev          || Artwork/Elapsed     || Mute                |
+| Next/Prev          || Elapsed/Duration    || Mute                |
 | Power              || Shuffle/Repeat      || Power               |
 |                    || Seek                ||                     |
 | Digital + Analog   ||                     || Digital + Analog    |
@@ -69,11 +69,14 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 ### Lyrion Helper (Driver 3) — rich UI extension
 
-- Now-playing metadata: title, artist, album, artwork, elapsed, duration
+- Source-name header (LMS player name) at the top of the now-playing screen
+- Now-playing metadata: title, artist, album, track number, elapsed, duration
+- Read-only progress bar with `hh:mm:ss` elapsed/total (hidden when duration is unknown, e.g. radio streams)
 - Transport: Play / Pause / Stop / Next / Previous / Seek
-- Shuffle (bool) and Repeat (bool)
+- Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
 - Custom now-playing layout via `UiDefinition.xml`.
+- Room-page tile shows the player's on/off state (power badge + `Off`/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.
 
 ### Lyrion Receiver (Driver 4) — routable audio endpoint
 
