@@ -59,17 +59,13 @@ DRIVER 2 – LYRION SOURCE (PER-ROOM ROUTABLE AUDIO SOURCE)
 One instance per room / per player
 Configured by MAC address only
 Never connects to LMS directly
-Silent routing object — exposes NO user-facing controls at all
+Sends transport intent to Driver 1
+Receives playback / power / availability state from Driver 1
 Routable audio source — declares analog and digital audio outputs
-Receives availability (online/offline) state from Driver 1 and reports it
-so Crestron Home knows whether the routable source is present
-No transport, no power, no volume, no playback feedback, no rich now-playing UI
-All user controls live in the Helper (Driver 3) and Receiver (Driver 4)
-
-RATIONALE: A RAD Bluray Player and the Helper extension both rendering
-transport in the room gave the end-user two confusing control surfaces.
-The Source is therefore reduced to a pure routing object so the Helper owns
-the single, rich control surface for the room.
+Exposes only the transport / power controls natively supported by the
+RAD Bluray Player type (Play / Pause / Stop / Next / Prev / Power)
+No volume control
+No rich now-playing UI (that lives in Driver 3)
 
 DRIVER 3 – LYRION HELPER (PER-ROOM RICH UI / EXTENSION)
 
@@ -148,13 +144,11 @@ DRIVER 2 – LYRION SOURCE
 Display name: Lyrion Source
 DeviceType: Bluray Player (RAD)
 Acts as the routable audio source in the Crestron Home Source Routes graph
-Exposes NO user controls — all DeviceSupport capability flags for transport
-and power are false and StandardCommands is empty:
+Must expose only what RAD Bluray Player supports natively:
 
-No Play / Pause / Stop
-No ForwardSkip (Next) / ReverseSkip (Previous)
-No PowerOn / PowerOff / TogglePower
-No playback or power feedback
+Play / Pause / Stop
+ForwardSkip (Next) / ReverseSkip (Previous)
+PowerOn / PowerOff / TogglePower
 
 
 Must declare audio outputs in CrestronSerialDeviceApi.Api.AudioInOut.Outputs:
@@ -163,9 +157,7 @@ One digital audio output (Coaxial Digital, connector 30)
 One analog audio output (RCA Analog, connector 40)
 
 
-Reports only availability (Connected) so Crestron Home knows the source is
-online. Must NOT expose transport, power, volume, mute, shuffle, repeat,
-seek, or rich metadata — those all live in the Helper and Receiver.
+Must NOT expose volume, mute, shuffle, repeat, seek, or rich metadata.
 
 DRIVER 3 – LYRION HELPER
 
@@ -320,7 +312,7 @@ Shuffle ON → LMS Shuffle Song
 Repeat ON → LMS Repeat Playlist
 
 C) POWER SEMANTICS (DRIVER 1 OWNS)
-Expose to Drivers 3 and 4 (the Source has no power controls):
+Expose to Drivers 2, 3, and 4:
 
 PowerOn
 PowerOff
@@ -484,12 +476,13 @@ DRIVER CONTRACTS (MANDATORY)
 DRIVER 1 → DRIVER 2 EVENTS (Source)
 
 OnAvailabilityChanged(mac, bool)
-(Power and playback events are not consumed — the Source has no controls
-or feedback that depend on them.)
+OnPowerStateChanged(mac, bool)
+OnPlaybackStateChanged(mac, Playing|Paused|Stopped)
 
 DRIVER 2 → DRIVER 1 COMMANDS (Source)
 
-None. The Source is a silent routing object and issues no commands.
+Play / Pause / Stop / Next / Previous
+PowerOn / PowerOff / PowerToggle
 
 DRIVER 1 → DRIVER 3 EVENTS (Helper)
 
@@ -547,7 +540,7 @@ Player reboot logs only for affected MAC
 No per-player logs during server outage
 Sleep is completely removed
 Favorites / browsing not present
-Driver 2 appears as a routable source in Crestron Home Source Routes and exposes no user controls (no transport, power, or feedback)
+Driver 2 appears as a routable source in Crestron Home Source Routes
 Driver 3 surfaces the rich media-player UI in the Crestron Home room view
 Driver 4 appears as a routable endpoint and controls room volume 0–100
 Shuffle and Repeat map correctly via Driver 3

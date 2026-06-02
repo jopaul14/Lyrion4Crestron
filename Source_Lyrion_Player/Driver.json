@@ -1,15 +1,15 @@
 {
   "CrestronSerialDeviceApi": {
     "DeviceSupport": {
-      "SupportsPlay": false,
-      "SupportsPause": false,
-      "SupportsStop": false,
-      "SupportsForwardSkip": false,
-      "SupportsReverseSkip": false,
-      "SupportsDiscretePower": false,
-      "SupportsTogglePower": false,
-      "SupportsPowerFeedback": false,
-      "SupportsPlayBackStatusFeedback": false,
+      "SupportsPlay": true,
+      "SupportsPause": true,
+      "SupportsStop": true,
+      "SupportsForwardSkip": true,
+      "SupportsReverseSkip": true,
+      "SupportsDiscretePower": true,
+      "SupportsTogglePower": true,
+      "SupportsPowerFeedback": true,
+      "SupportsPlayBackStatusFeedback": true,
       "SupportsFeedback": true,
       "SupportsDisconnect": true,
       "SupportsReconnect": true
@@ -22,12 +22,12 @@
       "VersionDate": "2026-05-21 00:00:00.000",
       "DriverVersion": "1.0.0",
       "SdkVersion": "4.00.000",
-      "Description": "Lyrion Source. Per-room routable audio source for a single Lyrion player. Bound by MAC address; never connects to LMS directly. Exposes no user-facing transport or power controls — it is a silent routing object that declares one digital and one analog audio output for Crestron Home source routing and reports only its online/offline availability. All user controls (transport, power, volume, now-playing) live in the companion Lyrion Helper and Lyrion Receiver drivers.",
+      "Description": "Lyrion Source. Per-room routable audio source for a single Lyrion player. Bound by MAC address; forwards Play/Pause/Stop/Next/Previous/Power to the Lyrion Server gateway and never connects to LMS directly. Declares one digital and one analog audio output for Crestron Home source routing. Volume and rich now-playing UI live in the companion Lyrion Receiver and Lyrion Helper drivers.",
       "Guid": "bfe25c99-f33f-4234-a338-64d42a1cd184",
       "DependencyGroup": "LyrionLMS",
       "Developer": {
         "Company": "Lyrion Community",
-        "Contact": "Bob Dylan",
+        "Contact": "Bob Ludwig",
         "Email": "ownerofalonelyinbox@90125.example",
         "Website": "https://github.com/jopaul14/Lyrion4Crestron",
         "PhoneNumber": "(555) 867-5309"
@@ -64,7 +64,16 @@
         "UseLocalCooldownTimer": false,
         "CoolDownTime": 0
       },
-      "StandardCommands": {},
+      "StandardCommands": {
+        "PowerOn": { "StandardCommand": 6602, "Command": "", "Parameters": [] },
+        "PowerOff": { "StandardCommand": 6601, "Command": "", "Parameters": [] },
+        "Power": { "StandardCommand": 6600, "Command": "", "Parameters": [] },
+        "Play": { "StandardCommand": 12901, "Command": "", "Parameters": [] },
+        "Pause": { "StandardCommand": 12900, "Command": "", "Parameters": [] },
+        "Stop": { "StandardCommand": 14000, "Command": "", "Parameters": [] },
+        "ForwardSkip": { "StandardCommand": 14600, "Command": "", "Parameters": [] },
+        "ReverseSkip": { "StandardCommand": 14800, "Command": "", "Parameters": [] }
+      },
       "CustomCommands": [],
       "ArrowKeys": [],
       "ColorButtons": [],

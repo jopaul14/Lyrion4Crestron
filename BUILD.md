@@ -129,7 +129,16 @@ Deploy in this order:
 
 4. **Route audio.** In Crestron Home, route the Source's digital or analog output to the Receiver's matching input (or to a 3rd-party AVR), and from there to the room speakers.
 
-5. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.
+5. **Hide the Source tile from the room UI.** The Lyrion Source is a routable Blu-ray Player, so by default Crestron Home shows it as a selectable source in the room. It carries full transport and power controls (Play/Pause/Stop/Next/Previous/Power) — these are intentionally retained so they are available to Crestron Home programming (Quick Actions, scenes, schedules, etc.), but you do not want end-users seeing a second control surface alongside the Helper's rich now-playing UI. To keep the controls available for programming while hiding the tile from end-users:
+
+   - In the Crestron Home Setup app, go to **Source Routes**, select the room, and open the **Available Sources** tab.
+   - **Deselect (uncheck) "Lyrion Source"** for that room. This removes its tile from the room user interface; the source remains usable for audio routing (configured in step 4, which is independent of Available Sources) and its transport/power commands remain available to programming.
+   - Leave the **Lyrion Helper** selected/visible — it is an extension device, not a source, and is unaffected by this setting. It remains the single rich control surface end-users see.
+   - Repeat for every room that has a Lyrion Source.
+
+   Note: a deselected source can still appear inside the routing/route-selection menus used during configuration, but it will not be a user-facing source tile in the room view.
+
+6. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.
 
 The Source, Helper, and Receiver drivers will each log a single `Bound to MAC ...` line and then surface state as it changes; the Gateway logs server connectivity transitions only.
 
