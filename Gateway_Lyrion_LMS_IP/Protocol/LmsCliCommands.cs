@@ -119,7 +119,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                 ? " subscribe:" + subscribeSeconds.ToString(CultureInfo.InvariantCulture)
                 : string.Empty;
 
-            return Player(mac) + " status - 1" + subscribe + " tags:galdoNryu";
+            return Player(mac) + " status - 1" + subscribe + " tags:galdtoNryu";
         }
 
         public static string ActivatePreset(string mac, string presetId)

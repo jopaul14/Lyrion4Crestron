@@ -375,9 +375,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 case LmsMessageKind.NewSong:
                     if (message.Payload is NewSongPayload song)
                     {
-                        _registry.NoteMetadata(message.Mac, song.Title, null, null, -1, 0);
+                        _registry.NoteMetadata(message.Mac, song.Title, null, null, -1, -1, 0);
                         // Trigger a full status query so we pick up artist /
-                        // album / duration on the next CLI cycle.
+                        // album / track number / duration on the next CLI cycle.
                         _ = SendCliForPlayer(message.Mac, LmsCliCommands.QueryStatus(message.Mac));
                     }
                     break;
@@ -641,12 +641,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
 
             // Metadata — tags requested: g=genre, a=artist, l=album, d=duration,
-            // o=type, N=remote_title, r=bitrate, y=year, u=url. Cover art is not
-            // displayable in Crestron Home for a third-party source, so artwork
-            // tags are neither requested nor parsed.
+            // t=tracknum, o=type, N=remote_title, r=bitrate, y=year, u=url. Cover
+            // art is not displayable in Crestron Home for a third-party source,
+            // so artwork tags are neither requested nor parsed.
             var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
             var artist = TryGet(kv, "artist");
             var album = TryGet(kv, "album");
+
+            // Track number is authoritative from a full status reply: absent
+            // (e.g. radio streams) means "no track number", so default to 0.
+            int trackNumber = 0;
+            if (kv.TryGetValue("tracknum", out var tnStr) &&
+                int.TryParse(tnStr, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var tnVal) && tnVal > 0)
+            {
+                trackNumber = tnVal;
+            }
 
             int duration = -1;
             if (kv.TryGetValue("duration", out var durStr) &&
@@ -664,11 +674,19 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 position = (int)timeVal;
             }
 
-            _registry.NoteMetadata(mac, title, artist, album, duration, position);
+            _registry.NoteMetadata(mac, title, artist, album, trackNumber, duration, position);
+
+            // Player name — shown as the source-name header in the Helper UI.
+            // Change-gated in the registry, so a repeated name raises nothing.
+            var playerName = TryGet(kv, "player_name");
+            if (!string.IsNullOrEmpty(playerName))
+            {
+                _registry.NoteName(mac, playerName);
+            }
 
             // Player capabilities — "can_seek" indicates a real player; LMS
-            // also returns "player_name", "player_connected", etc. We note
-            // canPowerOff based on "canpoweroff" if present.
+            // also returns "player_connected", etc. We note canPowerOff based
+            // on "canpoweroff" if present.
             if (kv.TryGetValue("canpoweroff", out var cpStr))
             {
                 _registry.SetCapabilities(mac, cpStr == "1", null);

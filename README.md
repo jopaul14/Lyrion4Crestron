@@ -69,9 +69,11 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 ### Lyrion Helper (Driver 3) — rich UI extension
 
-- Now-playing metadata: title, artist, album, elapsed, duration
+- Source-name header (LMS player name) at the top of the now-playing screen
+- Now-playing metadata: title, artist, album, track number, elapsed, duration
+- Read-only progress bar with `hh:mm:ss` elapsed/total (hidden when duration is unknown, e.g. radio streams)
 - Transport: Play / Pause / Stop / Next / Previous / Seek
-- Shuffle (bool) and Repeat (bool)
+- Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
 - Custom now-playing layout via `UiDefinition.xml`.
 - Room-page tile shows the player's on/off state (power badge + `Off`/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.

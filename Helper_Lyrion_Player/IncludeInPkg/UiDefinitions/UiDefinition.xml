@@ -9,24 +9,28 @@
     <layout id="NowPlaying" isdefaultlayout="#true">
       <controls>
 
-        <textdisplay id="TrackInfo" title="{Title}" line1label="{Artist}" line2label="{Album}"/>
+        <!-- Source name header (top of screen). -->
+        <subheader id="SourceHeader" label="{SourceName}"/>
 
-        <textdisplay id="TimeInfo" title="{Elapsed}" line1label="{Duration}"/>
+        <!-- Track line (bold-ish title) + "by artist" / "from album". -->
+        <textdisplay id="TrackInfo" title="{TrackLine}" line1label="{ByArtist}" line2label="{FromAlbum}"/>
 
-        <controlgroup>
-          <button id="PrevBtn" label="Previous" action="command:Previous" icon="#icSkipBackRegular"/>
-          <button id="PlayBtn" label="Play" action="command:TogglePlay" icon="{PlaybackIcon}"/>
-          <button id="NextBtn" label="Next" action="command:Next" icon="#icSkipForwardRegular"/>
-        </controlgroup>
+        <!-- Read-only progress bar, then the elapsed/total time below it.
+             Both hide when duration is unknown (e.g. radio streams). -->
+        <segmentedslider id="Progress" label="" value="{Progress}" enabled="#false" visible="{HasDuration}"/>
+        <textdisplay id="TimeInfo" title="{TimeText}" visible="{HasDuration}"/>
 
-        <controlgroup>
-          <toggle id="ShuffleToggle" label="Shuffle" value="{Shuffle}"/>
-          <toggle id="RepeatToggle" label="Repeat" value="{Repeat}"/>
-        </controlgroup>
+        <!-- Duration unknown: show elapsed time alone. -->
+        <textdisplay id="ElapsedOnly" title="{Elapsed}" visible="{NoDuration}"/>
 
-        <controlgroup>
-          <toggle id="PowerToggle" label="Power" value="{Power}"/>
-        </controlgroup>
+        <!-- Transport: Repeat | Previous | Play/Pause | Next | Shuffle. -->
+        <buttongroup>
+          <button id="RepeatBtn" label="Repeat" action="command:ToggleRepeat" icon="{RepeatIcon}"/>
+          <button id="PrevBtn" label="Previous" action="command:Previous" icon="#icPrevious"/>
+          <button id="PlayBtn" label="Play/Pause" action="command:TogglePlay" icon="{PlaybackIcon}"/>
+          <button id="NextBtn" label="Next" action="command:Next" icon="#icNext"/>
+          <button id="ShuffleBtn" label="Shuffle" action="command:ToggleShuffle" icon="{ShuffleIcon}"/>
+        </buttongroup>
 
       </controls>
     </layout>

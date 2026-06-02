@@ -30,6 +30,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
 
         // ===== Change events (raised outside the lock) =====
         public event Action<string, bool> AvailabilityChanged;
+        public event Action<string, string> NameChanged;
         public event Action<string, bool> PowerStateChanged;
         public event Action<string, LyrionPlaybackState> PlaybackStateChanged;
         public event Action<string, LyrionMetadata> MetadataUpdated;
@@ -111,6 +112,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
 
                 snapshot = new LyrionPlayerSnapshot(
                     rec.MacAddress,
+                    rec.Name,
                     rec.IsAvailable,
                     rec.IsPoweredOn,
                     rec.PlaybackState,
@@ -417,11 +419,34 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             if (changed) try { RepeatChanged?.Invoke(canon, enabled); } catch { }
         }
 
+        /// <summary>
+        /// Updates the player's human-readable name. Change-gated: only raises
+        /// <see cref="NameChanged"/> when the value actually changes.
+        /// </summary>
+        public void NoteName(string mac, string name)
+        {
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null || string.IsNullOrEmpty(name)) return;
+
+            bool changed;
+            string applied;
+            lock (_gate)
+            {
+                if (!_records.TryGetValue(canon, out var rec)) return;
+                applied = Cap(name);
+                changed = !string.Equals(rec.Name, applied, StringComparison.Ordinal);
+                if (changed) rec.Name = applied;
+            }
+
+            if (changed) try { NameChanged?.Invoke(canon, applied); } catch { }
+        }
+
         public void NoteMetadata(
             string mac,
             string title,
             string artist,
             string album,
+            int trackNumber,
             int durationSeconds,
             int positionSeconds)
         {
@@ -436,6 +461,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 rec.Title = Cap(title ?? rec.Title ?? string.Empty);
                 rec.Artist = Cap(artist ?? rec.Artist ?? string.Empty);
                 rec.Album = Cap(album ?? rec.Album ?? string.Empty);
+                if (trackNumber >= 0) rec.TrackNumber = trackNumber;
                 if (durationSeconds >= 0) rec.DurationSeconds = durationSeconds;
                 if (positionSeconds >= 0) rec.PositionSeconds = positionSeconds;
                 rec.IsFrozen = false;
@@ -520,6 +546,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                         rec.Title = string.Empty;
                         rec.Artist = string.Empty;
                         rec.Album = string.Empty;
+                        rec.TrackNumber = 0;
                         rec.DurationSeconds = 0;
                         rec.PositionSeconds = 0;
                         if (toPublish == null) toPublish = new List<(string, LyrionMetadata)>();
@@ -651,6 +678,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 rec.Title,
                 rec.Artist,
                 rec.Album,
+                rec.TrackNumber,
                 rec.DurationSeconds,
                 rec.PositionSeconds,
                 rec.IsFrozen);

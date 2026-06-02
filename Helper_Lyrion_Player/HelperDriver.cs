@@ -21,6 +21,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string CmdNext = "Next";
         private const string CmdPrevious = "Previous";
         private const string CmdTogglePlay = "TogglePlay";
+        private const string CmdToggleRepeat = "ToggleRepeat";
+        private const string CmdToggleShuffle = "ToggleShuffle";
         private const string CmdPowerOn = "PowerOn";
         private const string CmdPowerOff = "PowerOff";
         private const string CmdPowerToggle = "PowerToggle";
@@ -37,11 +39,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropPower = "Power";
         private const string PropPowerIcon = "PowerIcon";
         private const string PropTileStatus = "TileStatus";
+        // Now-playing layout (see UiDefinition.xml).
+        private const string PropSourceName = "SourceName";
+        private const string PropTrackLine = "TrackLine";
+        private const string PropByArtist = "ByArtist";
+        private const string PropFromAlbum = "FromAlbum";
+        private const string PropTimeText = "TimeText";
+        private const string PropProgress = "Progress";
+        private const string PropHasDuration = "HasDuration";
+        private const string PropNoDuration = "NoDuration";
+        private const string PropRepeatIcon = "RepeatIcon";
+        private const string PropShuffleIcon = "ShuffleIcon";
 
         private const string IconPlay = "icPlay";
         private const string IconPause = "icPause";
         private const string IconPowerOn = "icPowerRegular";
         private const string IconPowerOff = "icPowerDisabled";
+        private const string IconRepeatOn = "icRepeat";
+        private const string IconRepeatOff = "icRepeatDisabled";
+        private const string IconShuffleOn = "icShuffle";
+        private const string IconShuffleOff = "icShuffleDisabled";
 
         private readonly Action<string> _log;
         private readonly object _gate = new object();
@@ -64,6 +81,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private PropertyValue<bool> _powerProp;
         private PropertyValue<string> _powerIconProp;
         private PropertyValue<string> _tileStatusProp;
+        private PropertyValue<string> _sourceNameProp;
+        private PropertyValue<string> _trackLineProp;
+        private PropertyValue<string> _byArtistProp;
+        private PropertyValue<string> _fromAlbumProp;
+        private PropertyValue<string> _timeTextProp;
+        private PropertyValue<int> _progressProp;
+        private PropertyValue<bool> _hasDurationProp;
+        private PropertyValue<bool> _noDurationProp;
+        private PropertyValue<string> _repeatIconProp;
+        private PropertyValue<string> _shuffleIconProp;
 
         public HelperDriver()
         {
@@ -106,6 +133,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _powerProp = CreateProperty<bool>(new PropertyDefinition(PropPower, null, DevicePropertyType.Boolean));
             _powerIconProp = CreateProperty<string>(new PropertyDefinition(PropPowerIcon, null, DevicePropertyType.String));
             _tileStatusProp = CreateProperty<string>(new PropertyDefinition(PropTileStatus, null, DevicePropertyType.String));
+            _sourceNameProp = CreateProperty<string>(new PropertyDefinition(PropSourceName, null, DevicePropertyType.String));
+            _trackLineProp = CreateProperty<string>(new PropertyDefinition(PropTrackLine, null, DevicePropertyType.String));
+            _byArtistProp = CreateProperty<string>(new PropertyDefinition(PropByArtist, null, DevicePropertyType.String));
+            _fromAlbumProp = CreateProperty<string>(new PropertyDefinition(PropFromAlbum, null, DevicePropertyType.String));
+            _timeTextProp = CreateProperty<string>(new PropertyDefinition(PropTimeText, null, DevicePropertyType.String));
+            _progressProp = CreateProperty<int>(new PropertyDefinition(PropProgress, null, DevicePropertyType.Int32, 0, 100, 1));
+            _hasDurationProp = CreateProperty<bool>(new PropertyDefinition(PropHasDuration, null, DevicePropertyType.Boolean));
+            _noDurationProp = CreateProperty<bool>(new PropertyDefinition(PropNoDuration, null, DevicePropertyType.Boolean));
+            _repeatIconProp = CreateProperty<string>(new PropertyDefinition(PropRepeatIcon, null, DevicePropertyType.String));
+            _shuffleIconProp = CreateProperty<string>(new PropertyDefinition(PropShuffleIcon, null, DevicePropertyType.String));
         }
 
         // ===== AExtensionDevice overrides =====
@@ -126,6 +163,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                         else svc.Play(mac);
                     });
                     break;
+                case CmdToggleRepeat: InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, !_repeatProp.Value)); break;
+                case CmdToggleShuffle: InvokeOnGateway((svc, mac) => svc.SetShuffle(mac, !_shuffleProp.Value)); break;
                 case CmdPowerOn: InvokeOnGateway((svc, mac) => svc.PowerOn(mac)); break;
                 case CmdPowerOff: InvokeOnGateway((svc, mac) => svc.PowerOff(mac)); break;
                 case CmdPowerToggle: InvokeOnGateway((svc, mac) => svc.PowerToggle(mac)); break;
@@ -195,6 +234,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
+                service.NameChanged += OnNameChanged;
                 service.PowerStateChanged += OnPowerStateChanged;
                 service.PlaybackStateChanged += OnPlaybackStateChanged;
                 service.MetadataUpdated += OnMetadataUpdated;
@@ -205,6 +245,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (oldService != null)
             {
                 try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { oldService.NameChanged -= OnNameChanged; } catch { }
                 try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
                 try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
                 try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
@@ -253,6 +294,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
+            UpdateName(snap.Name);
             UpdateAvailability(snap.IsAvailable);
             UpdatePower(snap.IsPoweredOn);
             UpdatePlayback(snap.PlaybackState);
@@ -267,6 +309,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         {
             if (!IsMine(mac)) return;
             UpdateAvailability(isAvailable);
+        }
+
+        private void OnNameChanged(string mac, string name)
+        {
+            if (!IsMine(mac)) return;
+            UpdateName(name);
         }
 
         private void OnPowerStateChanged(string mac, bool isOn)
@@ -312,6 +360,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             }
         }
 
+        private void UpdateName(string name)
+        {
+            _sourceNameProp.Value = name ?? string.Empty;
+            Commit();
+        }
+
         private void UpdatePower(bool isOn)
         {
             _powerProp.Value = isOn;
@@ -353,8 +407,40 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _titleProp.Value = meta.Title;
             _artistProp.Value = meta.Artist;
             _albumProp.Value = meta.Album;
-            _elapsedProp.Value = FormatTime(meta.PositionSeconds);
+
+            // Composite now-playing lines for the layout.
+            //   Line 1: "<track>  <bullet>  <title>" (or just the title when no track #)
+            //   Line 2: "by <artist>"   Line 3: "from <album>"
+            // The bullet (U+2022) is built from its code point so the source stays ASCII.
+            var bullet = (char)0x2022;
+            _trackLineProp.Value = meta.TrackNumber > 0
+                ? meta.TrackNumber.ToString() + "  " + bullet + "  " + meta.Title
+                : meta.Title;
+            _byArtistProp.Value = string.IsNullOrEmpty(meta.Artist) ? string.Empty : "by " + meta.Artist;
+            _fromAlbumProp.Value = string.IsNullOrEmpty(meta.Album) ? string.Empty : "from " + meta.Album;
+
+            // Timing + read-only progress. When the duration is unknown (e.g.
+            // a radio stream) hide the bar and total and show elapsed alone.
+            var elapsed = FormatTime(meta.PositionSeconds);
+            _elapsedProp.Value = elapsed;
             _durationProp.Value = FormatTime(meta.DurationSeconds);
+
+            bool hasDuration = meta.DurationSeconds > 0;
+            _hasDurationProp.Value = hasDuration;
+            _noDurationProp.Value = !hasDuration;
+
+            if (hasDuration)
+            {
+                _timeTextProp.Value = elapsed + " / " + FormatTime(meta.DurationSeconds);
+                var pct = (int)((long)meta.PositionSeconds * 100 / meta.DurationSeconds);
+                _progressProp.Value = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+            }
+            else
+            {
+                _timeTextProp.Value = elapsed;
+                _progressProp.Value = 0;
+            }
+
             RefreshTileStatus();
             Commit();
         }
@@ -389,21 +475,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private void UpdateShuffle(bool enabled)
         {
             _shuffleProp.Value = enabled;
+            _shuffleIconProp.Value = enabled ? IconShuffleOn : IconShuffleOff;
             Commit();
         }
 
         private void UpdateRepeat(bool enabled)
         {
             _repeatProp.Value = enabled;
+            _repeatIconProp.Value = enabled ? IconRepeatOn : IconRepeatOff;
             Commit();
         }
 
+        // Formats seconds as xx:yy:zz. Minutes and seconds are always shown
+        // (two digits); hours appear only when non-zero. The hours field wraps
+        // at 99 to honor the 99:59:59 spacing budget.
         private static string FormatTime(int totalSeconds)
         {
-            if (totalSeconds <= 0) return "0:00";
-            var m = totalSeconds / 60;
-            var s = totalSeconds % 60;
-            return m.ToString() + ":" + s.ToString("D2");
+            if (totalSeconds < 0) totalSeconds = 0;
+            int hours = totalSeconds / 3600;
+            int minutes = (totalSeconds % 3600) / 60;
+            int seconds = totalSeconds % 60;
+            if (hours > 0)
+            {
+                hours %= 100;
+                return hours.ToString("D2") + ":" + minutes.ToString("D2") + ":" + seconds.ToString("D2");
+            }
+            return minutes.ToString("D2") + ":" + seconds.ToString("D2");
         }
 
         // ===== Helpers =====
@@ -462,6 +559,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (svc != null)
             {
                 try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                try { svc.NameChanged -= OnNameChanged; } catch { }
                 try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
                 try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
                 try { svc.MetadataUpdated -= OnMetadataUpdated; } catch { }

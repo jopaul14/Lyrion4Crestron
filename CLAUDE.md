@@ -168,7 +168,9 @@ Not part of the audio routing graph
 Hosts the rich Crestron Home media-player UI for one room
 Must expose:
 
-Now-playing metadata (Title, Artist, Album, Elapsed, Duration)
+Source name (LMS player name, shown as the layout header)
+Now-playing metadata (Title, Artist, Album, Track number, Elapsed, Duration)
+A read-only progress bar (elapsed/total hidden when duration is unknown)
 Transport controls (Play / Pause / Stop / Next / Previous / Seek)
 Shuffle (boolean) and Repeat (boolean)
 PowerOn / PowerOff / PowerToggle
@@ -370,6 +372,7 @@ PlayerRecord fields:
 Identity & Capabilities:
 
 MacAddress
+Name (LMS player name)
 PlayerId (ephemeral)
 CanPowerOff
 SupportsVolume
@@ -397,7 +400,7 @@ RepeatEnabled
 
 Metadata:
 
-Title, Artist, Album
+Title, Artist, Album, TrackNumber
 IsFrozen
 FrozenAtUtc
 LastMetadataUpdateUtc
@@ -487,6 +490,7 @@ PowerOn / PowerOff / PowerToggle
 DRIVER 1 → DRIVER 3 EVENTS (Helper)
 
 OnAvailabilityChanged(mac, bool)
+OnNameChanged(mac, string)
 OnPowerStateChanged(mac, bool)
 OnPlaybackStateChanged(mac, Playing|Paused|Stopped)
 OnMetadataUpdated(...)
