@@ -74,6 +74,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 - Shuffle (bool) and Repeat (bool)
 - PowerOn / PowerOff / TogglePower
 - Custom now-playing layout via `UiDefinition.xml`.
+- Room-page tile shows the player's on/off state (power badge + `Off`/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.
 
 ### Lyrion Receiver (Driver 4) — routable audio endpoint
 

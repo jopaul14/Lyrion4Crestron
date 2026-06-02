@@ -2,7 +2,7 @@
 <uidefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://prd-use-rad-assets.azurewebsites.net/ExtensionsSchemaDefinition_v1_0.xsd">
   <version ver="1.0"/>
 
-  <tile icon="{PlaybackIcon}" status="{Title}" action="command:TogglePlay" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
+  <tile icon="{PlaybackIcon}" secondaryicon="{PowerIcon}" status="{TileStatus}" action="command:TogglePlay" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
 
   <layouts>
 

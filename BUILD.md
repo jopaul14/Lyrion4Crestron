@@ -136,6 +136,8 @@ Deploy in this order:
    - Leave the **Lyrion Helper** selected/visible — it is an extension device, not a source, and is unaffected by this setting. It remains the single rich control surface end-users see.
    - Repeat for every room that has a Lyrion Source.
 
+   The Helper's room-page tile carries the player's on/off state (a power badge plus a status line that reads `Off` when powered down, or the now-playing track / playback state when on), so hiding the Source tile does not lose the at-a-glance on/off indication for the room.
+
    Note: a deselected source can still appear inside the routing/route-selection menus used during configuration, but it will not be a user-facing source tile in the room view.
 
 6. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.

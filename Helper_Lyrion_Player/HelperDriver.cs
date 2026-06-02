@@ -36,10 +36,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropShuffle = "Shuffle";
         private const string PropRepeat = "Repeat";
         private const string PropPower = "Power";
+        private const string PropPowerIcon = "PowerIcon";
+        private const string PropTileStatus = "TileStatus";
 
         private const string IconPlay = "icPlayRegular";
         private const string IconPause = "icPauseRegular";
         private const string IconStop = "icStopRegular";
+        private const string IconPowerOn = "icPowerRegular";
+        private const string IconPowerOff = "icPowerDisabled";
 
         private readonly Action<string> _log;
         private readonly object _gate = new object();
@@ -61,6 +65,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private PropertyValue<bool> _shuffleProp;
         private PropertyValue<bool> _repeatProp;
         private PropertyValue<bool> _powerProp;
+        private PropertyValue<string> _powerIconProp;
+        private PropertyValue<string> _tileStatusProp;
 
         public HelperDriver()
         {
@@ -102,6 +108,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _shuffleProp = CreateProperty<bool>(new PropertyDefinition(PropShuffle, null, DevicePropertyType.Boolean));
             _repeatProp = CreateProperty<bool>(new PropertyDefinition(PropRepeat, null, DevicePropertyType.Boolean));
             _powerProp = CreateProperty<bool>(new PropertyDefinition(PropPower, null, DevicePropertyType.Boolean));
+            _powerIconProp = CreateProperty<string>(new PropertyDefinition(PropPowerIcon, null, DevicePropertyType.String));
+            _tileStatusProp = CreateProperty<string>(new PropertyDefinition(PropTileStatus, null, DevicePropertyType.String));
         }
 
         // ===== AExtensionDevice overrides =====
@@ -311,6 +319,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private void UpdatePower(bool isOn)
         {
             _powerProp.Value = isOn;
+            RefreshTileStatus();
             Commit();
         }
 
@@ -335,6 +344,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             }
             _playbackStateProp.Value = label;
             _playbackIconProp.Value = icon;
+            RefreshTileStatus();
             Commit();
         }
 
@@ -346,7 +356,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _artworkProp.Value = meta.ArtworkUrl;
             _elapsedProp.Value = FormatTime(meta.PositionSeconds);
             _durationProp.Value = FormatTime(meta.DurationSeconds);
+            RefreshTileStatus();
             Commit();
+        }
+
+        // Surfaces power / playback state onto the room-page tile so the room
+        // still shows whether the player is on or off even when the Source's
+        // own tile is hidden from Available Sources. The visible Helper tile
+        // therefore carries the on/off indication that the hidden Source no
+        // longer provides. Does not Commit() — each caller commits once after
+        // updating its own properties.
+        private void RefreshTileStatus()
+        {
+            bool on = _powerProp.Value;
+            _powerIconProp.Value = on ? IconPowerOn : IconPowerOff;
+
+            string status;
+            if (!on)
+            {
+                status = "Off";
+            }
+            else if (!string.IsNullOrEmpty(_titleProp.Value))
+            {
+                status = _titleProp.Value;
+            }
+            else
+            {
+                status = string.IsNullOrEmpty(_playbackStateProp.Value) ? "On" : _playbackStateProp.Value;
+            }
+            _tileStatusProp.Value = status;
         }
 
         private void UpdateShuffle(bool enabled)
