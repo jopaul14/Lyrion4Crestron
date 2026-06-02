@@ -5,7 +5,7 @@ Four-driver suite (Crestron Certified Drivers SDK V2 / Entity Model + RAD, .NET 
 | Driver | Role | Instances | Connects to LMS? |
 |---|---|---|---|
 | **Gateway_Lyrion_LMS_IP** (Lyrion Server) | Owns the single CLI + JSON-RPC connection to LMS. Publishes a shared service consumed by the other three drivers. | 1 per home | Yes |
-| **Source_Lyrion_Player** (Lyrion Source) | Per-room routable audio source (RAD Bluray Player). Surfaces Play/Pause/Stop/Next/Prev/Power; declares analog + digital audio outputs. | 1 per player | No |
+| **Source_Lyrion_Player** (Lyrion Source) | Per-room routable audio source (RAD Bluray Player). Silent routing object — no user controls; declares analog + digital audio outputs and reports availability only. | 1 per player | No |
 | **Helper_Lyrion_Player** (Lyrion Helper) | Per-room rich UI extension (RAD Media Player extension). Surfaces now-playing metadata, transport, shuffle, repeat, seek, power. | 1 per player | No |
 | **Receiver_Lyrion_Player** (Lyrion Receiver) | Per-room routable AV receiver (RAD AV Receiver). Surfaces volume (0-100), mute, power; declares analog + digital audio inputs and speaker outputs. Optional. | 1 per player | No |
 
@@ -35,11 +35,11 @@ All drivers require Crestron driver runtime **25.0000.0033** or later.
 +--------v-----------+ +-----v---------------+ +--------v------------+
 | Source_Lyrion_Player|| Helper_Lyrion_Player|| Receiver_Lyrion_Pl. |
 | (RAD Bluray Player) || (RAD Media Player   || (RAD AV Receiver)   |
-|                    || extension)          ||                     |
-| Play/Pause/Stop    || Title/Artist/Album  || Volume (0-100)      |
-| Next/Prev          || Artwork/Elapsed     || Mute                |
-| Power              || Shuffle/Repeat      || Power               |
-|                    || Seek                ||                     |
+| silent routing obj || extension)          ||                     |
+| (no user controls) || Title/Artist/Album  || Volume (0-100)      |
+| availability only  || Artwork/Elapsed     || Mute                |
+|                    || Transport/Power     || Power               |
+|                    || Shuffle/Repeat/Seek ||                     |
 | Digital + Analog   ||                     || Digital + Analog    |
 | audio out          || -- (no routing) --  || audio in            |
 +--------------------+ +---------------------+ +---------------------+
@@ -62,10 +62,9 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 ### Lyrion Source (Driver 2) — routable audio source
 
-- Play / Pause / Stop
-- Next (`ForwardSkip`) / Previous (`ReverseSkip`)
-- PowerOn / PowerOff / TogglePower
+- **No user controls.** The Source is a silent routing object: it exposes no transport, power, or playback feedback. This keeps the room's control surface single and uncluttered — all controls live in the Helper (Driver 3).
 - Declares one digital audio output (Coaxial Digital) and one analog audio output (RCA Analog) in the Crestron Home routing graph.
+- Reports only online/offline availability so Crestron Home knows the routable source is present.
 
 ### Lyrion Helper (Driver 3) — rich UI extension
 

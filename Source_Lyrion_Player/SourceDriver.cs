@@ -5,23 +5,21 @@
 
 using System;
 using System.Diagnostics;
-using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.DeviceTypes.BlurayPlayer;
 using LyrionCommunity.Crestron.Lyrion.Service;
-using PlayBackStatusEnum = Crestron.RAD.Common.Enums.PlayBackStatus;
 
 namespace LyrionCommunity.Crestron.Lyrion.Source
 {
     /// <summary>
     /// Per-room routable audio source, surfaced to Crestron Home as a RAD
-    /// Bluray Player. Exposes only the transport and power controls the
-    /// Bluray Player type supports natively (Play / Pause / Stop /
-    /// ForwardSkip / ReverseSkip / Power). Never opens a socket to LMS — every
-    /// command is forwarded to the Lyrion Server gateway service, and all
-    /// feedback (availability, power, playback) arrives from that service.
-    /// Volume, metadata, shuffle, repeat, and seek live in the companion
-    /// Helper and Receiver drivers, not here.
+    /// Bluray Player. Exposes no user-facing controls: it is a silent routing
+    /// object that declares one digital and one analog audio output and reports
+    /// only its online/offline availability so Crestron Home can route it. All
+    /// user controls — transport, power, shuffle, repeat, seek, now-playing
+    /// metadata, and volume — live in the companion Helper and Receiver drivers.
+    /// Never opens a socket to LMS; availability arrives from the Lyrion Server
+    /// gateway service.
     /// </summary>
     public class SourceDriver : ABasicBlurayPlayer, ICloudConnected
     {
@@ -47,9 +45,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
             _protocol = new SourceProtocol(ConnectionTransport, Id);
             _protocol.MacAddressReceived += OnMacAddressReceived;
-            _protocol.PowerOnRequested += OnPowerOnRequested;
-            _protocol.PowerOffRequested += OnPowerOffRequested;
-            _protocol.PowerToggleRequested += OnPowerToggleRequested;
             BlurayPlayerProtocol = _protocol;
             BlurayPlayerProtocol.Initialize(BlurayPlayerData);
 
@@ -92,15 +87,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
-                service.PowerStateChanged += OnPowerStateChanged;
-                service.PlaybackStateChanged += OnPlaybackStateChanged;
             }
 
             if (oldService != null)
             {
                 try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
             }
 
             TryBindToGateway();
@@ -137,16 +128,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
                 if (svc.TryGetSnapshot(mac, out var snap))
                 {
-                    ApplySnapshot(snap);
+                    UpdateAvailability(snap.IsAvailable);
                 }
             }
-        }
-
-        private void ApplySnapshot(LyrionPlayerSnapshot snap)
-        {
-            UpdateAvailability(snap.IsAvailable);
-            UpdatePower(snap.IsPoweredOn);
-            UpdatePlayback(snap.PlaybackState);
         }
 
         // ===== Gateway event handlers =====
@@ -157,74 +141,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             UpdateAvailability(isAvailable);
         }
 
-        private void OnPowerStateChanged(string mac, bool isOn)
-        {
-            if (!IsMine(mac)) return;
-            UpdatePower(isOn);
-        }
-
-        private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
-        {
-            if (!IsMine(mac)) return;
-            UpdatePlayback(state);
-        }
-
         // ===== Feedback into the RAD framework =====
 
         private void UpdateAvailability(bool isAvailable)
         {
+            // The Source contributes no controls; the only state Crestron Home
+            // needs from it is whether the routable source is online.
             Connected = isAvailable;
             SendStateChangeEvent(BlurayPlayerStateObjects.Connection);
-
-            if (!isAvailable)
-            {
-                // When the player drops off the server, stop reporting stale
-                // power/playback so the routing graph reflects reality.
-                UpdatePlayback(LyrionPlaybackState.Stopped);
-                UpdatePower(false);
-            }
         }
-
-        private void UpdatePower(bool isOn)
-        {
-            if (PowerIsOn == isOn) return;
-            PowerIsOn = isOn;
-            SendStateChangeEvent(isOn ? BlurayPlayerStateObjects.PoweredOn : BlurayPlayerStateObjects.PoweredOff);
-            SendStateChangeEvent(BlurayPlayerStateObjects.Power);
-        }
-
-        private void UpdatePlayback(LyrionPlaybackState state)
-        {
-            var mapped = Map(state);
-            if (PlayBackStatus == mapped) return;
-            PlayBackStatus = mapped;
-            SendStateChangeEvent(BlurayPlayerStateObjects.PlayBackStatus);
-        }
-
-        private static PlayBackStatusEnum Map(LyrionPlaybackState state)
-        {
-            switch (state)
-            {
-                case LyrionPlaybackState.Playing: return PlayBackStatusEnum.Play;
-                case LyrionPlaybackState.Paused: return PlayBackStatusEnum.Pause;
-                default: return PlayBackStatusEnum.Stop;
-            }
-        }
-
-        // ===== Commands (routed to the gateway) =====
-
-        // Transport commands are virtual on the driver and intercepted here.
-        public override void Play() => InvokeOnGateway((svc, mac) => svc.Play(mac));
-        public override void Pause() => InvokeOnGateway((svc, mac) => svc.Pause(mac));
-        public override void Stop() => InvokeOnGateway((svc, mac) => svc.Stop(mac));
-        public override void ForwardSkip() => InvokeOnGateway((svc, mac) => svc.Next(mac));
-        public override void ReverseSkip() => InvokeOnGateway((svc, mac) => svc.Previous(mac));
-
-        // Power commands are non-virtual on the driver; they arrive via the
-        // protocol's power events (wired up in Initialize).
-        private void OnPowerOnRequested() => InvokeOnGateway((svc, mac) => svc.PowerOn(mac));
-        private void OnPowerOffRequested() => InvokeOnGateway((svc, mac) => svc.PowerOff(mac));
-        private void OnPowerToggleRequested() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Helpers =====
 
@@ -233,19 +158,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             string bound;
             lock (_gate) { bound = _boundMac; }
             return string.Equals(bound, mac, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void InvokeOnGateway(Action<ILyrionGatewayService, string> action)
-        {
-            ILyrionGatewayService svc;
-            string mac;
-            lock (_gate)
-            {
-                svc = _gateway;
-                mac = _boundMac;
-            }
-            if (svc == null || string.IsNullOrEmpty(mac)) return;
-            try { action(svc, mac); } catch { }
         }
 
         private static Action<string> BuildLogger()
@@ -270,9 +182,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             if (_protocol != null)
             {
                 try { _protocol.MacAddressReceived -= OnMacAddressReceived; } catch { }
-                try { _protocol.PowerOnRequested -= OnPowerOnRequested; } catch { }
-                try { _protocol.PowerOffRequested -= OnPowerOffRequested; } catch { }
-                try { _protocol.PowerToggleRequested -= OnPowerToggleRequested; } catch { }
             }
 
             ILyrionGatewayService svc;
@@ -288,8 +197,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             if (svc != null)
             {
                 try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
                 if (!string.IsNullOrEmpty(mac))
                 {
                     try { svc.UnbindPlayer(mac); } catch { }
