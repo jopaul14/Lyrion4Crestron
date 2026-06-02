@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics;
+using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.DeviceTypes.BlurayPlayer;
 using LyrionCommunity.Crestron.Lyrion.Service;
