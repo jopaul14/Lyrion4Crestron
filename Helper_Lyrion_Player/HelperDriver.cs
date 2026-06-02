@@ -39,9 +39,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropPowerIcon = "PowerIcon";
         private const string PropTileStatus = "TileStatus";
 
-        private const string IconPlay = "icPlayRegular";
-        private const string IconPause = "icPauseRegular";
-        private const string IconStop = "icStopRegular";
+        private const string IconPlay = "icPlay";
+        private const string IconPause = "icPause";
         private const string IconPowerOn = "icPowerRegular";
         private const string IconPowerOff = "icPowerDisabled";
 
@@ -327,19 +326,23 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         {
             string label;
             string icon;
+            // PlaybackIcon shows the *next* transport action (toggle affordance):
+            // while playing, show Pause (tap = pause); while paused or stopped,
+            // show Play (tap = play). The state label still reflects the actual
+            // state for any text display bound to PlaybackState.
             switch (state)
             {
                 case LyrionPlaybackState.Playing:
                     label = "Playing";
-                    icon = IconPlay;
+                    icon = IconPause;
                     break;
                 case LyrionPlaybackState.Paused:
                     label = "Paused";
-                    icon = IconPause;
+                    icon = IconPlay;
                     break;
                 default:
                     label = "Stopped";
-                    icon = IconStop;
+                    icon = IconPlay;
                     break;
             }
             _playbackStateProp.Value = label;
