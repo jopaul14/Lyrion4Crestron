@@ -37,6 +37,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private readonly object _gate = new object();
 
         private readonly PlayerRegistry _registry;
+        /// <summary>
+        /// Keep-alive interval (seconds) for the per-player subscribing status
+        /// query. LMS pushes a fresh status on every change and at least this
+        /// often, making it the authoritative source for power and playback
+        /// state regardless of which discrete notification LMS emits. Pushes
+        /// that carry no change raise no events (the registry is change-gated),
+        /// so the steady-state cost is one parse per player per interval with
+        /// no UI updates and no logging. Mirrors the value used by LMS Material.
+        /// </summary>
+        private const int StatusSubscribeSeconds = 30;
+
         private readonly LyrionGatewayServiceImpl _service;
         private readonly ServerConnectivityFsm _fsm;
 
@@ -283,6 +294,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (_disposed) return;
             try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
             catch { }
+
+            // Same 1s pump advances the elapsed position for playing players so
+            // the Helper's time display counts up between status snapshots.
+            try { _registry.TickPlayingPositions(); }
+            catch { }
         }
 
         // ===== CLI events =====
@@ -461,7 +477,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             foreach (var mac in macs)
             {
-                _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac));
+                // Open a subscribing status query: the prior subscription died
+                // with the old CLI connection, so this both re-syncs now and
+                // keeps pushing full status on every subsequent change.
+                _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
             }
 
             // Defer republish until status responses have had time to arrive.
@@ -494,7 +513,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (string.IsNullOrEmpty(mac)) return;
             if (_serverConnected)
             {
-                _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac));
+                // Open a subscribing status query so this player keeps pushing
+                // full status (power/mode/metadata) on every change from now on.
+                _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
             }
         }
 

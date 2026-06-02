@@ -635,6 +635,52 @@ Frequent polling
 High‑frequency logging
 Per‑event UI updates beyond required state changes
 
+PERMITTED EXCEPTION — CHANGE‑GATED STATUS SUBSCRIPTION
+
+Driver 1 SHOULD open a per‑player subscribing status query
+("<mac> status - 1 subscribe:N tags:..."). This is the authoritative,
+notification‑format‑independent source of power, playback mode, and
+metadata: LMS pushes a full status whenever the player status changes
+(including changes triggered at the device itself, which the granular
+"listen" notifications can miss), with N acting only as a keep‑alive
+ceiling. This is NOT the "frequent polling" prohibited above:
+
+- It is push‑on‑change, not a poll loop.
+- N=30 (matching LMS Material) yields ~2 keep‑alive pushes/min per
+  player at idle — far less than the existing global "listen 1" stream.
+- Every registry mutator is change‑gated, so a push that carries no
+  change raises no events: zero UI updates, zero logging, zero flash
+  writes. The flash‑safety and minimal‑logging guarantees are preserved.
+
+The subscription is established per bound MAC when the server connects
+(and re‑established on every reconnect, since it dies with the CLI
+connection).
+
+PERMITTED EXCEPTION — 1‑SECOND ELAPSED POSITION TICK
+
+LMS does not push elapsed position every second (the status subscribe
+above only re‑pushes on change plus the keep‑alive), and the Helper UI
+does NOT interpolate position itself, so without help the elapsed time
+jumps in ~30s steps. Driver 1 therefore advances PositionSeconds by one
+second for each Playing player on its existing 1s pump and republishes
+metadata. This is bounded and spec‑safe:
+
+- Only Playing + available players tick; paused/stopped players and an
+  idle system raise nothing.
+- At most one MetadataUpdated per second per actively‑playing player,
+  and only the position field advances.
+- It performs no logging and no flash writes.
+- Each authoritative status push re‑seeds the position and corrects drift.
+
+PERMITTED EXCEPTION — EXPLICIT POWER IS AUTHORITATIVE
+
+The §C power derivation (play/pause ⇒ on, stop ⇒ off) is a FALLBACK only.
+When LMS reports an explicit power state (a "power"/"prefset power"
+notification or the status "power" field), that state wins: playback may
+only RAISE power (playing ⇒ on); a stop lowers power ONLY for players
+that have never reported an explicit power state. This prevents a player
+that is powered on but idle (stopped) from being shown as off.
+
 
 NO BROWSE / FAVORITES / QUEUE MODEL
 
