@@ -75,7 +75,7 @@ Extension device (IsExtensionDevice = true); no routing role
 Never connects to LMS directly
 Hosts the full Crestron Home media-player UI:
 
-Now-playing title / artist / album / artwork / elapsed / duration
+Now-playing title / artist / album / elapsed / duration
 Transport controls (Play / Pause / Stop / Next / Prev / Seek)
 Shuffle (boolean) and Repeat (boolean)
 Power commands
@@ -168,7 +168,7 @@ Not part of the audio routing graph
 Hosts the rich Crestron Home media-player UI for one room
 Must expose:
 
-Now-playing metadata (Title, Artist, Album, ArtworkUrl, Elapsed, Duration)
+Now-playing metadata (Title, Artist, Album, Elapsed, Duration)
 Transport controls (Play / Pause / Stop / Next / Previous / Seek)
 Shuffle (boolean) and Repeat (boolean)
 PowerOn / PowerOff / PowerToggle
@@ -397,7 +397,7 @@ RepeatEnabled
 
 Metadata:
 
-Title, Artist, Album, ArtworkUrl
+Title, Artist, Album
 IsFrozen
 FrozenAtUtc
 LastMetadataUpdateUtc

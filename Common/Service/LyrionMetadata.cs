@@ -15,7 +15,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             string title,
             string artist,
             string album,
-            string artworkUrl,
             int durationSeconds,
             int positionSeconds,
             bool isFrozen)
@@ -23,7 +22,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             Title = title ?? string.Empty;
             Artist = artist ?? string.Empty;
             Album = album ?? string.Empty;
-            ArtworkUrl = artworkUrl ?? string.Empty;
             DurationSeconds = durationSeconds < 0 ? 0 : durationSeconds;
             PositionSeconds = positionSeconds < 0 ? 0 : positionSeconds;
             IsFrozen = isFrozen;
@@ -32,7 +30,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         public string Title { get; }
         public string Artist { get; }
         public string Album { get; }
-        public string ArtworkUrl { get; }
         public int DurationSeconds { get; }
         public int PositionSeconds { get; }
 
@@ -46,6 +43,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         public bool IsFrozen { get; }
 
         public static LyrionMetadata Empty { get; } =
-            new LyrionMetadata(string.Empty, string.Empty, string.Empty, string.Empty, 0, 0, false);
+            new LyrionMetadata(string.Empty, string.Empty, string.Empty, 0, 0, false);
     }
 }

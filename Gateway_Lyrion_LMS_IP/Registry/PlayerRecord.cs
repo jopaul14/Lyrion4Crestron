@@ -24,7 +24,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             Title = string.Empty;
             Artist = string.Empty;
             Album = string.Empty;
-            ArtworkUrl = string.Empty;
             Presets = Array.Empty<LyrionPreset>();
         }
 
@@ -65,7 +64,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public string Title { get; set; }
         public string Artist { get; set; }
         public string Album { get; set; }
-        public string ArtworkUrl { get; set; }
         public bool IsFrozen { get; set; }
         public DateTime FrozenAtUtc { get; set; }
         public DateTime LastMetadataUpdateUtc { get; set; }

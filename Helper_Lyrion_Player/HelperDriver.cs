@@ -28,7 +28,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropTitle = "Title";
         private const string PropArtist = "Artist";
         private const string PropAlbum = "Album";
-        private const string PropArtwork = "ArtworkUrl";
         private const string PropElapsed = "Elapsed";
         private const string PropDuration = "Duration";
         private const string PropPlaybackState = "PlaybackState";
@@ -56,7 +55,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private PropertyValue<string> _titleProp;
         private PropertyValue<string> _artistProp;
         private PropertyValue<string> _albumProp;
-        private PropertyValue<string> _artworkProp;
         private PropertyValue<string> _elapsedProp;
         private PropertyValue<string> _durationProp;
         private PropertyValue<string> _playbackStateProp;
@@ -99,7 +97,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _titleProp = CreateProperty<string>(new PropertyDefinition(PropTitle, null, DevicePropertyType.String));
             _artistProp = CreateProperty<string>(new PropertyDefinition(PropArtist, null, DevicePropertyType.String));
             _albumProp = CreateProperty<string>(new PropertyDefinition(PropAlbum, null, DevicePropertyType.String));
-            _artworkProp = CreateProperty<string>(new PropertyDefinition(PropArtwork, null, DevicePropertyType.String));
             _elapsedProp = CreateProperty<string>(new PropertyDefinition(PropElapsed, null, DevicePropertyType.String));
             _durationProp = CreateProperty<string>(new PropertyDefinition(PropDuration, null, DevicePropertyType.String));
             _playbackStateProp = CreateProperty<string>(new PropertyDefinition(PropPlaybackState, null, DevicePropertyType.String));
@@ -356,7 +353,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _titleProp.Value = meta.Title;
             _artistProp.Value = meta.Artist;
             _albumProp.Value = meta.Album;
-            _artworkProp.Value = meta.ArtworkUrl;
             _elapsedProp.Value = FormatTime(meta.PositionSeconds);
             _durationProp.Value = FormatTime(meta.DurationSeconds);
             RefreshTileStatus();

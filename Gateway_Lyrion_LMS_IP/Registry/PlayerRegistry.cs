@@ -422,7 +422,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             string title,
             string artist,
             string album,
-            string artworkUrl,
             int durationSeconds,
             int positionSeconds)
         {
@@ -437,7 +436,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 rec.Title = Cap(title ?? rec.Title ?? string.Empty);
                 rec.Artist = Cap(artist ?? rec.Artist ?? string.Empty);
                 rec.Album = Cap(album ?? rec.Album ?? string.Empty);
-                rec.ArtworkUrl = Cap(artworkUrl ?? rec.ArtworkUrl ?? string.Empty);
                 if (durationSeconds >= 0) rec.DurationSeconds = durationSeconds;
                 if (positionSeconds >= 0) rec.PositionSeconds = positionSeconds;
                 rec.IsFrozen = false;
@@ -517,12 +515,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     var rec = kvp.Value;
                     if (rec.IsFrozen && rec.IsAvailable == false
                         && now - rec.FrozenAtUtc >= freezeTtl
-                        && (rec.Title.Length > 0 || rec.Artist.Length > 0 || rec.Album.Length > 0 || rec.ArtworkUrl.Length > 0))
+                        && (rec.Title.Length > 0 || rec.Artist.Length > 0 || rec.Album.Length > 0))
                     {
                         rec.Title = string.Empty;
                         rec.Artist = string.Empty;
                         rec.Album = string.Empty;
-                        rec.ArtworkUrl = string.Empty;
                         rec.DurationSeconds = 0;
                         rec.PositionSeconds = 0;
                         if (toPublish == null) toPublish = new List<(string, LyrionMetadata)>();
@@ -654,7 +651,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 rec.Title,
                 rec.Artist,
                 rec.Album,
-                rec.ArtworkUrl,
                 rec.DurationSeconds,
                 rec.PositionSeconds,
                 rec.IsFrozen);

@@ -375,9 +375,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 case LmsMessageKind.NewSong:
                     if (message.Payload is NewSongPayload song)
                     {
-                        _registry.NoteMetadata(message.Mac, song.Title, null, null, null, -1, 0);
+                        _registry.NoteMetadata(message.Mac, song.Title, null, null, -1, 0);
                         // Trigger a full status query so we pick up artist /
-                        // album / artwork / duration on the next CLI cycle.
+                        // album / duration on the next CLI cycle.
                         _ = SendCliForPlayer(message.Mac, LmsCliCommands.QueryStatus(message.Mac));
                     }
                     break;
@@ -641,12 +641,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             }
 
             // Metadata — tags requested: g=genre, a=artist, l=album, d=duration,
-            // J=artwork_track_id, K=artwork_url, o=type, N=remote_title,
-            // c=coverid, r=bitrate, y=year, u=url
+            // o=type, N=remote_title, r=bitrate, y=year, u=url. Cover art is not
+            // displayable in Crestron Home for a third-party source, so artwork
+            // tags are neither requested nor parsed.
             var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
             var artist = TryGet(kv, "artist");
             var album = TryGet(kv, "album");
-            var artworkUrl = SanitizeArtworkUrl(TryGet(kv, "artwork_url"));
 
             int duration = -1;
             if (kv.TryGetValue("duration", out var durStr) &&
@@ -664,7 +664,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 position = (int)timeVal;
             }
 
-            _registry.NoteMetadata(mac, title, artist, album, artworkUrl, duration, position);
+            _registry.NoteMetadata(mac, title, artist, album, duration, position);
 
             // Player capabilities — "can_seek" indicates a real player; LMS
             // also returns "player_name", "player_connected", etc. We note
@@ -722,36 +722,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private static string TryGet(IDictionary<string, string> kv, string key)
         {
             return kv.TryGetValue(key, out var val) ? val : null;
-        }
-
-        /// <summary>
-        /// Reject artwork URLs that point outside the configured LMS server.
-        /// A compromised LMS could set artwork_url to an attacker-controlled
-        /// host; when the Crestron Home UI fetches it, the processor's IP would
-        /// be disclosed. Relative paths and same-host URLs are preserved; all
-        /// others are dropped.
-        /// </summary>
-        private string SanitizeArtworkUrl(string url)
-        {
-            if (string.IsNullOrEmpty(url)) return null;
-
-            // Relative paths (e.g. "/music/abcde/cover.jpg") are safe — the UI
-            // will resolve them against the configured host.
-            if (url[0] == '/') return url;
-
-            // Absolute URL: only allow if host matches the configured LMS host.
-            if (Uri.TryCreate(url, UriKind.Absolute, out var parsed))
-            {
-                if (string.Equals(parsed.Host, _host, StringComparison.OrdinalIgnoreCase))
-                {
-                    return url;
-                }
-                return null;
-            }
-
-            // Non-URI strings (e.g. just a filename) are passed through.
-            if (url.IndexOf("://", StringComparison.Ordinal) >= 0) return null;
-            return url;
         }
 
         private void UpdateServerVersion(string version)

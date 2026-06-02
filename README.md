@@ -37,7 +37,7 @@ All drivers require Crestron driver runtime **25.0000.0033** or later.
 | (RAD Bluray Player) || (RAD Media Player   || (RAD AV Receiver)   |
 |                    || extension)          ||                     |
 | Play/Pause/Stop    || Title/Artist/Album  || Volume (0-100)      |
-| Next/Prev          || Artwork/Elapsed     || Mute                |
+| Next/Prev          || Elapsed/Duration    || Mute                |
 | Power              || Shuffle/Repeat      || Power               |
 |                    || Seek                ||                     |
 | Digital + Analog   ||                     || Digital + Analog    |
@@ -69,7 +69,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 ### Lyrion Helper (Driver 3) — rich UI extension
 
-- Now-playing metadata: title, artist, album, artwork, elapsed, duration
+- Now-playing metadata: title, artist, album, elapsed, duration
 - Transport: Play / Pause / Stop / Next / Previous / Seek
 - Shuffle (bool) and Repeat (bool)
 - PowerOn / PowerOff / TogglePower
