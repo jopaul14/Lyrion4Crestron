@@ -14,37 +14,38 @@ All drivers require Crestron driver runtime **25.0000.0033** or later.
 ## Architecture
 
 ```
-                            (one per home)
-        +-------------------------------------------------+
-        |              Gateway_Lyrion_LMS_IP              |
-        |                                                 |
-        |  +------------+      +---------------------+   |
-        |  | LmsCliClient|----->| PlayerRegistry      |   |
-        |  +------------+      | (one PlayerRecord   |   |
-        |  | LmsJsonRpc  |----->|  per bound MAC)    |   |
-        |  +------------+      +----------+----------+   |
-        |                                  |               |
-        |              +-------------------v-----------+   |
-        |              | ILyrionGatewayService (publ.) |   |
-        |              +-------------------+-----------+   |
-        +----------------------------------|---------------+
-                                           |
-        +----------------------+-----------+-----------+----------------------+
-        |                      |                       |                      |
-   (one per player)       (one per player)        (one per player)
-+--------v-----------+ +-----v---------------+ +--------v------------+
-| Source_Lyrion_Player|| Helper_Lyrion_Player|| Receiver_Lyrion_Pl. |
-| (RAD Bluray Player) || (RAD Media Player   || (RAD AV Receiver)   |
-|                    || extension)          ||                     |
-| Play/Pause/Stop    || Title/Artist/Album  || Volume (0-100)      |
-| Next/Prev          || Elapsed/Duration    || Mute                |
-| Power              || Shuffle/Repeat      || Power               |
-|                    || Seek                ||                     |
-| Digital + Analog   ||                     || Digital + Analog    |
-| audio out          || -- (no routing) --  || audio in            |
-+--------------------+ +---------------------+ +---------------------+
-        |                                              ^
-        +------- routed by Crestron Home --------------+
++--------------------------------------------------------------------------------+
+|  Gateway_Lyrion_LMS_IP                                         (one per home)  |
+|                                                                                |
+|   +--------------+                                                             |
+|   | LmsCliClient |----+      +------------------+                              |
+|   +--------------+    |      | PlayerRegistry   |                              |
+|   +--------------+    +----->| (PlayerRecord    |                              |
+|   | LmsJsonRpc   |    |      |  per bound MAC)  |                              |
+|   +--------------+----+      +------------------+                              |
+|                                        |                                       |
+|                         +--------------v-------------+                         |
+|                         | ILyrionGatewayService (API)|                         |
+|                         +----------------------------+                         |
++--------------------------------------------------------------------------------+
+                                         |
+                                         |
+             +---------------------------+---------------------------+
+             |                           |                           |
++------------v-----------+  +------------v-----------+  +------------v-----------+
+| Source_Lyrion_Player   |  | Helper_Lyrion_Player   |  | Receiver_Lyrion_Player |
+| (RAD: Bluray Player)   |  | (RAD ext: Media Plyr)  |  | (RAD: AV Receiver)     |
+|                        |  |                        |  |                        |
+| Play / Pause / Stop    |  | Title/Artist/Album     |  | Volume (0-100)         |
+| Next / Prev            |  | Elapsed / Duration     |  | Mute                   |
+| Power                  |  | Shuffle / Repeat       |  | Power                  |
+|                        |  | Seek,  Power           |  |                        |
+| Digital + analog       |  |                        |  | Digital + analog       |
+| audio out  --->        |  | (no audio routing)     |  | --->  audio in         |
+|                        |  |                        |  |                        |
++------------+-----------+  +------------------------+  +------------+-----------+
+             |                                                       |
+             +--------------  routed by Crestron Home  --------------+
 ```
 
 Inter-driver communication uses a process-wide service registry (`LyrionGatewayServiceRegistry`). The Gateway registers an `ILyrionGatewayService` on startup; the Source, Helper, and Receiver drivers wait for it via `Subscribe(...)`. Commands flow from Source/Helper/Receiver to the Gateway; events flow back the other way. **Only the Gateway opens sockets to LMS.**
