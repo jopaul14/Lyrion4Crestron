@@ -1,6 +1,6 @@
-# Lyrion Media Server - Crestron Certified Drivers
+# Lyrion Media Server - Crestron Home Drivers
 
-Four-driver suite (Crestron Certified Drivers SDK V2 / Entity Model + RAD, .NET Framework 4.7.2) that integrates [Lyrion Media Server](https://lyrion.org/) (formerly Logitech Media Server / Squeezebox Server) with Crestron Home. The four drivers split responsibilities for a clean, room-based control surface that fits Crestron Home's source-routing graph.
+Four-driver suite (Crestron Drivers SDK V2 / Entity Model + RAD, .NET Framework 4.7.2) that integrates [Lyrion Media Server](https://lyrion.org/) (formerly Logitech Media Server / Squeezebox Server) with Crestron Home. The four drivers split responsibilities for a clean, room-based control surface that fits Crestron Home's source-routing graph.
 
 | Driver | Role | Instances | Connects to LMS? |
 |---|---|---|---|
