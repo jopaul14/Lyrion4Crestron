@@ -11,6 +11,27 @@ Four-driver suite (Crestron Certified Drivers SDK V2 / Entity Model + RAD, .NET 
 
 All drivers require Crestron driver runtime **25.0000.0033** or later.
 
+## Download and install
+
+Pre-built driver packages are attached to each [GitHub Release](https://github.com/jopaul14/Lyrion4Crestron/releases/latest). Download the `.pkg` files from the latest release:
+
+| Package | Install | Required? |
+|---|---|---|
+| `Gateway_Lyrion_LMS_IP.pkg` | Once per home | Required |
+| `Source_Lyrion_Player.pkg` | Once per player (room) | Required |
+| `Helper_Lyrion_Player.pkg` | Once per player (room) | Required |
+| `Receiver_Lyrion_Player.pkg` | Once per player (room) | Optional (omit if using an external amp/AVR) |
+
+Quick install — see [BUILD.md](BUILD.md) for the full walk-through:
+
+1. Copy the `.pkg` files to `Internal Flash/user/ThirdPartyDrivers/Import` on the control system using Crestron Toolbox.
+2. In the Crestron Home Setup app, add the **Gateway first** (one per home): set the LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), and optional username/password.
+3. For each room/player, add **Source** and **Helper** (and optionally **Receiver**) using the **same player MAC address** on all three.
+4. Route the Source's digital or analog output to the Receiver input (or a 3rd-party AVR), then on to the room speakers.
+5. In **Source Routes → Available Sources**, deselect "Lyrion Source" for the room to hide its tile while keeping the Helper's rich now-playing UI.
+
+Prefer to build from source instead? See [BUILD.md](BUILD.md).
+
 ## Architecture
 
 ```
