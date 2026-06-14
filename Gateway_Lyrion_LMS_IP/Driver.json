@@ -15,8 +15,8 @@
       "Website": "https://github.com/jopaul14/Lyrion4Crestron",
       "PhoneNumber": "(555) 867-5309"
     },
-    "DriverVersion": "1.0.0",
-    "VersionDate": "2026-06-04 00:00:00.000",
+    "DriverVersion": "1.0.1",
+    "VersionDate": "2026-06-12 00:00:00.000",
     "Description": "Lyrion Server gateway. Maintains the single CLI + JSON-RPC connection to LMS and publishes a service consumed by the Lyrion Source and Lyrion Receiver drivers. Install one instance per home; no room assignment."
   },
   "ConfigurationSteps": {
