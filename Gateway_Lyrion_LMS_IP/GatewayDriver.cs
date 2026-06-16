@@ -91,6 +91,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             _log = BuildLogger();
             _registry = new PlayerRegistry();
+            // DIAGNOSTIC (1.0.2): change-gated power trace at the source of
+            // truth. The registry only raises this on an actual change, so it
+            // stays within the minimal/flash-safe logging budget while letting
+            // us confirm the gateway derived and published each power change
+            // before it fans out to the Source/Helper/Receiver drivers.
+            _registry.PowerStateChanged += (mac, on) =>
+            {
+                try { _log("Gateway: power " + mac + " -> " + (on ? "ON" : "OFF")); }
+                catch { }
+            };
             _service = new LyrionGatewayServiceImpl(
                 _registry,
                 SendCliLineSync,

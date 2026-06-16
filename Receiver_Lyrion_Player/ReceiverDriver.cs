@@ -163,6 +163,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
         private void OnPowerStateChanged(string mac, bool isOn)
         {
             if (!IsMine(mac)) return;
+            // DIAGNOSTIC (1.0.2): confirm the gateway power event actually
+            // reaches this Receiver. If this line appears in the trace but the
+            // Crestron Home power tile does not move, the gap is in the RAD AVR
+            // power-feedback display contract, not our event wiring.
+            _log("Receiver: gateway PowerStateChanged -> " + (isOn ? "ON" : "OFF") + " (mac " + mac + ")");
             UpdatePower(isOn);
         }
 
@@ -188,10 +193,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void UpdatePower(bool isOn)
         {
-            if (PowerIsOn == isOn) return;
+            // No early-out on an unchanged value: always (re)assert the state and
+            // emit so the bind-time snapshot reaches Crestron Home even when it
+            // matches the framework default. Power changes are rare, so the
+            // occasional redundant emit is harmless.
+            var changed = PowerIsOn != isOn;
             PowerIsOn = isOn;
             SendStateChangeEvent(isOn ? AvrStateObjects.PoweredOn : AvrStateObjects.PoweredOff);
             SendStateChangeEvent(AvrStateObjects.Power);
+            // DIAGNOSTIC (1.0.2): records that PowerIsOn was set and the RAD
+            // state-change events were emitted.
+            _log("Receiver: UpdatePower PowerIsOn=" + isOn + " changed=" + changed
+                + " (emitted PoweredOn/Off + Power)");
         }
 
         private void UpdateVolume(int level)

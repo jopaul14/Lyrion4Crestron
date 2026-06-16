@@ -2,7 +2,10 @@
 <uidefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://prd-use-rad-assets.azurewebsites.net/ExtensionsSchemaDefinition_v1_0.xsd">
   <version ver="1.0"/>
 
-  <tile icon="{PlaybackIcon}" secondaryicon="{PowerIcon}" status="{TileStatus}" action="command:TogglePlay" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
+  <!-- Tile tap toggles POWER (primary icon + status reflect on/off); the
+       playback state stays visible via the secondary icon. Play/Pause and the
+       rest of the transport live in the NowPlaying layout below. -->
+  <tile icon="{PowerIcon}" secondaryicon="{PlaybackIcon}" status="{TileStatus}" action="command:PowerToggle" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
 
   <layouts>
 
@@ -22,6 +25,12 @@
 
         <!-- Duration unknown: show elapsed time alone. -->
         <textdisplay id="ElapsedOnly" title="{Elapsed}" visible="{NoDuration}"/>
+
+        <!-- Dedicated power control, kept apart from the transport row so it
+             can't be mistaken for Play/Pause. Toggles the player's power. -->
+        <buttongroup>
+          <button id="PowerBtn" label="Power" action="command:PowerToggle" icon="{PowerIcon}"/>
+        </buttongroup>
 
         <!-- Transport: Repeat | Previous | Play/Pause | Next | Shuffle. -->
         <buttongroup>
