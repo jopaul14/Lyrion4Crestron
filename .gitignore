@@ -24,3 +24,6 @@ _ReSharper*/
 # OS
 Thumbs.db
 .DS_Store
+
+# Crestron SDK
+crestron_drivers_sdk_*/
