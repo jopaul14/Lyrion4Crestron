@@ -91,7 +91,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 ### Lyrion Source (Driver 2) — routable audio source
 
 - Play / Pause / Stop
-- Next (`ForwardSkip`) / Previous (`ReverseSkip`)
+- Next ('ForwardSkip') / Previous ('ReverseSkip')
 - PowerOn / PowerOff / TogglePower
 - Declares one digital audio output (Coaxial Digital) and one analog audio output (RCA Analog) in the Crestron Home routing graph.
 
@@ -103,8 +103,8 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 - Transport: Play / Pause / Stop / Next / Previous / Seek
 - Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
-- Custom now-playing layout via `UiDefinition.xml`.
-- Room-page tile shows the player's on/off state (power badge + `Off`/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.
+- Custom now-playing layout via 'UiDefinition.xml'.
+- Room-page tile shows the player's on/off state (power badge + 'Off'/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.
 
 ### Lyrion Receiver (Driver 4) — routable audio endpoint
 
@@ -127,9 +127,9 @@ Per CLAUDE.md "EXPLICITLY REMOVED FEATURES":
 
 - **Reconnect is a hard state boundary.** When the Gateway reconnects to LMS it re-queries every bound MAC, recomputes availability/power/playback/volume/mute/shuffle/repeat, then republishes everything.
 - **Metadata freezes immediately when a player becomes unavailable.** If it stays unavailable for 30 seconds, metadata is cleared.
-- **Logging is flash-safe.** The Gateway logs state transitions only, with a 5-second minimum stable time and oscillation suppression. Source, Helper, and Receiver each log a single `Bound to MAC ...` line.
+- **Logging is flash-safe.** The Gateway logs state transitions only, with a 5-second minimum stable time and oscillation suppression. Source, Helper, and Receiver each log a single 'Bound to MAC ...' line.
 - **Backoff is bounded.** CLI reconnect schedule: 2s → 5s → 10s → 30s → 60s (cap).
-- **Capability-driven fallbacks.** Players that don't accept power-off receive `stop` instead, without warnings.
+- **Capability-driven fallbacks.** Players that don't accept power-off receive 'stop' instead, without warnings.
 
 ## Project layout
 
