@@ -146,10 +146,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
+            // Force the emits: the bind-time snapshot must reach Crestron Home
+            // even when a value matches the framework default and would
+            // otherwise be swallowed by the change-gate.
             UpdateAvailability(snap.IsAvailable);
-            UpdatePower(snap.IsPoweredOn);
-            UpdateVolume(snap.Volume);
-            UpdateMute(snap.Muted);
+            UpdatePower(snap.IsPoweredOn, force: true);
+            UpdateVolume(snap.Volume, force: true);
+            UpdateMute(snap.Muted, force: true);
         }
 
         // ===== Gateway event handlers =====
@@ -163,11 +166,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
         private void OnPowerStateChanged(string mac, bool isOn)
         {
             if (!IsMine(mac)) return;
-            // DIAGNOSTIC (1.0.2): confirm the gateway power event actually
-            // reaches this Receiver. If this line appears in the trace but the
-            // Crestron Home power tile does not move, the gap is in the RAD AVR
-            // power-feedback display contract, not our event wiring.
-            _log("Receiver: gateway PowerStateChanged -> " + (isOn ? "ON" : "OFF") + " (mac " + mac + ")");
             UpdatePower(isOn);
         }
 
@@ -191,35 +189,27 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             SendStateChangeEvent(AvrStateObjects.Connection);
         }
 
-        private void UpdatePower(bool isOn)
+        private void UpdatePower(bool isOn, bool force = false)
         {
-            // No early-out on an unchanged value: always (re)assert the state and
-            // emit so the bind-time snapshot reaches Crestron Home even when it
-            // matches the framework default. Power changes are rare, so the
-            // occasional redundant emit is harmless.
-            var changed = PowerIsOn != isOn;
+            if (!force && PowerIsOn == isOn) return;
             PowerIsOn = isOn;
             SendStateChangeEvent(isOn ? AvrStateObjects.PoweredOn : AvrStateObjects.PoweredOff);
             SendStateChangeEvent(AvrStateObjects.Power);
-            // DIAGNOSTIC (1.0.2): records that PowerIsOn was set and the RAD
-            // state-change events were emitted.
-            _log("Receiver: UpdatePower PowerIsOn=" + isOn + " changed=" + changed
-                + " (emitted PoweredOn/Off + Power)");
         }
 
-        private void UpdateVolume(int level)
+        private void UpdateVolume(int level, bool force = false)
         {
             if (level < 0) level = 0;
             if (level > 100) level = 100;
             var vol = (uint)level;
-            if (VolumePercent == vol) return;
+            if (!force && VolumePercent == vol) return;
             VolumePercent = vol;
             SendStateChangeEvent(AvrStateObjects.Volume);
         }
 
-        private void UpdateMute(bool muted)
+        private void UpdateMute(bool muted, bool force = false)
         {
-            if (Muted == muted) return;
+            if (!force && Muted == muted) return;
             Muted = muted;
             SendStateChangeEvent(AvrStateObjects.Mute);
         }
