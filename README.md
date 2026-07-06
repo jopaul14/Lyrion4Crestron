@@ -12,7 +12,7 @@ Four-driver suite (Crestron Drivers SDK V2 / Entity Model + RAD, .NET Framework 
 |---|---|---|---|
 | **Gateway_Lyrion_LMS_IP** (Lyrion Server) | Owns the single CLI + JSON-RPC connection to LMS. Publishes a shared service consumed by the other three drivers. | 1 per home | Yes |
 | **Source_Lyrion_Player** (Lyrion Source) | Per-room routable audio source (RAD Bluray Player). Surfaces Play/Pause/Stop/Next/Prev/Power; declares analog + digital audio outputs. | 1 per player | No |
-| **Helper_Lyrion_Player** (Lyrion Helper) | Per-room rich UI extension (RAD Media Player extension). Surfaces now-playing metadata, transport, shuffle, repeat, seek, power. | 1 per player | No |
+| **Helper_Lyrion_Player** (Lyrion Helper) | Per-room rich UI extension (RAD Media Player extension). Surfaces now-playing metadata, transport, shuffle, repeat, power. | 1 per player | No |
 | **Receiver_Lyrion_Player** (Lyrion Receiver) | Per-room routable AV receiver (RAD AV Receiver). Surfaces volume (0-100), mute, power; declares analog + digital audio inputs and speaker outputs. Optional. | 1 per player | No |
 
 All drivers require Crestron driver runtime **25.0000.0033** or later.
@@ -66,7 +66,7 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 | Play / Pause / Stop    |  | Title/Artist/Album     |  | Volume (0-100)         |
 | Next / Prev            |  | Elapsed / Duration     |  | Mute                   |
 | Power                  |  | Shuffle / Repeat       |  | Power                  |
-|                        |  | Seek,  Power           |  |                        |
+|                        |  | Power                  |  |                        |
 | Digital + analog       |  |                        |  | Digital + analog       |
 | audio out  --->        |  | (no audio routing)     |  | --->  audio in         |
 |                        |  |                        |  |                        |
@@ -99,8 +99,8 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 - Source-name header (LMS player name) at the top of the now-playing screen
 - Now-playing metadata: title, artist, album, track number, elapsed, duration
-- Read-only progress bar with hh:mm:ss elapsed/total (hidden when duration is unknown, e.g. radio streams)
-- Transport: Play / Pause / Stop / Next / Previous / Seek
+- Read-only progress bar with hh:mm:ss elapsed/total (hidden when duration is unknown, e.g. radio streams). Crestron Home does not support a draggable seek bar, so the progress bar is display-only.
+- Transport: Play / Pause / Stop / Next / Previous
 - Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
 - Custom now-playing layout via UiDefinition.xml.
@@ -115,7 +115,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 ### What's intentionally NOT exposed
 
-Per CLAUDE.md "EXPLICITLY REMOVED FEATURES":
+Per [docs/PRD.md](docs/PRD.md) "Out of Scope":
 
 - No sleep timer
 - No browse / favorites / queue APIs

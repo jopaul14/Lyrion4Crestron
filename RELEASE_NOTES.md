@@ -34,7 +34,7 @@ room/player and bound by the player's MAC address.
   (RCA) audio output, so a Lyrion player can be routed to any room endpoint in
   the Crestron Home Source Routes graph.
 - **Rich now-playing UI.** The Helper extension surfaces title / artist / album /
-  track number, an elapsed/duration progress bar, full transport (incl. seek),
+  track number, an elapsed/duration progress bar, full transport,
   shuffle, repeat, and power — with a custom layout via `UiDefinition.xml`.
 - **Optional volume endpoint.** The Receiver provides 0–100 absolute volume,
   step up/down, mute, and power, and declares matching digital + analog audio
@@ -52,8 +52,8 @@ room/player and bound by the player's MAC address.
 - Source-name header (the LMS player name)
 - Now-playing metadata: title, artist, album, track number, elapsed, duration
 - Read-only progress bar with `hh:mm:ss` (hidden when duration is unknown, e.g.
-  radio streams)
-- Transport: Play / Pause / Stop / Next / Previous / Seek
+  radio streams; Crestron Home does not support a draggable seek bar)
+- Transport: Play / Pause / Stop / Next / Previous
 - Shuffle and Repeat as state-driven button icons; power on / off / toggle
 - Room-page tile reflects the player's on/off state and now-playing status
 
@@ -96,8 +96,8 @@ UI, are in [BUILD.md](BUILD.md).
 
 ### Not included in this release
 
-The following are intentionally out of scope (see CLAUDE.md "Explicitly Removed
-Features"):
+The following are intentionally out of scope (see [docs/PRD.md](docs/PRD.md)
+"Out of Scope"):
 
 - No sleep timer
 - No browse / favorites / queue APIs and no raw LMS command pass-through
