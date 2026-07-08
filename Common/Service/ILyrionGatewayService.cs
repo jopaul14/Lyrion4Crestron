@@ -113,6 +113,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         event Action<string, bool> MuteChanged;
 
         /// <summary>
+        /// Raised when the configured volume step for a player changes. The step
+        /// is published by the Receiver (from its <c>VolumeStep</c> user
+        /// attribute) so other consumers (e.g. the Helper's volume buttons) can
+        /// match it. Range 1–50; default 2 when no Receiver has published one.
+        /// </summary>
+        event Action<string, int> VolumeStepChanged;
+
+        /// <summary>
         /// Raised when the list of available presets for a player changes.
         /// Presets are hardware preset buttons (e.g. radio station presets on
         /// a Squeezebox Radio). The list may be empty if the player does not
@@ -169,5 +177,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         void VolumeDown(string mac, int step);
 
         void SetMute(string mac, bool muted);
+
+        /// <summary>
+        /// Publishes the configured volume step (1–50) for a player so it is
+        /// shared across consumers. Called by the Receiver from its
+        /// <c>VolumeStep</c> user attribute; the Helper consumes it via
+        /// <see cref="VolumeStepChanged"/> / <see cref="LyrionPlayerSnapshot.VolumeStep"/>
+        /// so its Volume Up/Down buttons move by the same amount. Change-gated
+        /// in the registry; the value is clamped to 1–50.
+        /// </summary>
+        void SetVolumeStep(string mac, int step);
     }
 }

@@ -26,6 +26,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string CmdPowerOn = "PowerOn";
         private const string CmdPowerOff = "PowerOff";
         private const string CmdPowerToggle = "PowerToggle";
+        private const string CmdVolumeUp = "VolumeUp";
+        private const string CmdVolumeDown = "VolumeDown";
+        private const string CmdToggleMute = "ToggleMute";
 
         private const string PropTitle = "Title";
         private const string PropArtist = "Artist";
@@ -50,6 +53,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropNoDuration = "NoDuration";
         private const string PropRepeatIcon = "RepeatIcon";
         private const string PropShuffleIcon = "ShuffleIcon";
+        private const string PropVolume = "Volume";
+        private const string PropMuteLabel = "MuteLabel";
+        private const string PropSupportsVolume = "SupportsVolume";
 
         private const string IconPlay = "icPlay";
         private const string IconPause = "icPause";
@@ -59,6 +65,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string IconRepeatOff = "icRepeatDisabled";
         private const string IconShuffleOn = "icShuffle";
         private const string IconShuffleOff = "icShuffleDisabled";
+
+        // Mute button uses a text affordance label (no reliable mute glyph in the
+        // Crestron icon set): "Mute" when live, "Unmute" when currently muted.
+        private const string LabelMute = "Mute";
+        private const string LabelUnmute = "Unmute";
 
         private readonly Action<string> _log;
         private readonly object _gate = new object();
@@ -91,6 +102,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private PropertyValue<bool> _noDurationProp;
         private PropertyValue<string> _repeatIconProp;
         private PropertyValue<string> _shuffleIconProp;
+        private PropertyValue<int> _volumeProp;
+        private PropertyValue<string> _muteLabelProp;
+        private PropertyValue<bool> _supportsVolumeProp;
+        private bool _muted;
+        private int _volumeStep = 2;
 
         public HelperDriver()
         {
@@ -143,6 +159,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _noDurationProp = CreateProperty<bool>(new PropertyDefinition(PropNoDuration, null, DevicePropertyType.Boolean));
             _repeatIconProp = CreateProperty<string>(new PropertyDefinition(PropRepeatIcon, null, DevicePropertyType.String));
             _shuffleIconProp = CreateProperty<string>(new PropertyDefinition(PropShuffleIcon, null, DevicePropertyType.String));
+            _volumeProp = CreateProperty<int>(new PropertyDefinition(PropVolume, null, DevicePropertyType.Int32, 0, 100, 1));
+            _muteLabelProp = CreateProperty<string>(new PropertyDefinition(PropMuteLabel, null, DevicePropertyType.String));
+            _supportsVolumeProp = CreateProperty<bool>(new PropertyDefinition(PropSupportsVolume, null, DevicePropertyType.Boolean));
         }
 
         // ===== AExtensionDevice overrides =====
@@ -168,6 +187,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 case CmdPowerOn: InvokeOnGateway((svc, mac) => svc.PowerOn(mac)); break;
                 case CmdPowerOff: InvokeOnGateway((svc, mac) => svc.PowerOff(mac)); break;
                 case CmdPowerToggle: InvokeOnGateway((svc, mac) => svc.PowerToggle(mac)); break;
+                case CmdVolumeUp: InvokeOnGateway((svc, mac) => svc.VolumeUp(mac, _volumeStep)); break;
+                case CmdVolumeDown: InvokeOnGateway((svc, mac) => svc.VolumeDown(mac, _volumeStep)); break;
+                case CmdToggleMute: InvokeOnGateway((svc, mac) => svc.SetMute(mac, !_muted)); break;
             }
             return new OperationResult(OperationResultCode.Success);
         }
@@ -240,6 +262,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 service.MetadataUpdated += OnMetadataUpdated;
                 service.ShuffleChanged += OnShuffleChanged;
                 service.RepeatChanged += OnRepeatChanged;
+                service.VolumeChanged += OnVolumeChanged;
+                service.MuteChanged += OnMuteChanged;
+                service.VolumeStepChanged += OnVolumeStepChanged;
             }
 
             if (oldService != null)
@@ -251,6 +276,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
                 try { oldService.ShuffleChanged -= OnShuffleChanged; } catch { }
                 try { oldService.RepeatChanged -= OnRepeatChanged; } catch { }
+                try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
+                try { oldService.MuteChanged -= OnMuteChanged; } catch { }
+                try { oldService.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
             }
 
             TryBindToGateway();
@@ -301,6 +329,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             UpdateMetadata(snap.Metadata);
             UpdateShuffle(snap.ShuffleEnabled);
             UpdateRepeat(snap.RepeatEnabled);
+            UpdateSupportsVolume(snap.SupportsVolume);
+            UpdateVolume(snap.Volume);
+            UpdateMute(snap.Muted);
+            UpdateVolumeStep(snap.VolumeStep);
         }
 
         // ===== Gateway event handlers =====
@@ -345,6 +377,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         {
             if (!IsMine(mac)) return;
             UpdateRepeat(enabled);
+        }
+
+        private void OnVolumeChanged(string mac, int level)
+        {
+            if (!IsMine(mac)) return;
+            UpdateVolume(level);
+        }
+
+        private void OnMuteChanged(string mac, bool muted)
+        {
+            if (!IsMine(mac)) return;
+            UpdateMute(muted);
+        }
+
+        private void OnVolumeStepChanged(string mac, int step)
+        {
+            if (!IsMine(mac)) return;
+            UpdateVolumeStep(step);
         }
 
         // ===== Feedback into the extension device UI =====
@@ -486,6 +536,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             Commit();
         }
 
+        private void UpdateVolume(int level)
+        {
+            if (level < 0) level = 0;
+            if (level > 100) level = 100;
+            _volumeProp.Value = level;
+            Commit();
+        }
+
+        private void UpdateMute(bool muted)
+        {
+            _muted = muted;
+            _muteLabelProp.Value = muted ? LabelUnmute : LabelMute;
+            Commit();
+        }
+
+        // The step is internal only (it parameterizes the Vol+/- commands); it
+        // drives no visible property, so there is nothing to Commit.
+        private void UpdateVolumeStep(int step)
+        {
+            if (step < 1) step = 1;
+            if (step > 50) step = 50;
+            _volumeStep = step;
+        }
+
+        private void UpdateSupportsVolume(bool supported)
+        {
+            _supportsVolumeProp.Value = supported;
+            Commit();
+        }
+
         // Formats seconds as xx:yy:zz. Minutes and seconds are always shown
         // (two digits); hours appear only when non-zero. The hours field wraps
         // at 99 to honor the 99:59:59 spacing budget.
@@ -565,6 +645,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 try { svc.MetadataUpdated -= OnMetadataUpdated; } catch { }
                 try { svc.ShuffleChanged -= OnShuffleChanged; } catch { }
                 try { svc.RepeatChanged -= OnRepeatChanged; } catch { }
+                try { svc.VolumeChanged -= OnVolumeChanged; } catch { }
+                try { svc.MuteChanged -= OnMuteChanged; } catch { }
+                try { svc.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
                 if (!string.IsNullOrEmpty(mac))
                 {
                     try { svc.UnbindPlayer(mac); } catch { }

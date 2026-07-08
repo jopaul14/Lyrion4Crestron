@@ -48,6 +48,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             registry.ShuffleChanged += (mac, b) => Fan2(ShuffleChanged, mac, b);
             registry.RepeatChanged += (mac, b) => Fan2(RepeatChanged, mac, b);
             registry.VolumeChanged += (mac, v) => Fan2(VolumeChanged, mac, v);
+            registry.VolumeStepChanged += (mac, v) => Fan2(VolumeStepChanged, mac, v);
             registry.MuteChanged += (mac, b) => Fan2(MuteChanged, mac, b);
             registry.PresetsUpdated += (mac, p) => Fan2(PresetsUpdated, mac, p);
         }
@@ -93,6 +94,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public event Action<string, bool> ShuffleChanged;
         public event Action<string, bool> RepeatChanged;
         public event Action<string, int> VolumeChanged;
+        public event Action<string, int> VolumeStepChanged;
         public event Action<string, bool> MuteChanged;
         public event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
 
@@ -213,6 +215,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
             _sendCliLine(LmsCliCommands.SetMute(canon, muted));
         }
+
+        // A configuration publish (not an LMS command): stores the Receiver's
+        // configured step in the registry so other consumers can match it. No
+        // connectivity gate — it updates local state only. NoteVolumeStep is a
+        // no-op for an unbound MAC.
+        public void SetVolumeStep(string mac, int step) => _registry.NoteVolumeStep(mac, step);
 
         // ===== Internals =====
 
