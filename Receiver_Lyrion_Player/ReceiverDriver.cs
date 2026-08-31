@@ -73,6 +73,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
         private void OnVolumeStepReceived(int step)
         {
             _volumeStep = step;
+            // Publish so other consumers (the Helper's Vol+/- buttons) match the
+            // same step. Dropped if not yet bound; TryBindToGateway re-publishes.
+            InvokeOnGateway((svc, mac) => svc.SetVolumeStep(mac, step));
         }
 
         // ===== Gateway binding =====
@@ -136,6 +139,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             if (svc.BindPlayer(mac))
             {
                 _log("Receiver: Bound to MAC " + mac);
+
+                // (Re)publish the configured step to the freshly-bound registry
+                // so consumers can match it after a gateway reload/reconnect.
+                svc.SetVolumeStep(mac, _volumeStep);
 
                 if (svc.TryGetSnapshot(mac, out var snap))
                 {

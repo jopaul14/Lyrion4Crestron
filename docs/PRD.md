@@ -18,7 +18,7 @@ A suite of four cooperating Crestron Home drivers that together present each LMS
 
 1. **Lyrion Server (Gateway)** — one instance per home. The only component that talks to LMS. Owns connectivity, player discovery, state derivation, metadata lifecycle, and logging. Exposes an in-process service that the other drivers consume.
 2. **Lyrion Source** — one per room/player, bound by MAC address. A RAD "Bluray Player" driver that exists to be routable: it appears in the Crestron Home Source Routes graph with one digital and one analog audio output and offers only basic transport and power.
-3. **Lyrion Helper** — one per room/player, bound by MAC address. A RAD "Media Player" extension device (not routable) that hosts the rich now-playing UI: title/artist/album, elapsed/duration with progress bar, transport, shuffle/repeat, and power.
+3. **Lyrion Helper** — one per room/player, bound by MAC address. A RAD "Media Player" extension device (not routable) that hosts the rich now-playing UI: title/artist/album, elapsed/duration with progress bar, transport, shuffle/repeat, power, and volume (a read-only level bar plus Volume Up/Down and Mute buttons that step by the Receiver's configured amount).
 4. **Lyrion Receiver** — optional, one per room/player, bound by MAC address. A RAD "AV Receiver" driver that acts as the routing endpoint and owns room volume, mute, power, and input selection. A third-party AVR driver may be used in its place.
 
 This Source + Helper split (routable shell + extension-device UI) is the same pattern used by the BluOS, Linn, WiiM, and VSSL integrations, because it is the only way to get both routability and a rich media UI out of Crestron Home today.
@@ -128,7 +128,7 @@ The Gateway is the only meaningful logger. The complete intended log surface is:
 
 ### Routing model
 
-The Source declares one Coaxial Digital output (connector 30) and one RCA Analog output (connector 40). The Receiver declares matching Coaxial Digital and RCA Analog inputs plus speaker outputs. In Crestron Home Source Routes, the Source's output is routed to the Receiver's input (or to a third-party AVR used as the room endpoint). The Receiver (or AVR) owns room volume/mute/power; the Source and Helper never control volume.
+The Source declares one Coaxial Digital output (connector 30) and one RCA Analog output (connector 40). The Receiver declares matching Coaxial Digital and RCA Analog inputs plus speaker outputs. In Crestron Home Source Routes, the Source's output is routed to the Receiver's input (or to a third-party AVR used as the room endpoint). The Receiver (or AVR) owns room volume/mute/power as the routing endpoint; the Helper additionally surfaces volume/mute on its now-playing page (both route to the same gateway commands, and the Helper's step follows the Receiver's configured `VolumeStep`, shared per-MAC via the Gateway). The Source never controls volume.
 
 ## Testing Decisions
 
@@ -143,7 +143,7 @@ Removed or excluded from user-visible behavior (unchanged from the original desi
 - **Sleep** — no capability, no timer, no UI.
 - **Browsing, favorites, playlists, queue** — no browse trees, no favorites, no queue inspection/editing, no raw LMS command pass-through.
 - **Player sync groups** — no group playback, group volume, or group coordination.
-- **Volume in Source or Helper** — volume belongs to the Receiver (or a third-party AVR) only.
+- **Volume in the Source** — the Source (RAD Bluray Player) never controls volume. Volume is owned by the Receiver (or a third-party AVR) and additionally mirrored on the Helper page (read-only level + Vol±/Mute buttons, sharing the Receiver's configured step via the Gateway); it is never exposed on the Source.
 - **High-frequency polling or chatty updates** — the change-gated push subscription and 1s position tick are the only sanctioned periodic activity.
 - **Automated tests / CI** — verification remains manual on hardware.
 

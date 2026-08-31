@@ -58,6 +58,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public int Volume { get; set; }
         public bool Muted { get; set; }
 
+        // Configured step-up/step-down amount (1–50), published by the Receiver
+        // from its VolumeStep user attribute so other consumers (Helper) match it.
+        public int VolumeStep { get; set; } = 2;
+
         // Modes
         public bool ShuffleEnabled { get; set; }
         public bool RepeatEnabled { get; set; }

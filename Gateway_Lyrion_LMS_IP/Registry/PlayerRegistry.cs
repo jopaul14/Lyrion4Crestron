@@ -38,6 +38,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public event Action<string, bool> RepeatChanged;
         public event Action<string, int> VolumeChanged;
         public event Action<string, bool> MuteChanged;
+        public event Action<string, int> VolumeStepChanged;
         public event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
 
         // Whether the server is currently CONNECTED. Availability calculation
@@ -123,7 +124,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     SnapshotMetadata(rec),
                     rec.Presets,
                     rec.CanPowerOff,
-                    rec.SupportsVolume);
+                    rec.SupportsVolume,
+                    rec.VolumeStep);
                 return true;
             }
         }
@@ -383,6 +385,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             if (changed) try { MuteChanged?.Invoke(canon, muted); } catch { }
         }
 
+        /// <summary>
+        /// Records the configured volume step for a player (published by the
+        /// Receiver from its VolumeStep user attribute). Clamped to 1–50 and
+        /// change-gated. Consumers use it so their Vol+/- move by the same amount.
+        /// </summary>
+        public void NoteVolumeStep(string mac, int step)
+        {
+            if (step < 1) step = 1;
+            if (step > 50) step = 50;
+
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null) return;
+
+            bool changed;
+            lock (_gate)
+            {
+                if (!_records.TryGetValue(canon, out var rec)) return;
+                changed = rec.VolumeStep != step;
+                if (changed) rec.VolumeStep = step;
+            }
+
+            if (changed) try { VolumeStepChanged?.Invoke(canon, step); } catch { }
+        }
+
         public void NoteShuffle(string mac, int lmsValue)
         {
             // LMS values: 0 off, 1 song, 2 album → we expose only on/off.
@@ -632,7 +658,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
 
                 bool avail, power, muted, shuffle, repeat;
                 LyrionPlaybackState pbs;
-                int vol;
+                int vol, volStep;
                 LyrionMetadata metaSnap;
                 IReadOnlyList<LyrionPreset> presets;
                 lock (_gate)
@@ -642,6 +668,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     power = rec.IsPoweredOn;
                     pbs = rec.PlaybackState;
                     vol = rec.Volume;
+                    volStep = rec.VolumeStep;
                     muted = rec.Muted;
                     shuffle = rec.ShuffleEnabled;
                     repeat = rec.RepeatEnabled;
@@ -653,6 +680,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 try { PowerStateChanged?.Invoke(canon, power); } catch { }
                 try { PlaybackStateChanged?.Invoke(canon, pbs); } catch { }
                 try { VolumeChanged?.Invoke(canon, vol); } catch { }
+                try { VolumeStepChanged?.Invoke(canon, volStep); } catch { }
                 try { MuteChanged?.Invoke(canon, muted); } catch { }
                 try { ShuffleChanged?.Invoke(canon, shuffle); } catch { }
                 try { RepeatChanged?.Invoke(canon, repeat); } catch { }

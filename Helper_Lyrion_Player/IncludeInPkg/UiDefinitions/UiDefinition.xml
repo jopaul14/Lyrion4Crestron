@@ -41,6 +41,34 @@
           <button id="ShuffleBtn" label="Shuffle" action="command:ToggleShuffle" icon="{ShuffleIcon}"/>
         </buttongroup>
 
+        <!-- Volume: [Mute][Vol-] | read-only level bar | [Vol+]. The bar is a
+             gauge only (the extension UI has no adjustable slider, same as the
+             progress bar); the buttons change volume by the Receiver's
+             configured step. The bar hides for players with no mixer. -->
+        <controlgroup>
+          <buttongroup>
+            <button id="MuteBtn" label="{MuteLabel}" action="command:ToggleMute"/>
+            <button id="VolDownBtn" label="Vol -" action="command:VolumeDown" icon="#icMinus"/>
+          </buttongroup>
+          <segmentedslider id="Volume" label="" value="{Volume}" enabled="#false" visible="{SupportsVolume}"/>
+          <buttongroup>
+            <button id="VolUpBtn" label="Vol +" action="command:VolumeUp" icon="#icPlus"/>
+          </buttongroup>
+        </controlgroup>
+
+        <!-- FALLBACK LAYOUT (swap in for the controlgroup above if Crestron Home
+             rejects the flanked structure and the Helper page fails to load):
+             level bar first, then all three buttons grouped after it.
+        <controlgroup>
+          <segmentedslider id="Volume" label="" value="{Volume}" enabled="#false" visible="{SupportsVolume}"/>
+          <buttongroup>
+            <button id="MuteBtn" label="{MuteLabel}" action="command:ToggleMute"/>
+            <button id="VolDownBtn" label="Vol -" action="command:VolumeDown" icon="#icMinus"/>
+            <button id="VolUpBtn" label="Vol +" action="command:VolumeUp" icon="#icPlus"/>
+          </buttongroup>
+        </controlgroup>
+        -->
+
       </controls>
     </layout>
 

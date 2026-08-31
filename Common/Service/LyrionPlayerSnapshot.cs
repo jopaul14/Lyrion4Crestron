@@ -34,7 +34,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             LyrionMetadata metadata,
             IReadOnlyList<LyrionPreset> presets,
             bool supportsPower,
-            bool supportsVolume)
+            bool supportsVolume,
+            int volumeStep)
         {
             Mac = mac ?? string.Empty;
             Name = name ?? string.Empty;
@@ -49,6 +50,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             Presets = presets ?? System.Array.Empty<LyrionPreset>();
             SupportsPower = supportsPower;
             SupportsVolume = supportsVolume;
+            VolumeStep = volumeStep < 1 ? 1 : (volumeStep > 50 ? 50 : volumeStep);
         }
 
         public string Mac { get; }
@@ -78,5 +80,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// (e.g. SqueezeLite on a PC) may not expose a mixer.
         /// </summary>
         public bool SupportsVolume { get; }
+
+        /// <summary>
+        /// Configured volume step (1–50) for step-up/step-down presses,
+        /// published by the Receiver. Default 2 when none has been published.
+        /// </summary>
+        public int VolumeStep { get; }
     }
 }
