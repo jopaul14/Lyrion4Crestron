@@ -1,5 +1,44 @@
 # Release Notes
 
+## 1.0.5 — Power-state bounce-back fix (2026-08-31)
+
+All four drivers ship at 1.0.5.
+
+### Fixed
+
+- **A room configured with "Power Is On → Room On" / "Power Is Off → Room Off"
+  turned itself back on 1–2 seconds after being powered off.** Turning a player
+  off from Material Skin (or any other LMS app) briefly published a *power on*
+  event, which Crestron Home's media-function mapping executed as a genuine
+  Room On — restoring the route and restarting playback.
+
+  Root cause: LMS emits `<mac> pause 1` and `<mac> playlist pause 1` about one
+  millisecond after `<mac> power 0`, as part of its own power-off sequence. The
+  registry's power-derivation fallback treated *paused* as playback, so that
+  pause immediately re-raised power that the authoritative `power 0`
+  notification had just lowered. Pause is now power-neutral: only `play` raises
+  power, and only `stop` can lower it (and then only for players that never
+  report an explicit power state, so an on-but-idle player still shows ON).
+
+  Verified against a live LMS: an external power-off now yields exactly one
+  power event, `OFF`, with the trailing pause and stop producing playback
+  events only.
+
+- **Per-player status subscriptions could stay dead after a brief server
+  reconnect.** The `status … subscribe:30` subscriptions live on the CLI socket
+  and die with it, but the connectivity FSM deliberately smooths away flaps
+  shorter than its stability window — so a fast drop/reconnect re-armed
+  `listen 1` without ever re-running reconciliation, and the richer status
+  pushes (power, mode, metadata, volume) went silent until the next committed
+  reconnect. Subscriptions are now re-armed off the raw socket transition as
+  well, so they always follow the connection.
+
+### Removed
+
+- The temporary `DIAG` power-tracing lines added to the Source and Receiver in
+  1.0.3. They violated the "no per-player power-change logging" rule and are no
+  longer needed.
+
 ## 1.0.0 — Initial release (2026-06-04)
 
 First public release of the **Lyrion Media Server – Crestron Certified Drivers**: a

@@ -303,18 +303,23 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 if (changed) rec.PlaybackState = state;
 
                 // Power derivation (CLAUDE.md §C) is a FALLBACK that must not
-                // override an explicit LMS power signal. Active playback always
-                // implies power on (raise). A stop only implies power off for
-                // players that never report an explicit power state — a player
-                // powered on but idle (stopped) keeps its explicit "on" state.
-                var playing = state == LyrionPlaybackState.Playing
-                           || state == LyrionPlaybackState.Paused;
+                // override an explicit LMS power signal. Only active playback
+                // raises power. A pause is deliberately power-NEUTRAL: LMS
+                // emits "<mac> pause 1" and "<mac> playlist pause 1" about a
+                // millisecond after "<mac> power 0" as part of its own
+                // power-off sequence, so treating a pause as playback would
+                // re-raise power immediately after an external power-off and
+                // hand Crestron Home a spurious ON edge — which a "Power Is On
+                // -> Room On" media-function mapping turns straight back into
+                // a real power-on. A stop only implies power off for players
+                // that never report an explicit power state — a player powered
+                // on but idle (stopped) keeps its explicit "on" state.
                 var desiredPower = rec.IsPoweredOn;
-                if (playing)
+                if (state == LyrionPlaybackState.Playing)
                 {
                     desiredPower = true;
                 }
-                else if (!rec.HasExplicitPower)
+                else if (state == LyrionPlaybackState.Stopped && !rec.HasExplicitPower)
                 {
                     desiredPower = false;
                 }

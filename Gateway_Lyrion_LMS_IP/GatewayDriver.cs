@@ -69,6 +69,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private volatile CancellationTokenSource _lifetime = new CancellationTokenSource();
         private Timer _freezePump;
         private Timer _reconcileTimer;
+        private Timer _resubscribeTimer;
 
         private string _host;
         private int _httpPort = 9000;
@@ -196,7 +197,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 _lifetime = lifetime;
 
                 var cli = new LmsCliClient(_host, _cliPort, _username, _password, _log);
-                _cliStateHandler = s => _fsm.OnRawTransition(s);
+                _cliStateHandler = s =>
+                {
+                    // The per-player "status ... subscribe:N" subscriptions live
+                    // on the CLI socket and die with it, while "listen 1" is
+                    // re-sent per connection by LmsCliClient. The FSM smooths
+                    // away flaps shorter than its stability window, so a fast
+                    // drop/reconnect never re-commits CONNECTED and never runs
+                    // ReconcileBoundPlayers — leaving the status subscriptions
+                    // silently dead until the next committed reconnect. Re-arm
+                    // them off the RAW transition so they always follow the
+                    // socket. Change-gating in the registry keeps the resulting
+                    // status responses silent when nothing actually moved.
+                    if (s == LmsConnectionState.Connected) ResubscribeBoundPlayers();
+                    _fsm.OnRawTransition(s);
+                };
                 _cliAuthHandler = msg => _log("Gateway ERROR auth: " + msg);
 
                 cli.MessageReceived += OnCliMessage;
@@ -463,6 +478,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             else
             {
                 _registry.SetServerConnected(false);
+            }
+        }
+
+        /// <summary>
+        /// Re-open the per-player subscribing status queries after a raw CLI
+        /// reconnect. Deferred onto a timer rather than run inline: the state
+        /// event fires on the CLI worker thread immediately after the socket
+        /// comes up, before <c>login</c> / <c>listen 1</c> have been written,
+        /// and <see cref="SendCliForPlayer"/> takes <c>_gate</c> — which the
+        /// attaching thread may still hold. A short delay puts the queries
+        /// safely after the connection preamble and off the CLI thread.
+        /// </summary>
+        private void ResubscribeBoundPlayers()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                try { _resubscribeTimer?.Dispose(); } catch { }
+                _resubscribeTimer = new Timer(_ =>
+                {
+                    if (_disposed) return;
+                    try
+                    {
+                        foreach (var mac in _registry.BoundMacs())
+                        {
+                            _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+                        }
+                    }
+                    catch { }
+                }, null, TimeSpan.FromMilliseconds(750), Timeout.InfiniteTimeSpan);
             }
         }
 
@@ -775,12 +820,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             _freezePump = null;
 
             Timer reconcile;
+            Timer resubscribe;
             lock (_gate)
             {
                 reconcile = _reconcileTimer;
                 _reconcileTimer = null;
+                resubscribe = _resubscribeTimer;
+                _resubscribeTimer = null;
             }
             try { reconcile?.Dispose(); } catch { }
+            try { resubscribe?.Dispose(); } catch { }
 
             try { _fsm.Dispose(); } catch { }
 

@@ -172,11 +172,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void OnPowerStateChanged(string mac, bool isOn)
         {
-            // DIAGNOSTIC (1.0.3) — remove before ship. Traces gateway power
-            // feedback into the Receiver to locate where the on-device chain breaks.
-            var mine = IsMine(mac);
-            _log("DIAG power event: mac=" + mac + " isOn=" + isOn + " mine=" + mine);
-            if (!mine) return;
+            if (!IsMine(mac)) return;
             UpdatePower(isOn);
         }
 
@@ -202,11 +198,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void UpdatePower(bool isOn, bool force = false)
         {
-            // DIAGNOSTIC (1.0.3) — remove before ship. Shows whether the emit is
-            // swallowed by the change-gate (gated=true) or pushed to Crestron Home.
-            var gated = !force && PowerIsOn == isOn;
-            _log("DIAG UpdatePower isOn=" + isOn + " force=" + force + " prevPowerIsOn=" + PowerIsOn + " gated=" + gated);
-            if (gated) return;
+            if (!force && PowerIsOn == isOn) return;
             PowerIsOn = isOn;
             SendStateChangeEvent(isOn ? AvrStateObjects.PoweredOn : AvrStateObjects.PoweredOff);
             SendStateChangeEvent(AvrStateObjects.Power);
