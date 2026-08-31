@@ -231,8 +231,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         {
             var attempt = 0;
 
+            // Announce the first connect attempt of a cycle, then stay silent
+            // while the backoff retries; a successful connection re-arms the
+            // announcement so a later drop is announced once more. Without this
+            // a server that is down overnight writes a line every backoff tick
+            // (60s at the top of the schedule) for as long as it stays down —
+            // exactly the retry-attempt logging the CLAUDE.md logging invariant
+            // rules out. Nothing is lost: ServerConnectivityFsm still logs each
+            // committed CONNECTED/DISCONNECTED transition once.
+            //
+            // This cannot be driven off `attempt`. That counter is reset to 0 on
+            // a successful connect and then incremented *before* the retry
+            // delay, so the first attempt following a dropped connection is
+            // attempt 1, not 0 — gating on `attempt == 0` would silence the one
+            // line worth keeping.
+            var announceNextAttempt = true;
+
             while (!ct.IsCancellationRequested)
             {
+                var announceThisAttempt = announceNextAttempt;
+                announceNextAttempt = false;
+
+                // Whether this iteration got as far as an established
+                // connection. Losing a live connection is a real error, so it is
+                // logged even mid-cycle when retries are otherwise silent.
+                var wasConnected = false;
+
                 SetState(LmsConnectionState.Connecting);
 
                 TcpClient tcp = null;
@@ -240,8 +264,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
                 try
                 {
-                    _log("LmsCliClient: connecting to " + _host + ":" + _port
-                        + (attempt > 0 ? " (attempt " + (attempt + 1) + ")" : string.Empty));
+                    if (announceThisAttempt)
+                    {
+                        _log("LmsCliClient: connecting to " + _host + ":" + _port);
+                    }
 
                     tcp = new TcpClient { NoDelay = true };
                     EnableKeepAliveFlag(tcp);
@@ -253,6 +279,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
                     SetState(LmsConnectionState.Connected);
                     attempt = 0;
+                    wasConnected = true;
+                    announceNextAttempt = true;
 
                     if (!string.IsNullOrEmpty(_username))
                     {
@@ -270,7 +298,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 }
                 catch (Exception ex)
                 {
-                    _log("LmsCliClient: connect/receive error: " + ex.Message);
+                    // Same rule as the connect announcement: the first failure
+                    // of a cycle is worth a line, the identical failure on every
+                    // subsequent backoff tick is not. A drop of an established
+                    // connection always logs.
+                    if (announceThisAttempt || wasConnected)
+                    {
+                        _log("LmsCliClient: connect/receive error: " + ex.Message);
+                    }
                 }
                 finally
                 {
