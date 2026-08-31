@@ -34,7 +34,7 @@ Quick install — see [BUILD.md](BUILD.md) for the full walk-through:
 2. In the Crestron Home Setup app, add the **Gateway first** (one per home): set the LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), and optional username/password.
 3. For each room/player, add **Source** and **Helper** (and optionally **Receiver**) using the **same player MAC address** on all three.
 4. Route the Source's digital or analog output to the Receiver input (or a 3rd-party AVR), then on to the room speakers.
-5. In **Source Routes → Available Sources**, deselect "Lyrion Source" for the room to hide its tile while keeping the Helper's rich now-playing UI.
+5. Optionally, in **Source Routes → Available Sources**, deselect "Lyrion Source" for the room to hide its tile. Most setups should leave it visible — the room's media on/off indication in the Crestron Home app comes from that tile. See [BUILD.md](BUILD.md) step 7.
 
 Prefer to build from source instead? See [BUILD.md](BUILD.md).
 
@@ -105,7 +105,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 - PowerOn / PowerOff / TogglePower
 - Up to 4 configurable presets — see [Presets](#presets) below
 - Custom now-playing layout via UiDefinition.xml.
-- Room-page tile shows the player's on/off state (power badge + 'Off'/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.
+- Room-page tile reports the player's own on/off state (power badge + 'Off'/now-playing status text). Note this is the *player's* state, not the room's media on/off indication — that comes from the Source tile.
 
 ### Lyrion Receiver (Driver 4) — routable audio endpoint
 

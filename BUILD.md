@@ -164,16 +164,15 @@ Deploy in this order:
 
 6. **Route audio.** In Crestron Home, route the Source's digital or analog output to the Receiver's matching input (or to a 3rd-party AVR), and from there to the room speakers.
 
-7. **Hide the Source tile from the room UI.** The Lyrion Source is a routable Blu-ray Player, so by default Crestron Home shows it as a selectable source in the room. It carries full transport and power controls (Play/Pause/Stop/Next/Previous/Power) — these are intentionally retained so they are available to Crestron Home programming (Quick Actions, scenes, schedules, etc.), but you do not want end-users seeing a second control surface alongside the Helper's rich now-playing UI. To keep the controls available for programming while hiding the tile from end-users:
+7. **Optional: decide whether to show the Source tile in the room UI.** The Lyrion Source is a routable Blu-ray Player, so by default Crestron Home shows it as a selectable source in the room, alongside the Helper's rich now-playing UI. You can hide it, but **in most cases you should leave it visible.**
 
-   - In the Crestron Home Setup app, go to **Source Routes**, select the room, and open the **Available Sources** tab.
-   - **Deselect (uncheck) "Lyrion Source"** for that room. This removes its tile from the room user interface; the source remains usable for audio routing (configured in step 4, which is independent of Available Sources) and its transport/power commands remain available to programming.
-   - Leave the **Lyrion Helper** selected/visible — it is an extension device, not a source, and is unaffected by this setting. It remains the single rich control surface end-users see.
-   - Repeat for every room that has a Lyrion Source.
+   **Leaving it visible (recommended).** The room's media on/off indication in the Crestron Home app comes from the source tile. Leave it selected and the app shows whether media is on or off in that room at a glance. The cost is that end-users see the Source's basic transport tile as well as the Helper's fuller one.
 
-   The Helper's room-page tile carries the player's on/off state (a power badge plus a status line that reads `Off` when powered down, or the now-playing track / playback state when on), so hiding the Source tile does not lose the at-a-glance on/off indication for the room.
+   **Hiding it.** In the Crestron Home Setup app, go to **Source Routes**, select the room, open the **Available Sources** tab, and deselect (uncheck) "Lyrion Source" for that room. Repeat per room. This removes the tile from the room user interface while the source stays usable for audio routing (step 6 is independent of Available Sources) and its transport/power commands stay available to programming — Quick Actions, scenes, schedules, and so on.
 
-   Note: a deselected source can still appear inside the routing/route-selection menus used during configuration, but it will not be a user-facing source tile in the room view.
+   **The trade-off to understand before hiding it:** you lose the room's media on/off indication. With the tile hidden, the Crestron Home app will not show whether media is playing in that room. The Helper's own tile still reports the *player's* power state and current track, but that is the player's state, not the room's media state — they are different indications, and hiding the Source tile removes the latter.
+
+   Note: a deselected source can still appear inside the routing/route-selection menus used during configuration; it simply stops being a user-facing tile in the room view.
 
 8. **Decide whether the player's power should drive the room on/off.** By default it does not. Crestron Home treats a room's on/off state as a room-level concept, and a source driver reporting its own power does not move it — so out of the box, powering the Lyrion player on from Material Skin (or the player's own front panel) leaves the room showing off. If you want the room to follow the player, you have to say so explicitly.
 
@@ -187,9 +186,15 @@ Deploy in this order:
    | **B. Shared / multi-source** | Nothing | Nothing | The room has a third-party AVR or TV where Lyrion is one input among several. |
    | **C. Wake-only** | Room On | Nothing | You want music started from a phone to wake the room, but a Lyrion power-off must never shut down a room that is doing something else. |
 
-   Set this on the Lyrion Source in the Crestron Home Setup app: under the device's **Media Function** settings there is a **Power Is On** and a **Power Is Off** entry, each with a **Mode** you set to *Room On*, *Room Off*, or *Nothing*.
+   Set this in the Crestron Home Setup app under **Actions & Events**:
 
-   **Room B is the important one to get right.** In a room with a shared AVR, the Lyrion player may power on or off for reasons that have nothing to do with what the room is doing — a whole-house scene, someone else's app, or the player simply stopping. If those events are mapped, selecting a different input can be interrupted by the room switching itself to Lyrion, or a Lyrion power-off can black out a room mid-movie. Leaving both on *Nothing* costs you nothing visible: the **Lyrion Helper's room-page tile still shows the player's on/off state** (power badge plus a status line reading `Off` or the current track), so the room still indicates whether the player is on — it just does not act on it.
+   1. Select the room, then select the Source. It appears with a **Blu-ray icon**, because the driver's device type is Blu-ray Player.
+   2. Select **Power Is Off**. Set **Mode** to **Media Function**, then select **Room Off**.
+   3. Select **Power Is On**. Set **Mode** to **Media Function**, then select **Room On**.
+
+   That is the Room A mapping above. For Room B, leave both entries with a **Mode** of **Nothing**; for Room C, map only **Power Is On**. Set whichever combination the room's desired behaviour calls for.
+
+   **Room B is the important one to get right.** In a room with a shared AVR, the Lyrion player may power on or off for reasons that have nothing to do with what the room is doing — a whole-house scene, someone else's app, or the player simply stopping. If those events are mapped, selecting a different input can be interrupted by the room switching itself to Lyrion, or a Lyrion power-off can black out a room mid-movie. Leaving both on *Nothing* does not blind you: the **Lyrion Helper's room-page tile still reports the player's own on/off state** (power badge plus a status line reading `Off` or the current track), and if you left the Source tile visible per step 7 the room's media on/off indication is there too. The player's state is simply reported rather than acted on.
 
    Room C's trade-off: if Lyrion is the active source and it powers off, the room stays on and silent until someone turns it off. That is usually preferable to the room going dark unexpectedly, but it is a real difference from Room A.
 

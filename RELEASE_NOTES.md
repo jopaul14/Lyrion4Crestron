@@ -155,7 +155,7 @@ room/player and bound by the player's MAC address.
 **Lyrion Source — routable audio source**
 - Play / Pause / Stop, Next / Previous, Power on / off / toggle
 - Declares digital (Coaxial) + analog (RCA) audio outputs for routing
-- Transport/power retained for Crestron Home programming even when the source
+- Transport/power retained for Crestron Home programming even if the source
   tile is hidden from end users
 
 **Lyrion Helper — rich UI extension**
