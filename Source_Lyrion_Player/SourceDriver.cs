@@ -93,6 +93,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
                 service.PowerStateChanged += OnPowerStateChanged;
+                service.PowerStateReasserted += OnPowerStateReasserted;
                 service.PlaybackStateChanged += OnPlaybackStateChanged;
             }
 
@@ -100,6 +101,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             {
                 try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
                 try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { oldService.PowerStateReasserted -= OnPowerStateReasserted; } catch { }
                 try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
             }
 
@@ -147,7 +149,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             // Force the emits: the bind-time snapshot must reach Crestron Home
             // even when a value matches the framework default and would
             // otherwise be swallowed by the change-gate.
-            UpdateAvailability(snap.IsAvailable);
+            // resync: false — the two forced emits below already carry this
+            // snapshot, so letting UpdateAvailability re-pull it would emit
+            // each value twice.
+            UpdateAvailability(snap.IsAvailable, resync: false);
             UpdatePower(snap.IsPoweredOn, force: true);
             UpdatePlayback(snap.PlaybackState, force: true);
         }
@@ -166,6 +171,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             UpdatePower(isOn);
         }
 
+        private void OnPowerStateReasserted(string mac, bool isOn)
+        {
+            if (!IsMine(mac)) return;
+
+            // Force past the change-gate: the whole point of a re-assert is
+            // that our value already matches, and Crestron Home's room state
+            // does not. This is the only power path that logs — it fires only
+            // on an explicit, rate-limited power command that found the two
+            // out of sync, never during playback.
+            _log("Source: power re-asserted " + (isOn ? "ON" : "OFF")
+                 + " for " + mac + " (state already held; re-emitting for Crestron Home)");
+            UpdatePower(isOn, force: true);
+        }
+
         private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
         {
             if (!IsMine(mac)) return;
@@ -174,7 +193,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         // ===== Feedback into the RAD framework =====
 
-        private void UpdateAvailability(bool isAvailable)
+        private void UpdateAvailability(bool isAvailable, bool resync = true)
         {
             Connected = isAvailable;
             SendStateChangeEvent(BlurayPlayerStateObjects.Connection);
@@ -185,6 +204,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 // power/playback so the routing graph reflects reality.
                 UpdatePlayback(LyrionPlaybackState.Stopped);
                 UpdatePower(false);
+                return;
+            }
+
+            if (!resync) return;
+
+            // Availability loss forces power/playback to a local "off" that the
+            // registry never saw, so our change-gate and the registry now
+            // disagree. Nothing re-syncs them on its own: the registry only
+            // raises edges, and a player that was on throughout the dropout
+            // produces none. Re-pull the registry's view and force the emits,
+            // otherwise Crestron Home holds that stale off state until the next
+            // real transition. (RepublishAll covers a *server* reconnect; a
+            // per-player disconnect/reconnect flap does not reach it.)
+            ILyrionGatewayService svc;
+            string mac;
+            lock (_gate)
+            {
+                svc = _gateway;
+                mac = _boundMac;
+            }
+            if (svc == null || string.IsNullOrEmpty(mac)) return;
+
+            if (svc.TryGetSnapshot(mac, out var snap))
+            {
+                UpdatePower(snap.IsPoweredOn, force: true);
+                UpdatePlayback(snap.PlaybackState, force: true);
             }
         }
 
@@ -292,6 +337,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             {
                 try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
                 try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                try { svc.PowerStateReasserted -= OnPowerStateReasserted; } catch { }
                 try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
                 if (!string.IsNullOrEmpty(mac))
                 {

@@ -24,6 +24,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
     {
         private const int MaxStringLength = 1024;
 
+        /// <summary>
+        /// Minimum gap between successive power publishes for one player before
+        /// <see cref="ReassertPower"/> will raise another. This is a loop
+        /// breaker, not a debounce: a re-assert makes Crestron Home run its
+        /// "Power Is On -> Room On" media function, and Room On issues PowerOn
+        /// back to the Source driver, which would ask for another re-assert.
+        /// Five seconds is long enough to swallow that echo and short enough
+        /// that a homeowner pressing power twice still gets the second press.
+        /// </summary>
+        private static readonly TimeSpan ReassertCooldown = TimeSpan.FromSeconds(5);
+
         private readonly object _gate = new object();
         private readonly Dictionary<string, PlayerRecord> _records =
             new Dictionary<string, PlayerRecord>(StringComparer.OrdinalIgnoreCase);
@@ -32,6 +43,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public event Action<string, bool> AvailabilityChanged;
         public event Action<string, string> NameChanged;
         public event Action<string, bool> PowerStateChanged;
+        public event Action<string, bool> PowerStateReasserted;
         public event Action<string, LyrionPlaybackState> PlaybackStateChanged;
         public event Action<string, LyrionMetadata> MetadataUpdated;
         public event Action<string, bool> ShuffleChanged;
@@ -325,6 +337,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 if (desiredPower != rec.IsPoweredOn)
                 {
                     rec.IsPoweredOn = desiredPower;
+                    rec.LastPowerPublishUtc = DateTime.UtcNow;
                     powerChanged = true;
                     nowPowered = desiredPower;
                 }
@@ -347,10 +360,49 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 if (!_records.TryGetValue(canon, out var rec)) return;
                 rec.HasExplicitPower = true;
                 changed = rec.IsPoweredOn != isOn;
-                if (changed) rec.IsPoweredOn = isOn;
+                if (changed)
+                {
+                    rec.IsPoweredOn = isOn;
+                    rec.LastPowerPublishUtc = DateTime.UtcNow;
+                }
             }
 
             if (changed) try { PowerStateChanged?.Invoke(canon, isOn); } catch { }
+        }
+
+        /// <summary>
+        /// Re-publish a player's power state to consumers when an explicit
+        /// power command asked for the state the player is already in, so no
+        /// <see cref="PowerStateChanged"/> edge will follow it.
+        /// </summary>
+        /// <remarks>
+        /// <para>Deliberately NOT a registry mutation — nothing here changes
+        /// state, so the "all registry mutations are change-gated" invariant is
+        /// untouched. This raises a separate
+        /// <see cref="PowerStateReasserted"/> event precisely so consumers can
+        /// tell "the state changed" from "the state was asked for again", and
+        /// so <see cref="PowerStateChanged"/> keeps meaning an edge.</para>
+        /// <para>Returns true only when the event was actually raised: false
+        /// when the player is unknown, when its state does not match
+        /// <paramref name="expected"/> (a real edge is coming and will do the
+        /// job), or when the <see cref="ReassertCooldown"/> has not elapsed.</para>
+        /// </remarks>
+        public bool ReassertPower(string mac, bool expected)
+        {
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null) return false;
+
+            var now = DateTime.UtcNow;
+            lock (_gate)
+            {
+                if (!_records.TryGetValue(canon, out var rec)) return false;
+                if (rec.IsPoweredOn != expected) return false;
+                if (now - rec.LastPowerPublishUtc < ReassertCooldown) return false;
+                rec.LastPowerPublishUtc = now;
+            }
+
+            try { PowerStateReasserted?.Invoke(canon, expected); } catch { }
+            return true;
         }
 
         public void NoteVolume(string mac, int level)
@@ -653,6 +705,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     if (!_records.TryGetValue(canon, out var rec)) continue;
                     avail = rec.IsAvailable;
                     power = rec.IsPoweredOn;
+                    rec.LastPowerPublishUtc = DateTime.UtcNow;
                     pbs = rec.PlaybackState;
                     vol = rec.Volume;
                     volStep = rec.VolumeStep;

@@ -1,5 +1,58 @@
 # Release Notes
 
+## 1.0.8 — Power-on no longer gets stuck (2026-08-31)
+
+All four drivers ship at 1.0.8. This release fixes the counterpart to the 1.0.5
+bounce-back bug: with a Room A mapping, **"Power Is Off → Room Off" worked but
+"Power Is On → Room On" often did nothing.**
+
+### Fixed
+
+- **An explicit power-on for a player that is already on now moves the room.**
+  Power reached Crestron Home only as an *edge*, and that edge had to survive
+  three independent change-gates: LMS only notifies on a real transition, the
+  Gateway registry only raises `PowerStateChanged` when its stored value
+  changes, and the Source/Receiver only emit `PoweredOn`/`PoweredOff` when their
+  own value changes. Crestron Home's room state and the player's power state
+  drift apart easily — a room turned off without the LMS player powering off, or
+  the bind-time emit landing during driver load before Crestron Home's Actions &
+  Events engine is listening. Once drifted, pressing Power On produced no
+  transition anywhere, so `Room On` never ran, and nothing in the system could
+  ever re-sync the two. Power *off* kept working because the player really was
+  on, so off was always a genuine transition.
+
+  An explicit `PowerOn`/`PowerOff` that finds the registry already holding the
+  requested state now raises a new `PowerStateReasserted` event, and the Source
+  and Receiver re-emit their power feedback past their own change-gate. This
+  fires only on a deliberate power command — never from playback, a status
+  refresh, or a reconnect — and is rate-limited to one per player per five
+  seconds so the resulting `Room On` cannot echo back into another re-assert.
+
+  **The Helper always looked correct throughout this bug, and that was
+  misleading rather than reassuring:** the Helper publishes power as a *level*
+  (a property value), so it reads right whenever the level is right — including
+  when no event was raised at all. Only the Source and Receiver publish edges.
+
+- **Availability loss no longer leaves stale power/playback behind.** The Source
+  and Helper force their local power to off and playback to stopped when a
+  player drops off the server, but nothing re-synced them when it came back: the
+  registry never saw those local writes, and a player that stayed powered on
+  through the dropout produces no edge to undo them. All three consumer drivers
+  now re-pull the registry snapshot on availability restore and force the emits.
+  `RepublishAll` only ever covered a *server* reconnect; a per-player
+  `client disconnect` / `reconnect` flap never reached it.
+
+- **The Receiver now re-syncs volume and mute on availability restore too**, for
+  the same reason.
+
+### Added
+
+- One log line, on the Source only, when a power re-assert fires. It names the
+  MAC and the state, and it is the only power-related log in the suite — it
+  cannot fire during playback, only on an explicit, rate-limited power command
+  that found Crestron Home out of sync. This is deliberately narrower than
+  logging every power change, which the flash-safety rule in CLAUDE.md forbids.
+
 ## 1.0.7 — Helper layout fixes (2026-08-31)
 
 All four drivers ship at 1.0.7. Driver behaviour is unchanged from 1.0.6; this

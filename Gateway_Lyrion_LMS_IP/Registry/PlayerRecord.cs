@@ -47,6 +47,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         // power off for an idle (stopped) player — the explicit state wins.
         public bool HasExplicitPower { get; set; }
 
+        // When power was last published to consumers — either as a real
+        // PowerStateChanged edge or as a re-assert. Used only to rate-limit
+        // re-asserts (see PlayerRegistry.ReassertPower).
+        public DateTime LastPowerPublishUtc { get; set; }
+
         // Playback
         public LyrionPlaybackState PlaybackState { get; set; }
         public int PositionSeconds { get; set; }

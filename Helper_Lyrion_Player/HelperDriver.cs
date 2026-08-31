@@ -452,7 +452,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
             UpdateName(snap.Name);
-            UpdateAvailability(snap.IsAvailable);
+            UpdateAvailability(snap.IsAvailable, resync: false);
             UpdatePower(snap.IsPoweredOn);
             UpdatePlayback(snap.PlaybackState);
             UpdateMetadata(snap.Metadata);
@@ -528,7 +528,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         // ===== Feedback into the extension device UI =====
 
-        private void UpdateAvailability(bool isAvailable)
+        private void UpdateAvailability(bool isAvailable, bool resync = true)
         {
             Connected = isAvailable;
 
@@ -536,6 +536,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             {
                 UpdatePlayback(LyrionPlaybackState.Stopped);
                 UpdatePower(false);
+                return;
+            }
+
+            if (!resync) return;
+
+            // Mirror of the loss branch: it drove the tile to off/stopped
+            // locally, which the registry never saw, so the registry will not
+            // raise an edge to undo it for a player that was on throughout the
+            // dropout. Without this the Helper tile reads "Off" until the next
+            // real transition. See SourceDriver.UpdateAvailability.
+            ILyrionGatewayService svc;
+            string mac;
+            lock (_gate)
+            {
+                svc = _gateway;
+                mac = _boundMac;
+            }
+            if (svc == null || string.IsNullOrEmpty(mac)) return;
+
+            if (svc.TryGetSnapshot(mac, out var snap))
+            {
+                UpdatePower(snap.IsPoweredOn);
+                UpdatePlayback(snap.PlaybackState);
             }
         }
 
