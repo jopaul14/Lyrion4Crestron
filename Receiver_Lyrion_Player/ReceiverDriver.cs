@@ -96,7 +96,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
                 service.PowerStateChanged += OnPowerStateChanged;
-                service.PowerStateReasserted += OnPowerStateReasserted;
                 service.VolumeChanged += OnVolumeChanged;
                 service.MuteChanged += OnMuteChanged;
             }
@@ -105,7 +104,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             {
                 try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
                 try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { oldService.PowerStateReasserted -= OnPowerStateReasserted; } catch { }
                 try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
                 try { oldService.MuteChanged -= OnMuteChanged; } catch { }
             }
@@ -158,7 +156,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             // Force the emits: the bind-time snapshot must reach Crestron Home
             // even when a value matches the framework default and would
             // otherwise be swallowed by the change-gate.
-            UpdateAvailability(snap.IsAvailable, resync: false);
+            UpdateAvailability(snap.IsAvailable);
             UpdatePower(snap.IsPoweredOn, force: true);
             UpdateVolume(snap.Volume, force: true);
             UpdateMute(snap.Muted, force: true);
@@ -178,15 +176,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             UpdatePower(isOn);
         }
 
-        private void OnPowerStateReasserted(string mac, bool isOn)
-        {
-            // Force past the change-gate — see SourceDriver for why. Not
-            // logged here: the Source logs the same event for the same MAC,
-            // and the Source is the driver installers are told to map.
-            if (!IsMine(mac)) return;
-            UpdatePower(isOn, force: true);
-        }
-
         private void OnVolumeChanged(string mac, int level)
         {
             if (!IsMine(mac)) return;
@@ -201,34 +190,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         // ===== Feedback into the RAD framework =====
 
-        private void UpdateAvailability(bool isAvailable, bool resync = true)
+        private void UpdateAvailability(bool isAvailable)
         {
             Connected = isAvailable;
             SendStateChangeEvent(AvrStateObjects.Connection);
-
-            if (!isAvailable || !resync) return;
-
-            // Re-pull the registry's view when the player comes back. The
-            // Receiver does not force power off on availability loss the way
-            // the Source does, but it can still be holding a value from before
-            // a dropout that the registry has since moved past without an edge
-            // this driver saw. Volume and mute are re-synced for the same
-            // reason. See SourceDriver.UpdateAvailability.
-            ILyrionGatewayService svc;
-            string mac;
-            lock (_gate)
-            {
-                svc = _gateway;
-                mac = _boundMac;
-            }
-            if (svc == null || string.IsNullOrEmpty(mac)) return;
-
-            if (svc.TryGetSnapshot(mac, out var snap))
-            {
-                UpdatePower(snap.IsPoweredOn, force: true);
-                UpdateVolume(snap.Volume, force: true);
-                UpdateMute(snap.Muted, force: true);
-            }
         }
 
         private void UpdatePower(bool isOn, bool force = false)
@@ -348,7 +313,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             {
                 try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
                 try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { svc.PowerStateReasserted -= OnPowerStateReasserted; } catch { }
                 try { svc.VolumeChanged -= OnVolumeChanged; } catch { }
                 try { svc.MuteChanged -= OnMuteChanged; } catch { }
                 if (!string.IsNullOrEmpty(mac))

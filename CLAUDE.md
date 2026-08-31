@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.8).
+four-driver refactor is **complete** (all drivers ship together at 1.0.9).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -29,16 +29,9 @@ before making behavioral changes; where any other document disagrees, the PRD wi
 - **Logging is minimal and flash-safe.** Allowed: server connectivity
   transitions (smoothed, oscillation-suppressed), one reconcile summary per
   reconnect, bound-MAC-missing warning, real errors, one startup line per
-  consumer driver, and (since 1.0.8) the Source's power **re-assert** line — a
-  disagreement between Crestron Home and the player, not a power change, capped
-  at one per player per 5s. Not allowed: per-player power-change logs,
-  retry-attempt logs, auth-success logs, or anything that fires during normal
-  playback.
+  consumer driver. Not allowed: per-player power-change logs, retry-attempt
+  logs, auth-success logs, or anything that fires during normal playback.
 - **All registry mutations are change-gated** — no change, no event, no log.
-  `PlayerRegistry.ReassertPower` is not a counter-example: it mutates nothing
-  and raises a distinct `PowerStateReasserted` event, so `PowerStateChanged`
-  keeps meaning "an edge happened". Consumers that publish power as an edge
-  (Source, Receiver) must honour it; the Helper publishes a level and ignores it.
 - Volume (0–100, no rescaling) is owned by the Receiver but also surfaced on the
   Helper page (Vol±/Mute buttons); both route to the same
   gateway `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows

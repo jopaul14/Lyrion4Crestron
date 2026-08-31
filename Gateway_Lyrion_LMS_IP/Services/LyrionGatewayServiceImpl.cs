@@ -43,7 +43,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             registry.AvailabilityChanged += (mac, b) => Fan2(AvailabilityChanged, mac, b);
             registry.NameChanged += (mac, s) => Fan2(NameChanged, mac, s);
             registry.PowerStateChanged += (mac, b) => Fan2(PowerStateChanged, mac, b);
-            registry.PowerStateReasserted += (mac, b) => Fan2(PowerStateReasserted, mac, b);
             registry.PlaybackStateChanged += (mac, s) => Fan2(PlaybackStateChanged, mac, s);
             registry.MetadataUpdated += (mac, m) => Fan2(MetadataUpdated, mac, m);
             registry.ShuffleChanged += (mac, b) => Fan2(ShuffleChanged, mac, b);
@@ -89,7 +88,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public event Action<string, bool> AvailabilityChanged;
         public event Action<string, string> NameChanged;
         public event Action<string, bool> PowerStateChanged;
-        public event Action<string, bool> PowerStateReasserted;
         public event Action<string, LyrionPlaybackState> PlaybackStateChanged;
         public event Action<string, LyrionMetadata> MetadataUpdated;
         public event Action<string, bool> ShuffleChanged;
@@ -153,14 +151,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             {
                 _sendCliLine(LmsCliCommands.Play(canon));
             }
-
-            // If the player is already on, LMS has nothing to change and will
-            // send no power notification, so no edge reaches Crestron Home and
-            // a "Power Is On -> Room On" mapping never runs. Re-assert so an
-            // explicitly-requested power-on still moves a room whose state has
-            // drifted away from the player's. No-op when the player really is
-            // off — the edge from LMS is on its way.
-            _registry.ReassertPower(canon, true);
         }
 
         public void PowerOff(string mac)
@@ -177,11 +167,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             {
                 _sendCliLine(LmsCliCommands.Stop(canon));
             }
-
-            // Symmetric with PowerOn: the same drift can leave a room on while
-            // the player is already off, where an explicit power-off would
-            // otherwise raise nothing.
-            _registry.ReassertPower(canon, false);
         }
 
         public void PowerToggle(string mac)

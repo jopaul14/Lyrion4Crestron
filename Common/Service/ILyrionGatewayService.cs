@@ -104,30 +104,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         event Action<string, string> NameChanged;
 
         event Action<string, bool> PowerStateChanged;
-
-        /// <summary>
-        /// Raised when a consumer issued an explicit <see cref="PowerOn"/> /
-        /// <see cref="PowerOff"/> for a player that the registry already
-        /// believes is in that state, so no <see cref="PowerStateChanged"/>
-        /// edge will follow. The argument is the state that was asked for and
-        /// is already held.
-        /// </summary>
-        /// <remarks>
-        /// <para>Consumers that publish power as an <em>edge</em> to Crestron
-        /// Home (Source, Receiver) MUST re-emit their power feedback on this
-        /// event, bypassing their own change-gate. Consumers that publish power
-        /// as a <em>level</em> (the Helper's <c>Power</c> property) can ignore
-        /// it — their value is already correct.</para>
-        /// <para>This exists because Crestron Home's room state and the
-        /// registry's power state can drift apart (a room turned off without
-        /// the LMS player powering off; a bind-time emit that landed before
-        /// Crestron Home was listening). Once drifted, LMS raises no edge on a
-        /// power command that changes nothing, so the room could never be
-        /// re-synced. The Gateway rate-limits these, so a consumer may see
-        /// fewer of them than there were commands.</para>
-        /// </remarks>
-        event Action<string, bool> PowerStateReasserted;
-
         event Action<string, LyrionPlaybackState> PlaybackStateChanged;
         event Action<string, LyrionMetadata> MetadataUpdated;
         event Action<string, bool> ShuffleChanged;

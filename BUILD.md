@@ -198,19 +198,6 @@ Deploy in this order:
 
    Room C's trade-off: if Lyrion is the active source and it powers off, the room stays on and silent until someone turns it off. That is usually preferable to the room going dark unexpectedly, but it is a real difference from Room A.
 
-   > **Requires driver version 1.0.8 or later for Room On to be reliable.** On
-   > 1.0.7 and earlier, "Power Is Off → Room Off" worked but "Power Is On → Room
-   > On" would often do nothing. Power reached Crestron Home only as a
-   > transition, so once the room's state and the player's state drifted apart —
-   > a room turned off without the LMS player powering off, or the driver
-   > loading while the player was already on — pressing power on changed nothing
-   > anywhere and the room never followed. Power off kept working because the
-   > player really was on, making off a genuine transition every time. Note that
-   > the Helper tile looked correct throughout, which made this hard to spot: it
-   > shows the player's power *level*, so it reads right even when no event was
-   > raised. 1.0.8 re-asserts power on an explicit power command that finds the
-   > state already held.
-
    > **Requires driver version 1.0.5 or later.** On 1.0.4 and earlier, LMS's own power-off sequence briefly reported the player as ON again about a millisecond after reporting it OFF. With Room A or C configured, Crestron Home acted on that spurious edge and turned the room straight back on — the room would appear to power off and then bounce back on with the music playing, one to two seconds later. If you see that symptom, you are running a cached older driver; confirm the version and re-import.
 
 9. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.
