@@ -33,7 +33,7 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   logs, auth-success logs, or anything that fires during normal playback.
 - **All registry mutations are change-gated** — no change, no event, no log.
 - Volume (0–100, no rescaling) is owned by the Receiver but also surfaced on the
-  Helper page (read-only level bar + Vol±/Mute buttons); both route to the same
+  Helper page (Vol±/Mute buttons); both route to the same
   gateway `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows
   the Receiver's configured `VolumeStep`, shared per-MAC through the Gateway
   registry. Shuffle/repeat are booleans exposed only by the Helper. Seek is

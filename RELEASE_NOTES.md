@@ -1,5 +1,44 @@
 # Release Notes
 
+## 1.0.7 — Helper layout fixes (2026-08-31)
+
+All four drivers ship at 1.0.7. Driver behaviour is unchanged from 1.0.6; this
+release exists to correct the now-playing page after 1.0.6 was tested on a
+phone, and to give Crestron Home a new version number so it actually reloads
+the packages.
+
+### Fixed
+
+- **The power/transport row did not render at all.** 1.0.6 put six buttons in
+  one group; Crestron Home renders at most five and silently drops the entire
+  row rather than wrapping it. Playback is back to the five-button row that
+  works — Repeat / Previous / Play-Pause / Next / Shuffle — and Power has moved
+  in with the volume controls.
+
+- **"Vol -" and "Vol +" displayed as "-  V..." and "+  V...".** A button's icon
+  and label compete for the same width, and at three or more across the label
+  is truncated to fit. The +/- icons were decorative while the text was the
+  actual affordance, so the icons are gone and the labels now render in full.
+
+### Changed
+
+- **The read-only volume level bar has been removed.** It cost a full-height
+  card to draw one thin, unadjustable line. Room volume lives on the Receiver
+  (or the room's own volume control), and Vol -/+ still step it by the
+  Receiver's configured amount. The `SupportsVolume` property is still
+  published, just no longer drawn.
+
+- The now-playing page is now: source header, track card (title / artist /
+  album / timing), a five-button playback row, a four-button Power / Vol - /
+  Mute / Vol + row, then the preset rows.
+
+- The layout rules learned from testing on hardware are recorded at the top of
+  `UiDefinition.xml`: the five-button ceiling, the icon-versus-label width
+  interaction at each row width, and the control-group stacking behaviour.
+  Crestron Home — not the SDK — interprets that file, and neither the build nor
+  ManifestUtil validates it, so these constraints are only discoverable by
+  deploying.
+
 ## 1.0.6 — Configurable presets (2026-08-31)
 
 All four drivers ship at 1.0.6. Includes everything in 1.0.5 below, which was

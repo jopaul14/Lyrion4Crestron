@@ -10,23 +10,31 @@
   <layouts>
 
     <!--
-      LAYOUT BUDGET. Crestron Home renders every control as a card and gives us
-      no control over padding, so the only way to save vertical space is to use
-      fewer controls. This page is deliberately built from five cards so that a
-      room with four presets still fits one phone screen without scrolling.
-      Before adding a control here, check what it displaces.
+      LAYOUT RULES - all observed on real hardware (a Crestron Home phone
+      client). The schema URL above is dead and Crestron Home, not the SDK,
+      interprets this file, so these are empirical and easy to break:
 
-      Two rendering behaviours this layout depends on, both observed on real
-      hardware (the schema URL above is dead, so Crestron Home is the only
-      authority):
-        * A crowded buttongroup drops its button LABELS and shows icons only.
-          Seen at 5 buttons; labels survive at 2. So every button in the
-          6-wide transport row must carry an icon that stands on its own, and
-          rows whose labels matter (volume, presets) stay at 2-3 buttons.
-        * A buttongroup / segmentedslider / buttongroup "flanked" controlgroup
-          does NOT lay out on one line - it stacks, orphaning the trailing
-          button in its own card. Volume is therefore a plain 3-button row
-          above the level bar rather than wrapped around it.
+        1. A buttongroup holds at most FIVE buttons. A six-button group does
+           not render at all - the whole row silently vanishes; it does not
+           wrap, scroll, or truncate. This is why power/transport/modes are
+           split across two rows rather than combined into one.
+        2. An icon and a label COMPETE for the same button width, and what
+           happens when both are set depends on how many buttons share the row:
+             - at THREE or FOUR across the label is shown and TRUNCATED -
+               icon="#icPlus" label="Vol +" rendered as "+  V...";
+             - at FIVE across the label is dropped entirely and only the icon
+               shows, which is why the playback row below can keep its labels
+               harmlessly.
+           So at three or four across, set an icon OR a label, never both; at
+           five across the icon has to carry the button by itself.
+        3. At two buttons across, an icon and a label both fit comfortably.
+        4. A buttongroup / segmentedslider / buttongroup "flanked" controlgroup
+           does not lay out on one line - it stacks, orphaning the trailing
+           button in a card of its own.
+
+      Every control is a fixed-height card and there is no padding or sizing
+      control, so vertical space is bought only by using fewer controls.
+      Before adding anything here, check what it displaces.
     -->
     <layout id="NowPlaying" isdefaultlayout="#true">
       <controls>
@@ -37,49 +45,49 @@
         <!-- Track card. Carries the timing on its fourth line rather than in a
              card of its own. {TimeText} is already duration-aware: it reads
              "00:29 / 02:54" when the duration is known and "00:29" alone for a
-             radio stream, so no separate no-duration control is needed.
-
-             The read-only progress bar that used to sit below this is gone: it
-             cost a full-height card to draw one thin line, it could not seek
-             (Crestron Home has no draggable slider), and the time line says the
-             same thing in a fraction of the space. The Progress / HasDuration /
-             NoDuration properties are still published for anyone building on
-             the driver's property surface - they are simply not drawn here. -->
+             radio stream, so no separate no-duration control is needed. -->
         <textdisplay id="TrackInfo" title="{TrackLine}" line1label="{ByArtist}" line2label="{FromAlbum}" line3label="{TimeText}"/>
 
-        <!-- Power + transport + modes on one row. Power was a full-width card
-             of its own; folded in here it costs nothing extra. Grouped
-             left-to-right as power | transport | modes. Expect icon-only
-             rendering at this width - every icon here is state-reflecting or
-             self-evident, and the labels are kept for accessibility and for
-             narrower renderings. -->
+        <!-- Playback row: exactly five buttons, all icon-driven. Five is the
+             one width proven to render (rule 1), so treat it as a hard ceiling.
+             Labels are retained for accessibility and narrower renderings; at
+             five across only the icons show, and every icon here is either
+             state-reflecting or self-evident. -->
         <buttongroup>
-          <button id="PowerBtn" label="Power" action="command:PowerToggle" icon="{PowerIcon}"/>
+          <button id="RepeatBtn" label="Repeat" action="command:ToggleRepeat" icon="{RepeatIcon}"/>
           <button id="PrevBtn" label="Previous" action="command:Previous" icon="#icPrevious"/>
           <button id="PlayBtn" label="Play/Pause" action="command:TogglePlay" icon="{PlaybackIcon}"/>
           <button id="NextBtn" label="Next" action="command:Next" icon="#icNext"/>
-          <button id="RepeatBtn" label="Repeat" action="command:ToggleRepeat" icon="{RepeatIcon}"/>
           <button id="ShuffleBtn" label="Shuffle" action="command:ToggleShuffle" icon="{ShuffleIcon}"/>
         </buttongroup>
 
-        <!-- Volume: three buttons on one row, then the read-only level bar.
-             Mute is deliberately in a 3-wide row and not the 6-wide one above:
-             it has no icon (there is no dependable mute glyph in the Crestron
-             set), so it needs its label to survive - the label is the control's
-             only affordance, and it flips Mute/Unmute to show state. The bar is
-             a gauge only and hides for players with no mixer. -->
+        <!-- Power + volume row: four across, so rule 2 applies and no button
+             here may carry both an icon and a label.
+               * Power is icon-only. The glyph is state-reflecting
+                 (icPowerRegular / icPowerDisabled) and universally read, so it
+                 stands on its own without a caption.
+               * Vol -, Mute and Vol + are label-only. Dropping the +/- icons is
+                 precisely what stops "Vol +" truncating to "V..." - those icons
+                 were decorative while the text is the affordance. Mute has no
+                 dependable glyph in the Crestron set in any case, and its label
+                 doubles as the state readout (Mute / Unmute). -->
         <buttongroup>
-          <button id="VolDownBtn" label="Vol -" action="command:VolumeDown" icon="#icMinus"/>
+          <button id="PowerBtn" action="command:PowerToggle" icon="{PowerIcon}"/>
+          <button id="VolDownBtn" label="Vol -" action="command:VolumeDown"/>
           <button id="MuteBtn" label="{MuteLabel}" action="command:ToggleMute"/>
-          <button id="VolUpBtn" label="Vol +" action="command:VolumeUp" icon="#icPlus"/>
+          <button id="VolUpBtn" label="Vol +" action="command:VolumeUp"/>
         </buttongroup>
-        <segmentedslider id="Volume" label="" value="{Volume}" enabled="#false" visible="{SupportsVolume}"/>
+
+        <!-- The read-only volume level bar has been removed: a full-height card
+             to draw one thin, unadjustable line. Room volume lives on the
+             Receiver (or the room's own volume control), and Vol -/+ above step
+             it by the Receiver's configured amount. The SupportsVolume property
+             is still published, just no longer drawn. -->
 
         <!-- Presets: up to four installer-configured shortcuts (Name|Icon|Command
-             user attributes on this driver). Two per row, NOT four: at four
-             across the labels would be dropped and every button would fall back
-             to its icon, and preset icons are typically all the same broadcast
-             glyph - the name is the only thing that distinguishes them.
+             user attributes on this driver). Two per row - the width at which an
+             icon and a label both fit (rule 3), so a preset name stays readable
+             beside its icon. Keep names short; a long one truncates.
 
              Each button disappears when its slot is empty or unparseable, and
              the whole section hides when no slot is configured, so a room that
@@ -95,16 +103,6 @@
           <button id="Preset3Btn" label="{PresetLabel3}" action="command:Preset3" icon="{PresetIcon3}" visible="{PresetVisible3}"/>
           <button id="Preset4Btn" label="{PresetLabel4}" action="command:Preset4" icon="{PresetIcon4}" visible="{PresetVisible4}"/>
         </buttongroup>
-
-        <!-- FALLBACK (presets): `visible` is proven on this page for
-             segmentedslider but not for button/subheader - the schema URL in
-             this file's header is dead (404) and Crestron Home, not the SDK,
-             validates this document, so it can only be confirmed on hardware.
-             If the Helper page fails to load or the preset buttons misbehave,
-             delete the subheader and the four `visible` attributes above.
-             Unconfigured presets then render as blank buttons that do nothing
-             (TriggerPreset no-ops on an empty slot) - cosmetically worse, but
-             functional. -->
 
       </controls>
     </layout>

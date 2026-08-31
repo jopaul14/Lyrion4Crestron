@@ -103,8 +103,9 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 - Transport: Play / Pause / Stop / Next / Previous
 - Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
+- Volume Up / Down and Mute, stepping by the Receiver's configured amount. There is no volume level bar — it cost a full-height card to draw one thin, unadjustable line.
 - Up to 4 configurable presets — see [Presets](#presets) below
-- Custom now-playing layout via UiDefinition.xml.
+- Custom now-playing layout via UiDefinition.xml. Crestron Home interprets that file on the processor and nothing validates it at build time, so the rendering constraints it depends on (a five-button ceiling per row, and how icons and labels compete for width) are documented at the top of it.
 - Room-page tile reports the player's own on/off state (power badge + 'Off'/now-playing status text). Note this is the *player's* state, not the room's media on/off indication — that comes from the Source tile.
 
 ### Lyrion Receiver (Driver 4) — routable audio endpoint
