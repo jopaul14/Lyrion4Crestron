@@ -4,7 +4,6 @@
 // ---------------------------------------------------------------------------
 
 using System;
-using System.Collections.Generic;
 
 namespace LyrionCommunity.Crestron.Lyrion.Service
 {
@@ -120,14 +119,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// </summary>
         event Action<string, int> VolumeStepChanged;
 
-        /// <summary>
-        /// Raised when the list of available presets for a player changes.
-        /// Presets are hardware preset buttons (e.g. radio station presets on
-        /// a Squeezebox Radio). The list may be empty if the player does not
-        /// support presets or if they have not been discovered yet.
-        /// </summary>
-        event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
-
         // ===== Commands from Driver 2 (Source) and Driver 3 (Helper) =====
 
         void Play(string mac);
@@ -149,15 +140,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         void PowerToggle(string mac);
 
         /// <summary>
-        /// Activates a hardware preset button on the player.
+        /// Sends an installer-configured LMS CLI command fragment to a player,
+        /// prefixed with its MAC. This is how the Helper's configurable presets
+        /// start a playlist, favourite, or anything else the CLI can express —
+        /// e.g. <c>favorites playlist play item_id:2</c>.
         /// </summary>
         /// <param name="mac">Player MAC address (any valid format).</param>
-        /// <param name="presetId">
-        /// Opaque preset identifier matching <see cref="LyrionPreset.Id"/>.
-        /// Typically a 1-based numeric string (e.g. "1", "2"). Silently
-        /// dropped if <c>null</c> or empty.
+        /// <param name="command">
+        /// CLI fragment WITHOUT the leading MAC and WITHOUT a trailing newline.
+        /// Control characters are stripped before sending (the CLI is
+        /// newline-delimited, so an embedded newline would otherwise let one
+        /// configured value issue a second command). Dropped if it is empty
+        /// once sanitized, if the MAC is not bound, or if the server is not
+        /// connected.
         /// </param>
-        void ActivatePreset(string mac, string presetId);
+        void SendPlayerCommand(string mac, string command);
 
         // ===== Commands from Driver 4 (Receiver) =====
 

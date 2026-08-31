@@ -5,6 +5,7 @@
 
 using System;
 using System.Diagnostics;
+using Crestron.RAD.Common.Attributes.Programming;
 using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.Common.Interfaces.ExtensionDevice;
@@ -29,6 +30,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string CmdVolumeUp = "VolumeUp";
         private const string CmdVolumeDown = "VolumeDown";
         private const string CmdToggleMute = "ToggleMute";
+        // Preset buttons are "Preset1".."Preset4" (see UiDefinition.xml).
+        private const string CmdPresetPrefix = "Preset";
 
         private const string PropTitle = "Title";
         private const string PropArtist = "Artist";
@@ -56,6 +59,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropVolume = "Volume";
         private const string PropMuteLabel = "MuteLabel";
         private const string PropSupportsVolume = "SupportsVolume";
+        // Preset button state: "PresetLabel1"/"PresetIcon1"/"PresetVisible1" …
+        // Deliberately not bare "Preset1": that is the command name, and
+        // keeping the two apart makes the UiDefinition unambiguous.
+        private const string PropPresetLabelPrefix = "PresetLabel";
+        private const string PropPresetIconPrefix = "PresetIcon";
+        private const string PropPresetVisiblePrefix = "PresetVisible";
+        private const string PropAnyPresets = "AnyPresets";
 
         private const string IconPlay = "icPlay";
         private const string IconPause = "icPause";
@@ -108,6 +118,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private bool _muted;
         private int _volumeStep = 2;
 
+        // Preset slots. _presets[i] is null when slot i is unconfigured, in
+        // which case its button is hidden. Written from SetUserAttribute and
+        // read from DoCommand / the ProgrammableOperations, so access is under
+        // _gate.
+        private readonly LyrionPresetConfig[] _presets =
+            new LyrionPresetConfig[HelperProtocol.PresetCount];
+        private readonly PropertyValue<string>[] _presetLabelProps =
+            new PropertyValue<string>[HelperProtocol.PresetCount];
+        private readonly PropertyValue<string>[] _presetIconProps =
+            new PropertyValue<string>[HelperProtocol.PresetCount];
+        private readonly PropertyValue<bool>[] _presetVisibleProps =
+            new PropertyValue<bool>[HelperProtocol.PresetCount];
+        private PropertyValue<bool> _anyPresetsProp;
+
         public HelperDriver()
         {
             _log = BuildLogger();
@@ -122,6 +146,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
             _protocol = new HelperProtocol(ConnectionTransport, Id);
             _protocol.MacAddressReceived += OnMacAddressReceived;
+            _protocol.PresetReceived += OnPresetReceived;
             DeviceProtocol = _protocol;
             DeviceProtocol.Initialize(DriverData);
 
@@ -162,6 +187,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _volumeProp = CreateProperty<int>(new PropertyDefinition(PropVolume, null, DevicePropertyType.Int32, 0, 100, 1));
             _muteLabelProp = CreateProperty<string>(new PropertyDefinition(PropMuteLabel, null, DevicePropertyType.String));
             _supportsVolumeProp = CreateProperty<bool>(new PropertyDefinition(PropSupportsVolume, null, DevicePropertyType.Boolean));
+
+            // Preset label/icon/visible triples, one per slot. All four exist
+            // unconditionally; unconfigured slots simply stay invisible, which
+            // keeps the UiDefinition static (no runtime UI regeneration).
+            _anyPresetsProp = CreateProperty<bool>(new PropertyDefinition(PropAnyPresets, null, DevicePropertyType.Boolean));
+            for (var i = 0; i < HelperProtocol.PresetCount; i++)
+            {
+                var n = (i + 1).ToString();
+                _presetLabelProps[i] = CreateProperty<string>(
+                    new PropertyDefinition(PropPresetLabelPrefix + n, null, DevicePropertyType.String));
+                _presetIconProps[i] = CreateProperty<string>(
+                    new PropertyDefinition(PropPresetIconPrefix + n, null, DevicePropertyType.String));
+                _presetVisibleProps[i] = CreateProperty<bool>(
+                    new PropertyDefinition(PropPresetVisiblePrefix + n, null, DevicePropertyType.Boolean));
+
+                _presetLabelProps[i].Value = string.Empty;
+                _presetIconProps[i].Value = LyrionPresetConfig.DefaultIcon;
+                _presetVisibleProps[i].Value = false;
+            }
+            _anyPresetsProp.Value = false;
         }
 
         // ===== AExtensionDevice overrides =====
@@ -190,8 +235,44 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 case CmdVolumeUp: InvokeOnGateway((svc, mac) => svc.VolumeUp(mac, _volumeStep)); break;
                 case CmdVolumeDown: InvokeOnGateway((svc, mac) => svc.VolumeDown(mac, _volumeStep)); break;
                 case CmdToggleMute: InvokeOnGateway((svc, mac) => svc.SetMute(mac, !_muted)); break;
+                default:
+                    var slot = PresetSlotFromCommand(command);
+                    if (slot >= 0) TriggerPreset(slot);
+                    break;
             }
             return new OperationResult(OperationResultCode.Success);
+        }
+
+        /// <summary>
+        /// Maps the UI command names "Preset1".."Preset4" to a zero-based slot,
+        /// or -1 for anything else.
+        /// </summary>
+        private static int PresetSlotFromCommand(string command)
+        {
+            if (command == null) return -1;
+            if (command.Length != CmdPresetPrefix.Length + 1) return -1;
+            if (!command.StartsWith(CmdPresetPrefix, StringComparison.Ordinal)) return -1;
+
+            var digit = command[command.Length - 1];
+            if (digit < '1' || digit > '0' + HelperProtocol.PresetCount) return -1;
+            return digit - '1';
+        }
+
+        /// <summary>
+        /// Sends the configured command for a preset slot. A no-op for an
+        /// out-of-range or unconfigured slot, so a stale sequence referring to
+        /// a preset the installer has since cleared fails quietly rather than
+        /// throwing inside Crestron Home's sequence engine.
+        /// </summary>
+        private void TriggerPreset(int slot)
+        {
+            if (slot < 0 || slot >= HelperProtocol.PresetCount) return;
+
+            LyrionPresetConfig preset;
+            lock (_gate) { preset = _presets[slot]; }
+            if (preset == null) return;
+
+            InvokeOnGateway((svc, mac) => svc.SendPlayerCommand(mac, preset.Command));
         }
 
         protected override IOperationResult SetDriverPropertyValue<T>(string propertyKey, T value)
@@ -238,6 +319,54 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             lock (_gate) { _configuredMac = canon; }
             TryBindToGateway();
         }
+
+        private void OnPresetReceived(int slot, string configured)
+        {
+            if (slot < 0 || slot >= HelperProtocol.PresetCount) return;
+
+            var parsed = LyrionPresetConfig.Parse(configured);
+            lock (_gate) { _presets[slot] = parsed; }
+
+            // Drive the button's label/icon/visibility straight from the parsed
+            // value. A slot that fails to parse renders exactly like an empty
+            // one — hidden — so a typo can never leave a dead button on the page.
+            _presetLabelProps[slot].Value = parsed?.Name ?? string.Empty;
+            _presetIconProps[slot].Value = parsed?.Icon ?? LyrionPresetConfig.DefaultIcon;
+            _presetVisibleProps[slot].Value = parsed != null;
+
+            var any = false;
+            lock (_gate)
+            {
+                for (var i = 0; i < _presets.Length; i++)
+                {
+                    if (_presets[i] != null) { any = true; break; }
+                }
+            }
+            _anyPresetsProp.Value = any;
+
+            Commit();
+        }
+
+        // ===== Programmable operations (Crestron Home sequences) =====
+        // These surface in Crestron Home's event/scene/button-press editor, so
+        // an installer can build "power on -> set volume -> start preset 2".
+        // Four discrete operations rather than one with a slot parameter: the
+        // sequence editor shows them by name, and a bare list reads better than
+        // a parameter dialog. The names are static because a driver's
+        // programming surface is fixed at compile time — the installer's own
+        // preset names appear on the UI buttons, not here.
+
+        [ProgrammableOperation("Play Preset 1")]
+        public void PlayPreset1() => TriggerPreset(0);
+
+        [ProgrammableOperation("Play Preset 2")]
+        public void PlayPreset2() => TriggerPreset(1);
+
+        [ProgrammableOperation("Play Preset 3")]
+        public void PlayPreset3() => TriggerPreset(2);
+
+        [ProgrammableOperation("Play Preset 4")]
+        public void PlayPreset4() => TriggerPreset(3);
 
         // ===== Gateway binding =====
 
@@ -469,8 +598,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _byArtistProp.Value = string.IsNullOrEmpty(meta.Artist) ? string.Empty : "by " + meta.Artist;
             _fromAlbumProp.Value = string.IsNullOrEmpty(meta.Album) ? string.Empty : "from " + meta.Album;
 
-            // Timing + read-only progress. When the duration is unknown (e.g.
-            // a radio stream) hide the bar and total and show elapsed alone.
+            // Timing. TimeText is what the page actually shows (on the track
+            // card's fourth line): "elapsed / total" when the duration is
+            // known, elapsed alone for a radio stream. Progress / HasDuration /
+            // NoDuration are still published for the driver's property surface
+            // but are no longer drawn — the progress bar cost a full card to
+            // render one thin, unseekable line. See UiDefinition.xml.
             var elapsed = FormatTime(meta.PositionSeconds);
             _elapsedProp.Value = elapsed;
             _durationProp.Value = FormatTime(meta.DurationSeconds);
@@ -624,6 +757,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (_protocol != null)
             {
                 try { _protocol.MacAddressReceived -= OnMacAddressReceived; } catch { }
+                try { _protocol.PresetReceived -= OnPresetReceived; } catch { }
             }
 
             ILyrionGatewayService svc;

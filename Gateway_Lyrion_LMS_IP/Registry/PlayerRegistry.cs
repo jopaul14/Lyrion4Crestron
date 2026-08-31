@@ -39,7 +39,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public event Action<string, int> VolumeChanged;
         public event Action<string, bool> MuteChanged;
         public event Action<string, int> VolumeStepChanged;
-        public event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
 
         // Whether the server is currently CONNECTED. Availability calculation
         // depends on this gate: if the server is offline, no player is available.
@@ -122,7 +121,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     rec.ShuffleEnabled,
                     rec.RepeatEnabled,
                     SnapshotMetadata(rec),
-                    rec.Presets,
                     rec.CanPowerOff,
                     rec.SupportsVolume,
                     rec.VolumeStep);
@@ -527,21 +525,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             if (publish) try { MetadataUpdated?.Invoke(canon, snapshot); } catch { }
         }
 
-        public void NotePresets(string mac, IReadOnlyList<LyrionPreset> presets)
-        {
-            var canon = MacAddress.Normalize(mac);
-            if (canon == null) return;
-            presets = presets ?? Array.Empty<LyrionPreset>();
-
-            lock (_gate)
-            {
-                if (!_records.TryGetValue(canon, out var rec)) return;
-                rec.Presets = presets;
-            }
-
-            try { PresetsUpdated?.Invoke(canon, presets); } catch { }
-        }
-
         /// <summary>
         /// Sweep metadata-freeze records. If a record has been frozen for
         /// 30s+, clear it and republish empty metadata. Called once per
@@ -665,7 +648,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 LyrionPlaybackState pbs;
                 int vol, volStep;
                 LyrionMetadata metaSnap;
-                IReadOnlyList<LyrionPreset> presets;
                 lock (_gate)
                 {
                     if (!_records.TryGetValue(canon, out var rec)) continue;
@@ -677,7 +659,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                     muted = rec.Muted;
                     shuffle = rec.ShuffleEnabled;
                     repeat = rec.RepeatEnabled;
-                    presets = rec.Presets;
                     metaSnap = SnapshotMetadata(rec);
                 }
 
@@ -690,7 +671,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                 try { ShuffleChanged?.Invoke(canon, shuffle); } catch { }
                 try { RepeatChanged?.Invoke(canon, repeat); } catch { }
                 try { MetadataUpdated?.Invoke(canon, metaSnap); } catch { }
-                try { PresetsUpdated?.Invoke(canon, presets); } catch { }
             }
         }
 

@@ -9,65 +9,102 @@
 
   <layouts>
 
+    <!--
+      LAYOUT BUDGET. Crestron Home renders every control as a card and gives us
+      no control over padding, so the only way to save vertical space is to use
+      fewer controls. This page is deliberately built from five cards so that a
+      room with four presets still fits one phone screen without scrolling.
+      Before adding a control here, check what it displaces.
+
+      Two rendering behaviours this layout depends on, both observed on real
+      hardware (the schema URL above is dead, so Crestron Home is the only
+      authority):
+        * A crowded buttongroup drops its button LABELS and shows icons only.
+          Seen at 5 buttons; labels survive at 2. So every button in the
+          6-wide transport row must carry an icon that stands on its own, and
+          rows whose labels matter (volume, presets) stay at 2-3 buttons.
+        * A buttongroup / segmentedslider / buttongroup "flanked" controlgroup
+          does NOT lay out on one line - it stacks, orphaning the trailing
+          button in its own card. Volume is therefore a plain 3-button row
+          above the level bar rather than wrapped around it.
+    -->
     <layout id="NowPlaying" isdefaultlayout="#true">
       <controls>
 
         <!-- Source name header (top of screen). -->
         <subheader id="SourceHeader" label="{SourceName}"/>
 
-        <!-- Track line (bold-ish title) + "by artist" / "from album". -->
-        <textdisplay id="TrackInfo" title="{TrackLine}" line1label="{ByArtist}" line2label="{FromAlbum}"/>
+        <!-- Track card. Carries the timing on its fourth line rather than in a
+             card of its own. {TimeText} is already duration-aware: it reads
+             "00:29 / 02:54" when the duration is known and "00:29" alone for a
+             radio stream, so no separate no-duration control is needed.
 
-        <!-- Read-only progress bar, then the elapsed/total time below it.
-             Both hide when duration is unknown (e.g. radio streams). -->
-        <segmentedslider id="Progress" label="" value="{Progress}" enabled="#false" visible="{HasDuration}"/>
-        <textdisplay id="TimeInfo" title="{TimeText}" visible="{HasDuration}"/>
+             The read-only progress bar that used to sit below this is gone: it
+             cost a full-height card to draw one thin line, it could not seek
+             (Crestron Home has no draggable slider), and the time line says the
+             same thing in a fraction of the space. The Progress / HasDuration /
+             NoDuration properties are still published for anyone building on
+             the driver's property surface - they are simply not drawn here. -->
+        <textdisplay id="TrackInfo" title="{TrackLine}" line1label="{ByArtist}" line2label="{FromAlbum}" line3label="{TimeText}"/>
 
-        <!-- Duration unknown: show elapsed time alone. -->
-        <textdisplay id="ElapsedOnly" title="{Elapsed}" visible="{NoDuration}"/>
-
-        <!-- Dedicated power control, kept apart from the transport row so it
-             can't be mistaken for Play/Pause. Toggles the player's power. -->
+        <!-- Power + transport + modes on one row. Power was a full-width card
+             of its own; folded in here it costs nothing extra. Grouped
+             left-to-right as power | transport | modes. Expect icon-only
+             rendering at this width - every icon here is state-reflecting or
+             self-evident, and the labels are kept for accessibility and for
+             narrower renderings. -->
         <buttongroup>
           <button id="PowerBtn" label="Power" action="command:PowerToggle" icon="{PowerIcon}"/>
-        </buttongroup>
-
-        <!-- Transport: Repeat | Previous | Play/Pause | Next | Shuffle. -->
-        <buttongroup>
-          <button id="RepeatBtn" label="Repeat" action="command:ToggleRepeat" icon="{RepeatIcon}"/>
           <button id="PrevBtn" label="Previous" action="command:Previous" icon="#icPrevious"/>
           <button id="PlayBtn" label="Play/Pause" action="command:TogglePlay" icon="{PlaybackIcon}"/>
           <button id="NextBtn" label="Next" action="command:Next" icon="#icNext"/>
+          <button id="RepeatBtn" label="Repeat" action="command:ToggleRepeat" icon="{RepeatIcon}"/>
           <button id="ShuffleBtn" label="Shuffle" action="command:ToggleShuffle" icon="{ShuffleIcon}"/>
         </buttongroup>
 
-        <!-- Volume: [Mute][Vol-] | read-only level bar | [Vol+]. The bar is a
-             gauge only (the extension UI has no adjustable slider, same as the
-             progress bar); the buttons change volume by the Receiver's
-             configured step. The bar hides for players with no mixer. -->
-        <controlgroup>
-          <buttongroup>
-            <button id="MuteBtn" label="{MuteLabel}" action="command:ToggleMute"/>
-            <button id="VolDownBtn" label="Vol -" action="command:VolumeDown" icon="#icMinus"/>
-          </buttongroup>
-          <segmentedslider id="Volume" label="" value="{Volume}" enabled="#false" visible="{SupportsVolume}"/>
-          <buttongroup>
-            <button id="VolUpBtn" label="Vol +" action="command:VolumeUp" icon="#icPlus"/>
-          </buttongroup>
-        </controlgroup>
+        <!-- Volume: three buttons on one row, then the read-only level bar.
+             Mute is deliberately in a 3-wide row and not the 6-wide one above:
+             it has no icon (there is no dependable mute glyph in the Crestron
+             set), so it needs its label to survive - the label is the control's
+             only affordance, and it flips Mute/Unmute to show state. The bar is
+             a gauge only and hides for players with no mixer. -->
+        <buttongroup>
+          <button id="VolDownBtn" label="Vol -" action="command:VolumeDown" icon="#icMinus"/>
+          <button id="MuteBtn" label="{MuteLabel}" action="command:ToggleMute"/>
+          <button id="VolUpBtn" label="Vol +" action="command:VolumeUp" icon="#icPlus"/>
+        </buttongroup>
+        <segmentedslider id="Volume" label="" value="{Volume}" enabled="#false" visible="{SupportsVolume}"/>
 
-        <!-- FALLBACK LAYOUT (swap in for the controlgroup above if Crestron Home
-             rejects the flanked structure and the Helper page fails to load):
-             level bar first, then all three buttons grouped after it.
-        <controlgroup>
-          <segmentedslider id="Volume" label="" value="{Volume}" enabled="#false" visible="{SupportsVolume}"/>
-          <buttongroup>
-            <button id="MuteBtn" label="{MuteLabel}" action="command:ToggleMute"/>
-            <button id="VolDownBtn" label="Vol -" action="command:VolumeDown" icon="#icMinus"/>
-            <button id="VolUpBtn" label="Vol +" action="command:VolumeUp" icon="#icPlus"/>
-          </buttongroup>
-        </controlgroup>
-        -->
+        <!-- Presets: up to four installer-configured shortcuts (Name|Icon|Command
+             user attributes on this driver). Two per row, NOT four: at four
+             across the labels would be dropped and every button would fall back
+             to its icon, and preset icons are typically all the same broadcast
+             glyph - the name is the only thing that distinguishes them.
+
+             Each button disappears when its slot is empty or unparseable, and
+             the whole section hides when no slot is configured, so a room that
+             uses none of them looks exactly as it did before. The same four
+             actions are also exposed to Crestron Home sequences via
+             [ProgrammableOperation] on HelperDriver. -->
+        <subheader id="PresetHeader" label="Presets" visible="{AnyPresets}"/>
+        <buttongroup>
+          <button id="Preset1Btn" label="{PresetLabel1}" action="command:Preset1" icon="{PresetIcon1}" visible="{PresetVisible1}"/>
+          <button id="Preset2Btn" label="{PresetLabel2}" action="command:Preset2" icon="{PresetIcon2}" visible="{PresetVisible2}"/>
+        </buttongroup>
+        <buttongroup>
+          <button id="Preset3Btn" label="{PresetLabel3}" action="command:Preset3" icon="{PresetIcon3}" visible="{PresetVisible3}"/>
+          <button id="Preset4Btn" label="{PresetLabel4}" action="command:Preset4" icon="{PresetIcon4}" visible="{PresetVisible4}"/>
+        </buttongroup>
+
+        <!-- FALLBACK (presets): `visible` is proven on this page for
+             segmentedslider but not for button/subheader - the schema URL in
+             this file's header is dead (404) and Crestron Home, not the SDK,
+             validates this document, so it can only be confirmed on hardware.
+             If the Helper page fails to load or the preset buttons misbehave,
+             delete the subheader and the four `visible` attributes above.
+             Unconfigured presets then render as blank buttons that do nothing
+             (TriggerPreset no-ops on an empty slot) - cosmetically worse, but
+             functional. -->
 
       </controls>
     </layout>

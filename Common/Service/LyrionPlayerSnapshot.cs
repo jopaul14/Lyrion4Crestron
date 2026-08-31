@@ -3,7 +3,6 @@
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
-using System.Collections.Generic;
 
 namespace LyrionCommunity.Crestron.Lyrion.Service
 {
@@ -32,7 +31,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             bool shuffleEnabled,
             bool repeatEnabled,
             LyrionMetadata metadata,
-            IReadOnlyList<LyrionPreset> presets,
             bool supportsPower,
             bool supportsVolume,
             int volumeStep)
@@ -47,7 +45,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             ShuffleEnabled = shuffleEnabled;
             RepeatEnabled = repeatEnabled;
             Metadata = metadata ?? LyrionMetadata.Empty;
-            Presets = presets ?? System.Array.Empty<LyrionPreset>();
             SupportsPower = supportsPower;
             SupportsVolume = supportsVolume;
             VolumeStep = volumeStep < 1 ? 1 : (volumeStep > 50 ? 50 : volumeStep);
@@ -66,7 +63,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         public bool ShuffleEnabled { get; }
         public bool RepeatEnabled { get; }
         public LyrionMetadata Metadata { get; }
-        public IReadOnlyList<LyrionPreset> Presets { get; }
 
         /// <summary>
         /// Whether this player supports explicit power on/off. When false,

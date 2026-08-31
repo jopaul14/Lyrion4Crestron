@@ -83,7 +83,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 |---|---|
 | Gateway | LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), optional username/password |
 | Source  | Player MAC address |
-| Helper  | Player MAC address (matches the Source for the same room) |
+| Helper  | Player MAC address (matches the Source for the same room), plus up to 4 optional presets |
 | Receiver | Player MAC address (matches the Source for the same room), volume step size (default 2) |
 
 ## Features
@@ -99,10 +99,11 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 
 - Source-name header (LMS player name) at the top of the now-playing screen
 - Now-playing metadata: title, artist, album, track number, elapsed, duration
-- Read-only progress bar with hh:mm:ss elapsed/total (hidden when duration is unknown, e.g. radio streams). Crestron Home does not support a draggable seek bar, so the progress bar is display-only.
+- Elapsed/total time on the track card (`00:29 / 02:54`, or elapsed alone for radio streams with no duration). There is no progress bar: Crestron Home has no draggable seek bar, so it could only ever be a read-only line, and it cost a full-height card to draw one.
 - Transport: Play / Pause / Stop / Next / Previous
 - Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
+- Up to 4 configurable presets — see [Presets](#presets) below
 - Custom now-playing layout via UiDefinition.xml.
 - Room-page tile shows the player's on/off state (power badge + 'Off'/now-playing status text), so the room still indicates whether the player is on even when the Source tile is hidden from Available Sources.
 
@@ -113,14 +114,99 @@ Inter-driver communication uses a process-wide service registry (`LyrionGatewayS
 - PowerOn / PowerOff / TogglePower
 - Declares one digital audio input (Coaxial Digital) and one analog audio input (RCA Analog) plus speaker outputs.
 
+### Presets
+
+> **A note on wording.** Crestron and Lyrion use different words for the same
+> idea. Crestron's vocabulary for a named, recallable shortcut on a device is a
+> **preset** — the same word it uses for tuner presets, pool presets, and camera
+> presets. In Lyrion Media Server the things you are recalling are **playlists**
+> and **favourites**. This driver follows Crestron's word, because that is what
+> installers will look for in the Crestron Home setup app: a *preset* here
+> starts a Lyrion *playlist* or *favourite*.
+
+Each Helper can carry up to four presets. Configure each one in the Crestron
+Home setup app as a single field:
+
+```
+Name|Icon|Command
+```
+
+For example:
+
+```
+KCRW|icBroadcastRegular|favorites playlist play item_id:2
+```
+
+- **Name** — the button label.
+- **Icon** — a Crestron icon name. Leave it empty for the default
+  (`icBroadcastRegular`); `Name|Command` on its own works too.
+- **Command** — the LMS CLI text that follows the player MAC. The driver adds
+  the MAC and the line feed, so don't include either.
+
+Configured presets appear as buttons under a **Presets** heading on the
+now-playing page. Empty or malformed slots are hidden, so a room that uses no
+presets looks exactly as it did before.
+
+The same four presets also appear in Crestron Home's event/scene editor as
+**Play Preset 1** … **Play Preset 4**, so one button press can power a player
+on, set its volume, and start a preset.
+
+Presets are declared, not discovered: the drivers never scan the server for
+playlists. An LMS library can hold hundreds, and naming the handful that belong
+in a room is both simpler and faster than browsing them all.
+
+#### Finding the item_id for a favourite
+
+`favorites playlist play item_id:2` needs a number, and nothing in the Lyrion
+web UI or Material Skin shows it. Ask the server directly — connect to the LMS
+CLI port (9090) with any terminal and run:
+
+```
+favorites items 0 50
+```
+
+The reply lists your favourites in order. **`item_id` is the position in that
+list, counting from 0.** For a server whose favourites are KCSN, KQED, KCRW,
+KEXP, `item_id:2` is KCRW — the third entry.
+
+For a favourite that contains multiple streams (`hasitems:1` in the reply), you
+can browse into it with `favorites items 0 50 item_id:2` and address a specific
+stream with a dotted index such as `item_id:2.1`.
+
+Two things to watch out for:
+
+- **Ignore the `id:` field in the reply.** It looks like a stable identifier but
+  its leading hash is regenerated on every query — `id:39ccbad3.2` one moment,
+  `id:d4773a61.2` the next. Use the position, not that value.
+- **Reordering your favourites renumbers them.** A preset points at a position,
+  so inserting or removing a favourite above it silently repoints the button at
+  a different station. Re-check your presets after reorganising favourites.
+
+Saved playlists are listed with `playlists 0 50` instead, which returns entries
+like `id:414211 playlist:The Current`. Those ids are stable, so a preset built
+on one does not drift the way a favourite's position can.
+
+Whatever command you settle on, the quickest way to confirm it is to run it once
+over the CLI with your player's MAC in front of it — exactly what the driver
+will send:
+
+```
+aa:bb:cc:dd:ee:ff favorites playlist play item_id:2
+```
+
+If that starts the right thing, dropping the MAC and putting the rest in a
+preset field will too.
+
 ### What's intentionally NOT exposed
 
 Per [docs/PRD.md](docs/PRD.md) "Out of Scope":
 
 - No sleep timer
-- No browse / favorites / queue APIs
-- No raw LMS command pass-through
-- No volume control on the Source or Helper drivers
+- No browse / favorites / queue APIs — presets cover the common case by letting
+  the installer name specific entries up front
+- No arbitrary LMS command pass-through at runtime — only the fixed command
+  strings an installer configures as presets, with control characters stripped
+- No volume control on the Source driver
 - No player sync/group management
 
 ## Behavioral guarantees
@@ -143,7 +229,7 @@ Lyrion4Crestron/
   Common/Service/                       (shared service contract)
     ILyrionGatewayService.cs
     LyrionGatewayServiceRegistry.cs
-    LyrionMetadata.cs / LyrionPlayerSnapshot.cs / LyrionPlaybackState.cs / LyrionPreset.cs
+    LyrionMetadata.cs / LyrionPlayerSnapshot.cs / LyrionPlaybackState.cs / LyrionPresetConfig.cs
     MacAddress.cs
   Gateway_Lyrion_LMS_IP/                (Driver 1)
     Gateway_Lyrion_LMS_IP.csproj

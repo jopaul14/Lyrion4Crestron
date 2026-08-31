@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers shipped at 1.0.2).
+four-driver refactor is **complete** (all drivers ship together at 1.0.6).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -37,8 +37,15 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   gateway `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows
   the Receiver's configured `VolumeStep`, shared per-MAC through the Gateway
   registry. Shuffle/repeat are booleans exposed only by the Helper. Seek is
-  contract-only (Crestron Home has no draggable seek bar). Presets are dormant
-  plumbing — do not wire them up or remove them without a product decision.
+  contract-only (Crestron Home has no draggable seek bar).
+- **Presets are installer-declared, never discovered.** Four `Name|Icon|Command`
+  user attributes on the Helper; the command is the LMS CLI text that follows the
+  MAC. The driver never scans the server for playlists — browsing the library is
+  an explicit non-goal (see the PRD). Presets reach LMS only through
+  `ILyrionGatewayService.SendPlayerCommand`, which strips control characters so
+  one configured value cannot smuggle in a second CLI command. The four
+  `[ProgrammableOperation]` names on `HelperDriver` are baked into the package at
+  build time (`programming/HelperDriver.json`) and cannot carry installer labels.
 
 ## Build
 

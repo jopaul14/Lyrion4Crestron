@@ -1,6 +1,6 @@
 # Lyrion4Crestron — Product Requirements Document
 
-**Status:** Authoritative. This document supersedes the original refactor specification (formerly in `CLAUDE.md`) and describes the system **as built** at driver version 1.0.2. Where this document and older documents disagree, this document wins.
+**Status:** Authoritative. This document supersedes the original refactor specification (formerly in `CLAUDE.md`) and describes the system **as built** at driver version 1.0.6. Where this document and older documents disagree, this document wins.
 
 **Audience:** Developers and contributors maintaining or extending the driver suite.
 
@@ -18,7 +18,7 @@ A suite of four cooperating Crestron Home drivers that together present each LMS
 
 1. **Lyrion Server (Gateway)** — one instance per home. The only component that talks to LMS. Owns connectivity, player discovery, state derivation, metadata lifecycle, and logging. Exposes an in-process service that the other drivers consume.
 2. **Lyrion Source** — one per room/player, bound by MAC address. A RAD "Bluray Player" driver that exists to be routable: it appears in the Crestron Home Source Routes graph with one digital and one analog audio output and offers only basic transport and power.
-3. **Lyrion Helper** — one per room/player, bound by MAC address. A RAD "Media Player" extension device (not routable) that hosts the rich now-playing UI: title/artist/album, elapsed/duration with progress bar, transport, shuffle/repeat, power, and volume (a read-only level bar plus Volume Up/Down and Mute buttons that step by the Receiver's configured amount).
+3. **Lyrion Helper** — one per room/player, bound by MAC address. A RAD "Media Player" extension device (not routable) that hosts the rich now-playing UI: title/artist/album, elapsed/duration, transport, shuffle/repeat, power, volume (a read-only level bar plus Volume Up/Down and Mute buttons that step by the Receiver's configured amount), and up to four installer-configured presets.
 4. **Lyrion Receiver** — optional, one per room/player, bound by MAC address. A RAD "AV Receiver" driver that acts as the routing endpoint and owns room volume, mute, power, and input selection. A third-party AVR driver may be used in its place.
 
 This Source + Helper split (routable shell + extension-device UI) is the same pattern used by the BluOS, Linn, WiiM, and VSSL integrations, because it is the only way to get both routability and a rich media UI out of Crestron Home today.
@@ -29,7 +29,7 @@ This Source + Helper split (routable shell + extension-device UI) is the same pa
 
 1. As a homeowner, I want my Squeezebox player to appear as a selectable audio source in a Crestron Home room, so that I can route it like any native source.
 2. As a homeowner, I want to see the current track's title, artist, and album in the room view, so that I know what is playing without opening another app.
-3. As a homeowner, I want to see elapsed time and track duration with a progress bar, so that I can tell where I am in a track.
+3. As a homeowner, I want to see elapsed time and track duration, so that I can tell where I am in a track.
 4. As a homeowner, I want the elapsed time to advance smoothly every second while playing, so that the display doesn't jump in large steps.
 5. As a homeowner, I want Play, Pause, Stop, Next, and Previous controls in the room view, so that I can control playback from Crestron Home.
 6. As a homeowner, I want shuffle and repeat toggles, so that I can control playback modes without using the LMS app.
@@ -50,6 +50,9 @@ This Source + Helper split (routable shell + extension-device UI) is the same pa
 15. As an installer, I want to configure the Gateway once with the LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), and optional username/password, so that server settings live in exactly one place.
 16. As an installer, I want to configure Source, Helper, and Receiver instances with nothing but a player MAC address, so that per-room setup is trivial and cannot drift from the server config.
 17. As an installer, I want a configurable volume step size on the Receiver (default 2), so that volume ramping matches the client's speakers.
+17a. As an installer, I want to configure up to four named, icon-bearing presets on the Helper — each a fixed LMS CLI fragment such as `favorites playlist play item_id:2` — so that a room offers exactly the playlists and favourites that belong there, without the driver enumerating the server's entire library.
+17b. As an installer, I want each preset to also appear as an operation in Crestron Home sequences, so that one button press can power a player on, set its volume, and start a preset.
+17c. As a homeowner, I want configured presets to appear as buttons on the Helper's now-playing page, and unconfigured ones to be absent rather than dead, so that the page only shows what actually works.
 18. As an installer, I want to route the Source's digital or analog output to the Receiver's matching input (or to a third-party AVR), so that the integration fits the Source Routes graph like any native equipment.
 19. As an installer, I want a clear warning in the log when a configured MAC address doesn't exist on the LMS server, so that typos are diagnosable without a debugger.
 20. As an installer, I want the drivers to load into the same AppDomain and find each other automatically, so that no wiring beyond MAC binding is required.
@@ -76,7 +79,7 @@ This Source + Helper split (routable shell + extension-device UI) is the same pa
 
 - **Four packages, one AppDomain.** Gateway (Entity Model SDK, DeviceType "Platform"), Source (RAD, "Bluray Player"), Helper (RAD extension, "Media Player", `IsExtensionDevice: true`), Receiver (RAD, "AV Receiver"). All four share DependencyGroup `LyrionLMS` so they load into the same AppDomain, and all depend on a shared `Lyrion_Common` assembly (embedded in each package) that carries the service contract and DTOs.
 - **Gateway is the sole LMS client.** It maintains a persistent CLI socket (the live channel: commands, notifications, subscriptions) and a stateless JSON-RPC HTTP client (retained in the codebase but **reserved/unused** in v1.0.x). Source, Helper, and Receiver never open sockets and never speak LMS protocol.
-- **In-process service rendezvous.** The Gateway registers an `ILyrionGatewayService` implementation in a process-wide static registry; consumer drivers look it up (and are notified when it appears) and bind by MAC address. The contract carries bind/unbind, a snapshot query, ~11 state/metadata events, and transport/power/volume/mute/preset commands. Notable additions beyond the original spec, kept deliberately: a server-connectivity-changed event, a point-in-time snapshot query, and per-player capability flags (supports-power, supports-volume).
+- **In-process service rendezvous.** The Gateway registers an `ILyrionGatewayService` implementation in a process-wide static registry; consumer drivers look it up (and are notified when it appears) and bind by MAC address. The contract carries bind/unbind, a snapshot query, ~11 state/metadata events, and transport/power/volume/mute commands plus a pass-through `SendPlayerCommand` used by the Helper's presets. Notable additions beyond the original spec, kept deliberately: a server-connectivity-changed event, a point-in-time snapshot query, and per-player capability flags (supports-power, supports-volume).
 - **Thin adapters.** Source, Helper, and Receiver contain no business logic: they translate Crestron commands into service calls and service events into Crestron property updates. Each logs exactly one startup line ("Bound to MAC …").
 
 ### State model
@@ -109,12 +112,16 @@ The Gateway is the only meaningful logger. The complete intended log surface is:
 
 ### Platform limitations (documented, not gaps)
 
-- **Seek is not user-invokable.** Crestron Home's media-player extension UI does not support a draggable/tappable seek bar, so the Helper's progress bar is deliberately read-only (elapsed/duration hidden when duration is unknown). `Seek` remains implemented in the service contract and Gateway (LMS `time <sec>`) for completeness, but no user gesture can reach it.
+- **Seek is not user-invokable, and the progress bar is gone.** Crestron Home's media-player extension UI has no draggable or tappable seek bar, so a progress bar could only ever be a read-only gauge — and Crestron Home renders every control as a fixed-height card, so it cost a full card to draw one thin line. As of 1.0.6 the Helper shows elapsed/duration as a text line on the track card instead (`Progress`, `HasDuration`, and `NoDuration` remain published on the property surface but are not drawn). `Seek` remains implemented in the service contract and Gateway (LMS `time <sec>`) for completeness, but no user gesture can reach it.
+- **The now-playing page is built to a card budget.** Crestron Home exposes no padding, sizing, or styling controls, so the only way to save vertical space is to use fewer controls. The page is deliberately five cards — header, track (four lines including timing), a six-wide power+transport row, a three-wide volume row plus level bar, and the preset rows — so that a room with four presets still fits one phone screen without scrolling. Two observed rendering behaviours constrain it: a crowded `buttongroup` drops button *labels* and shows icons only (seen at five buttons; labels survive at two), which is why rows whose labels matter stay narrow and why preset buttons keep their icons as a fallback; and a `buttongroup`/`segmentedslider`/`buttongroup` "flanked" `controlgroup` does not lay out on one line — it stacks and orphans the trailing button in its own card, which is why volume is a plain three-button row above the level bar.
+- **Room on/off is a Crestron Home mapping, not a driver behaviour.** A source driver reporting its own power does not move a Crestron Home room's on/off state; the installer opts in by mapping the Source's Power Is On / Power Is Off to Room On / Room Off. The Source is the correct driver to map (the Receiver mirrors the same signal for the same MAC, so mapping both double-fires, and the Receiver is optional). Whether to map at all is a per-room judgement about how many sources the room has, not about which receiver is installed — see BUILD.md.
 - **Source capabilities are fixed by the RAD Bluray Player type.** The Source exposes only Play/Pause/Stop/Next/Previous and power — no volume, mute, shuffle, repeat, seek, or metadata. Rich UI lives exclusively in the Helper; volume lives exclusively in the Receiver.
+
+- **"Preset" is the Crestron word; "playlist" and "favourite" are the LMS words.** They name the same thing from two directions. Crestron's vocabulary for a named, recallable device shortcut is *preset* — `IPresetController.RecallPreset`, `ITuner.PresetRecall`, `ADevicePreset`, tuner/pool/mixer/camera presets — so that is what the feature is called in the Crestron Home setup app, the Helper's UI, and the sequence editor. What a preset actually *starts* is an LMS playlist, favourite, or stream. Note that the driver does not implement Crestron's `IPresetController`: these are ordinary extension-device commands plus `[ProgrammableOperation]`s, and the "Presets" heading on the Helper page is the driver's own label, chosen to match installer expectations rather than inherited from the framework.
+- **Presets are installer-declared, never discovered.** Each of the Helper's four preset slots is one pipe-delimited user attribute, `Name|Icon|Command` (e.g. `KCRW|icBroadcastRegular|favorites playlist play item_id:2`). The command is the CLI text *after* the MAC; the driver supplies the MAC and the newline. Parsing is deliberately forgiving (two-field `Name|Command` form, a `#`-prefixed icon, surrounding whitespace, and a `|` inside the command all work) and a slot that fails to parse renders as unconfigured rather than as a dead button. Presets reach LMS through `ILyrionGatewayService.SendPlayerCommand`, which strips control characters — the CLI is newline-delimited, so an embedded newline would otherwise let one configured value issue a second, unintended command. Each slot is also exposed to Crestron Home sequences via `[ProgrammableOperation]` on the Helper; those four names are fixed at compile time, because a driver's programming surface is baked into the package at build time (`programming/HelperDriver.json`) and cannot carry the installer's own labels.
 
 ### Dormant plumbing (present, unwired, no commitment)
 
-- **Presets.** The contract defines preset DTOs, an activate-preset command, and a presets-updated event; the Gateway can send the LMS preset button command if invoked. However, the Gateway never discovers presets from LMS (status tags don't request them) and the Helper neither subscribes to preset events nor renders preset controls. The event only ever fires with an empty list. This plumbing is documented as reserved; it is neither a roadmap commitment nor a declared non-goal.
 - **JSON-RPC client.** Retained and structurally complete, reserved for future use; all live traffic is CLI.
 
 ### Configuration surface
@@ -147,7 +154,7 @@ Removed or excluded from user-visible behavior (unchanged from the original desi
 - **High-frequency polling or chatty updates** — the change-gated push subscription and 1s position tick are the only sanctioned periodic activity.
 - **Automated tests / CI** — verification remains manual on hardware.
 
-Presets are intentionally *not* listed here: they are dormant plumbing (see Implementation Decisions), not an excluded feature.
+**Playlist browsing** is a deliberate non-goal, and presets are the answer to it. An LMS library can hold hundreds of playlists and favourites, only a handful of which belong on a room's page; enumerating them would mean a browsing UI, paging, and a discovery/refresh cycle in the Gateway, all to surface a list the homeowner would immediately want filtered. Presets invert that: the installer names the few entries that matter for the room, and the driver never has to scan the server at all.
 
 ## Further Notes
 

@@ -4,7 +4,6 @@
 // ---------------------------------------------------------------------------
 
 using System;
-using System.Collections.Generic;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
 namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
@@ -25,7 +24,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
             Title = string.Empty;
             Artist = string.Empty;
             Album = string.Empty;
-            Presets = Array.Empty<LyrionPreset>();
         }
 
         // Identity & capabilities
@@ -74,8 +72,5 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         public bool IsFrozen { get; set; }
         public DateTime FrozenAtUtc { get; set; }
         public DateTime LastMetadataUpdateUtc { get; set; }
-
-        // Presets (optional)
-        public IReadOnlyList<LyrionPreset> Presets { get; set; }
     }
 }

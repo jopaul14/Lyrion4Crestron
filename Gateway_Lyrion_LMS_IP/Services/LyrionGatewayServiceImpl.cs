@@ -50,7 +50,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             registry.VolumeChanged += (mac, v) => Fan2(VolumeChanged, mac, v);
             registry.VolumeStepChanged += (mac, v) => Fan2(VolumeStepChanged, mac, v);
             registry.MuteChanged += (mac, b) => Fan2(MuteChanged, mac, b);
-            registry.PresetsUpdated += (mac, p) => Fan2(PresetsUpdated, mac, p);
         }
 
         private static void Fan2<T1, T2>(Action<T1, T2> handler, T1 a, T2 b)
@@ -96,7 +95,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public event Action<string, int> VolumeChanged;
         public event Action<string, int> VolumeStepChanged;
         public event Action<string, bool> MuteChanged;
-        public event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
 
         internal void RaiseServerConnectivityChanged(bool connected)
         {
@@ -178,12 +176,40 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             else PowerOn(mac);
         }
 
-        public void ActivatePreset(string mac, string presetId)
+        public void SendPlayerCommand(string mac, string command)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || string.IsNullOrEmpty(presetId)) return;
+            if (canon == null) return;
+
+            var safe = SanitizeCommand(command);
+            if (safe.Length == 0) return;
             if (!_registry.IsBound(canon) || !_isServerConnected()) return;
-            _sendCliLine(LmsCliCommands.ActivatePreset(canon, presetId));
+
+            _sendCliLine(LmsCliCommands.PlayerCommand(canon, safe));
+        }
+
+        /// <summary>
+        /// Strips control characters from an installer-configured command
+        /// fragment and collapses the surrounding whitespace.
+        /// </summary>
+        /// <remarks>
+        /// The LMS CLI is newline-delimited, so a fragment containing CR or LF
+        /// would be read by the server as two commands — one configured preset
+        /// could then issue an arbitrary second command. Dropping every control
+        /// character (rather than splitting on the newline and keeping the
+        /// first half) means a malformed value fails visibly as one odd command
+        /// instead of silently executing something the installer didn't intend.
+        /// </remarks>
+        private static string SanitizeCommand(string command)
+        {
+            if (string.IsNullOrEmpty(command)) return string.Empty;
+
+            var sb = new System.Text.StringBuilder(command.Length);
+            foreach (var c in command)
+            {
+                if (!char.IsControl(c)) sb.Append(c);
+            }
+            return sb.ToString().Trim();
         }
 
         // ===== Commands: Receiver (Driver 4) =====

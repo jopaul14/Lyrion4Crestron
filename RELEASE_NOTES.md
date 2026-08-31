@@ -1,5 +1,76 @@
 # Release Notes
 
+## 1.0.6 — Configurable presets (2026-08-31)
+
+All four drivers ship at 1.0.6. Includes everything in 1.0.5 below, which was
+never released separately.
+
+### Added
+
+- **Up to four presets per room, configured on the Lyrion Helper.** Each is one
+  optional user attribute in the Crestron Home setup app, entered as
+  `Name|Icon|Command`:
+
+  ```
+  KCRW|icBroadcastRegular|favorites playlist play item_id:2
+  ```
+
+  The command is the LMS CLI text that follows the player MAC — the driver adds
+  the MAC and the line feed. The icon field may be left empty (defaults to
+  `icBroadcastRegular`), and the shorter `Name|Command` form works too.
+
+  Configured presets appear as buttons under a "Presets" heading on the Helper's
+  now-playing page, carrying the configured name and icon. Empty or unparseable
+  slots are hidden, so a room that uses no presets looks exactly as it did
+  before.
+
+- **Presets as Crestron Home sequence operations.** The Helper exposes
+  "Play Preset 1" … "Play Preset 4" to the event/scene/button-press editor, so a
+  single button can power a player on, set its volume, and start a preset.
+
+  This is why presets are declared rather than discovered: an LMS library can
+  hold hundreds of playlists and favourites, and enumerating them would mean a
+  browsing UI and a discovery cycle in the Gateway to surface a list the
+  homeowner would immediately want filtered. The installer names the few that
+  matter for the room instead, and the driver never scans the server.
+
+### Changed
+
+- **The now-playing page is more compact,** to make room for presets without
+  pushing anything off a phone screen. Three cards were removed and none added
+  beyond the presets themselves:
+
+  - The elapsed/duration line moved onto the track card's fourth line, so it no
+    longer needs a card of its own.
+  - Power moved into the transport row, which is now Power / Previous /
+    Play-Pause / Next / Repeat / Shuffle on one line.
+  - Volume is now a single `Vol − | Mute | Vol +` row above the level bar. It
+    previously tried to wrap those buttons around the bar, which Crestron Home
+    rendered stacked — orphaning Vol + in a card of its own.
+
+- **The read-only progress bar has been removed.** It cost a full-height card to
+  draw one thin line, it could never seek (Crestron Home has no draggable seek
+  bar), and the elapsed/duration text says the same thing. The `Progress`,
+  `HasDuration`, and `NoDuration` properties are still published for anyone
+  building on the driver's property surface.
+
+### Removed
+
+- **The dormant LMS hardware-preset plumbing** — `LyrionPreset`, the
+  `PresetsUpdated` event, `ActivatePreset`, `NotePresets`, and the `Presets`
+  field on the player snapshot. It was never wired to anything (the event only
+  ever fired with an empty list) and described a different feature: physical
+  preset buttons on a Squeezebox Radio, not playlists. Its replacement is the
+  configurable presets above, backed by a single pass-through
+  `ILyrionGatewayService.SendPlayerCommand`.
+
+### Security
+
+- `SendPlayerCommand` strips control characters from the configured command. The
+  LMS CLI is newline-delimited, so a preset containing a newline would otherwise
+  be read by the server as two commands, letting one configured value issue a
+  second one the installer never intended.
+
 ## 1.0.5 — Power-state bounce-back fix (2026-08-31)
 
 All four drivers ship at 1.0.5.
