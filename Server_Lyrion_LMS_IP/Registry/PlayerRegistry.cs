@@ -154,12 +154,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                     return false;
                 }
 
+                // Effective values: an unavailable player is off and stopped
+                // no matter what LMS last said about it (see EffectivePower).
                 snapshot = new LyrionPlayerSnapshot(
                     rec.MacAddress,
                     rec.Name,
                     rec.IsAvailable,
-                    rec.IsPoweredOn,
-                    rec.PlaybackState,
+                    EffectivePower(rec),
+                    EffectivePlayback(rec),
                     rec.Volume,
                     rec.Muted,
                     rec.ShuffleEnabled,
@@ -232,26 +234,62 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
         // consumer receives identically, and the consumers' UpdateAvailability
         // only sets Connected — no derivation, per the PRD.
 
+        // ===== Effective state =====
+        //
+        // The record keeps the RAW values LMS last reported (IsPoweredOn,
+        // PlaybackState). What consumers are told — and what a snapshot or a
+        // republish exposes — is the EFFECTIVE value: raw when the player is
+        // available, off/stopped when it is not. "Unavailable implies powered
+        // off and stopped" is therefore applied once, at the publish boundary,
+        // instead of being written into the record and undone later.
+        //
+        // This replaces 1.0.12's "lower the raw fields on loss" — which was
+        // right in spirit and wrong in two ways it could not see: a status
+        // keep-alive for a DISCONNECTED client (player_connected:0 power:1)
+        // arrived, was noted Offline (lowered), and fourteen lines later its
+        // power field counted as a first explicit report and was published —
+        // PoweredOn for an unreachable player; and after an LMS restart the
+        // first status reply lands while the FSM still holds the server
+        // disconnected, so the same first-report rule published PoweredOn
+        // before Connected went true. With effective state, a mutation while
+        // unavailable changes the raw value and publishes nothing (effective
+        // is unchanged), and restore publishes the effective edges AFTER
+        // AvailabilityChanged(true). Nothing needs re-arming.
+
+        private static bool EffectivePower(PlayerRecord rec)
+        {
+            return rec.IsAvailable && rec.IsPoweredOn;
+        }
+
+        private static LyrionPlaybackState EffectivePlayback(PlayerRecord rec)
+        {
+            return rec.IsAvailable ? rec.PlaybackState : LyrionPlaybackState.Stopped;
+        }
+
         private sealed class AvailabilityChange
         {
             public string Mac;
             public bool NowAvailable;
-            public bool PowerLowered;
-            public bool PlaybackLowered;
-            public LyrionMetadata Unfrozen; // non-null when restore cleared a freeze
+            public bool? PowerEdge;                   // effective power changed -> new value
+            public LyrionPlaybackState? PlaybackEdge; // effective playback changed -> new value
+            public LyrionMetadata Unfrozen;           // non-null when restore cleared a freeze
         }
 
         /// <summary>
         /// Recomputes a record's availability from its lifecycle and the server
-        /// state, applies the consequences (freeze + lower on loss, unfreeze on
-        /// restore), and returns what to publish — or null if nothing changed.
-        /// Callers raise the returned change OUTSIDE the lock via
+        /// state, applies the consequences (freeze on loss, unfreeze on
+        /// restore), computes which EFFECTIVE fields moved as a result, and
+        /// returns what to publish — or null if nothing changed. Callers raise
+        /// the returned change OUTSIDE the lock via
         /// <see cref="RaiseAvailabilityChange"/>.
         /// </summary>
         private AvailabilityChange ApplyAvailability_NoLock(PlayerRecord rec)
         {
             var nowAvail = ComputeAvailability(rec, _serverConnected);
             if (nowAvail == rec.IsAvailable) return null;
+
+            var powerBefore = EffectivePower(rec);
+            var playbackBefore = EffectivePlayback(rec);
 
             rec.IsAvailable = nowAvail;
             var change = new AvailabilityChange { Mac = rec.MacAddress, NowAvailable = nowAvail };
@@ -263,7 +301,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 // driver.
                 rec.IsFrozen = true;
                 rec.FrozenAtUtc = DateTime.UtcNow;
-                LowerForUnavailable_NoLock(rec, out change.PowerLowered, out change.PlaybackLowered);
             }
             else if (rec.IsFrozen)
             {
@@ -275,41 +312,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 change.Unfrozen = SnapshotMetadata(rec);
             }
 
-            return change;
-        }
+            var powerAfter = EffectivePower(rec);
+            var playbackAfter = EffectivePlayback(rec);
+            if (powerAfter != powerBefore) change.PowerEdge = powerAfter;
+            if (playbackAfter != playbackBefore) change.PlaybackEdge = playbackAfter;
 
-        private static void LowerForUnavailable_NoLock(PlayerRecord rec, out bool powerLowered, out bool playbackLowered)
-        {
-            powerLowered = rec.IsPoweredOn;
-            playbackLowered = rec.PlaybackState != LyrionPlaybackState.Stopped;
-            rec.IsPoweredOn = false;
-            rec.PlaybackState = LyrionPlaybackState.Stopped;
-            // The next explicit report is a first observation again: it must
-            // publish even when it equals this lowered value (a player that
-            // comes back switched off), so consumers whose copy went stale for
-            // any reason are re-synced at first sight.
-            rec.HasExplicitPower = false;
+            return change;
         }
 
         /// <summary>
         /// Publishes an availability change. Order matters and is the same on
-        /// every path: on loss, the lowered fields go out FIRST and
+        /// every path: on loss, the effective field edges go out FIRST and
         /// AvailabilityChanged LAST, so "unavailable" is a postcondition of
         /// "power and playback are already off" for anyone reacting to it; on
-        /// restore, AvailabilityChanged goes first and the unfrozen metadata
-        /// follows.
+        /// restore, AvailabilityChanged goes FIRST, then the effective field
+        /// edges, then the unfrozen metadata — so a consumer's Connected is
+        /// already true when it is told the player is on.
         /// </summary>
         private void RaiseAvailabilityChange(AvailabilityChange c)
         {
             if (!c.NowAvailable)
             {
-                if (c.PlaybackLowered) try { PlaybackStateChanged?.Invoke(c.Mac, LyrionPlaybackState.Stopped); } catch { }
-                if (c.PowerLowered) try { PowerStateChanged?.Invoke(c.Mac, false); } catch { }
+                if (c.PlaybackEdge.HasValue) try { PlaybackStateChanged?.Invoke(c.Mac, c.PlaybackEdge.Value); } catch { }
+                if (c.PowerEdge.HasValue) try { PowerStateChanged?.Invoke(c.Mac, c.PowerEdge.Value); } catch { }
                 try { AvailabilityChanged?.Invoke(c.Mac, false); } catch { }
             }
             else
             {
                 try { AvailabilityChanged?.Invoke(c.Mac, true); } catch { }
+                if (c.PowerEdge.HasValue) try { PowerStateChanged?.Invoke(c.Mac, c.PowerEdge.Value); } catch { }
+                if (c.PlaybackEdge.HasValue) try { PlaybackStateChanged?.Invoke(c.Mac, c.PlaybackEdge.Value); } catch { }
                 if (c.Unfrozen != null) try { MetadataUpdated?.Invoke(c.Mac, c.Unfrozen); } catch { }
             }
         }
@@ -424,11 +456,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             bool changed;
             bool powerChanged = false;
             bool nowPowered = false;
+            LyrionPlaybackState effectiveState;
             lock (_gate)
             {
                 if (!_records.TryGetValue(canon, out var rec)) return;
-                changed = rec.PlaybackState != state;
-                if (changed) rec.PlaybackState = state;
+                var playbackBefore = EffectivePlayback(rec);
+                var powerBefore = EffectivePower(rec);
+                rec.PlaybackState = state;
 
                 // Power derivation (CLAUDE.md §C) is a FALLBACK that must not
                 // override an explicit LMS power signal. Only active playback
@@ -452,15 +486,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                     desiredPower = false;
                 }
 
-                if (desiredPower != rec.IsPoweredOn)
+                rec.IsPoweredOn = desiredPower;
+
+                // Publish EFFECTIVE changes only (see the effective-state
+                // section): a mutation while unavailable is stored and
+                // silent; restore publishes the edges.
+                effectiveState = EffectivePlayback(rec);
+                changed = effectiveState != playbackBefore;
+                var powerAfter = EffectivePower(rec);
+                if (powerAfter != powerBefore)
                 {
-                    rec.IsPoweredOn = desiredPower;
                     powerChanged = true;
-                    nowPowered = desiredPower;
+                    nowPowered = powerAfter;
                 }
             }
 
-            if (changed) try { PlaybackStateChanged?.Invoke(canon, state); } catch { }
+            if (changed) try { PlaybackStateChanged?.Invoke(canon, effectiveState); } catch { }
             if (powerChanged) try { PowerStateChanged?.Invoke(canon, nowPowered); } catch { }
         }
 
@@ -491,10 +532,19 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 // is the other half of that contract: the first real
                 // observation is the moment consumers get synced.
                 var first = !rec.HasExplicitPower;
+                var before = EffectivePower(rec);
                 rec.HasExplicitPower = true;
-                var changed = rec.IsPoweredOn != isOn;
-                if (changed) rec.IsPoweredOn = isOn;
-                publish = changed || first;
+                rec.IsPoweredOn = isOn;
+                var after = EffectivePower(rec);
+
+                // Publish on an EFFECTIVE change. While the player is
+                // unavailable this stores the raw value and publishes nothing
+                // (effective is off either way); restore publishes the edge.
+                // The first-report rule applies only while available — that
+                // is the one case a consumer could hold a stale copy the
+                // registry cannot see.
+                publish = after != before || (first && rec.IsAvailable);
+                isOn = after;
             }
 
             if (publish) try { PowerStateChanged?.Invoke(canon, isOn); } catch { }
@@ -830,8 +880,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 {
                     if (!_records.TryGetValue(canon, out var rec)) continue;
                     avail = rec.IsAvailable;
-                    power = rec.IsPoweredOn;
-                    pbs = rec.PlaybackState;
+                    power = EffectivePower(rec);
+                    pbs = EffectivePlayback(rec);
                     vol = rec.Volume;
                     volStep = rec.VolumeStep;
                     muted = rec.Muted;

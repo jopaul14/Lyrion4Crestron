@@ -879,6 +879,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
 
+            // Tell consumers the server is gone BEFORE the service disappears:
+            // this publishes the effective off/stopped edges and
+            // AvailabilityChanged(false) for every player, so a Source that
+            // was reporting ON is lowered now rather than left asserting a
+            // dead server's last state — and so a replacement Lyrion Server's
+            // blank record finds consumers already at off, where a bind-time
+            // UpdatePower(false) is a no-op instead of a fabricated edge.
+            // RebuildTransport and TeardownTransport already did this;
+            // Dispose did not.
+            try { _registry.SetServerConnected(false); } catch { }
+
             try { LyrionServerServiceRegistry.Unregister(_service); } catch { }
 
             try { _freezePump?.Dispose(); } catch { }

@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.12).
+four-driver refactor is **complete** (all drivers ship together at 1.0.13).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -32,19 +32,32 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   consumer driver. Not allowed: per-player power-change logs, retry-attempt
   logs, auth-success logs, or anything that fires during normal playback.
 - **All registry mutations are change-gated** — no change, no event, no log.
-  Exactly three sanctioned publishes without a value change, each of which
-  IS a change in disguise: the first explicit power report for a record
-  (`HasExplicitPower` false→true — re-armed whenever the registry lowers a
-  record on availability loss); `RepublishAll` after a committed server
+  "Change" means a change in the EFFECTIVE value (see the next rule). Exactly
+  three sanctioned publishes without one, each of which IS a change in
+  disguise: the first explicit power report for an available record
+  (`HasExplicitPower` false→true); `RepublishAll` after a committed server
   reconnect (a hard state boundary); and the availability-restore metadata
   publish that lifts a freeze (`IsFrozen` true→false). Anything else that
   publishes without a change is a bug.
-- **The registry owns every derivation, including "unavailable ⇒ powered off
-  and stopped".** Consumers never derive state from availability; on loss the
-  registry lowers its own copy and publishes the edges, on restore the first
-  real observation publishes. A consumer that keeps a second copy the registry
-  does not know about will drift, and the registry's change-gate cannot see
-  it (1.0.8, and the per-player desync fixed in 1.0.12).
+- **The registry owns every derivation, and applies "unavailable ⇒ powered
+  off and stopped" at the publish boundary, not in the record.** Records hold
+  the RAW values LMS last reported; every publish, snapshot, and republish
+  exposes the EFFECTIVE value (raw when available, off/stopped when not —
+  `PlayerRegistry.EffectivePower/EffectivePlayback`). A mutation while
+  unavailable changes the raw value and publishes nothing; availability loss
+  publishes the effective edges then `AvailabilityChanged(false)`; restore
+  publishes `AvailabilityChanged(true)` then the effective edges. Consumers
+  never derive from availability and never publish a field edge while they
+  report themselves disconnected. (1.0.12 lowered the raw fields instead and
+  re-armed the first-report rule on loss; that let a keep-alive for a
+  disconnected client republish PoweredOn, fixed in 1.0.13.)
+- **Consumers serialise every write of RAD-facing state under one apply
+  lock** (`_applyGate`: bind+snapshot+apply, each event handler, Dispose's
+  unbind). Lock order is `_applyGate` then `_gate`, never the reverse. A
+  bind-time snapshot is applied for OBSERVED records only — for an
+  unobserved one, touch nothing but `Connected`; do not "call it un-forced",
+  an un-forced value still passes the change-gate when the consumer holds the
+  opposite.
 - **Never force-publish a value the Lyrion Server has not observed.** The
   only honest signal is `LyrionPlayerSnapshot.IsObserved` (set after a FULL
   status response is applied). `IsAvailable` is not a proxy — it flips

@@ -41,7 +41,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
         // and in ApplyStatusResponse it flips before the power field is
         // parsed). Consumers force-publish a bind-time snapshot only when
         // this is true. Sticky: a later availability loss lowers the fields
-        // (see PlayerRegistry.LowerForUnavailable_NoLock) but the record has
+        // (effective state — see PlayerRegistry.EffectivePower) but the record has
         // still been observed, so publishing that lowered state is honest.
         public bool HasObservedState { get; set; }
 

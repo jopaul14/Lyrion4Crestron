@@ -84,6 +84,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
+        // Serialises the bind-time snapshot apply, every event handler, and
+        // Dispose's unbind — see SourceDriver. Lock order: _applyGate, then
+        // _gate; never the reverse.
+        private readonly object _applyGate = new object();
+
+        // Last availability reported for the bound player, so Connect() can
+        // restore it instead of forcing Connected=true over it.
+        private bool _lastAvailability;
+
         private HelperProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
@@ -155,7 +164,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         public override void Connect()
         {
-            Connected = true;
+            // Re-run by the framework after any MAC edit; must not override
+            // the availability already learned (see SourceDriver.Connect).
+            bool bound, available;
+            lock (_gate)
+            {
+                bound = _boundMac != null;
+                available = _lastAvailability;
+            }
+            Connected = !bound || available;
         }
 
         // ===== Extension device definition =====
@@ -314,10 +331,40 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private void OnMacAddressReceived(string rawMac)
         {
             var canon = MacAddress.Normalize(rawMac);
-            if (canon == null) return;
+            if (canon == null)
+            {
+                UnbindInvalidMac(rawMac);
+                return;
+            }
 
             lock (_gate) { _configuredMac = canon; }
             TryBindToServer();
+        }
+
+        // A cleared or unparseable MAC is an unbind, not a no-op — see
+        // SourceDriver.UnbindInvalidMac. The tile goes to off/stopped, then
+        // offline.
+        private void UnbindInvalidMac(string rawMac)
+        {
+            lock (_applyGate)
+            {
+                ILyrionServerService svc;
+                string previous;
+                lock (_gate)
+                {
+                    _configuredMac = null;
+                    previous = _boundMac;
+                    _boundMac = null;
+                    svc = _server;
+                }
+                if (previous == null) return;
+
+                if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
+                UpdatePlayback(LyrionPlaybackState.Stopped);
+                UpdatePower(false);
+                UpdateAvailability(false);
+                _log("Helper WARNING: player MAC '" + (rawMac ?? string.Empty) + "' is not valid; unbound from " + previous);
+            }
         }
 
         private void OnPresetReceived(int slot, string configured)
@@ -415,44 +462,51 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void TryBindToServer()
         {
-            ILyrionServerService svc;
-            string mac;
-            string previousMac = null;
-            lock (_gate)
+            // Whole bind under _applyGate — see SourceDriver.TryBindToServer.
+            lock (_applyGate)
             {
-                svc = _server;
-                mac = _configuredMac;
-                if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
+                ILyrionServerService svc;
+                string mac;
+                string previousMac;
+                lock (_gate)
                 {
-                    return;
+                    svc = _server;
+                    mac = _configuredMac;
+                    if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    previousMac = _boundMac; // null when nothing was bound
+                    _boundMac = mac;
                 }
-                if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
+
+                if (previousMac != null)
                 {
-                    previousMac = _boundMac;
+                    svc.UnbindPlayer(previousMac);
                 }
-                _boundMac = mac;
-            }
 
-            if (previousMac != null)
-            {
-                svc.UnbindPlayer(previousMac);
-            }
-
-            if (svc.BindPlayer(mac))
-            {
-                _log("Helper: Bound to MAC " + mac);
-
-                if (svc.TryGetSnapshot(mac, out var snap))
+                if (svc.BindPlayer(mac))
                 {
-                    ApplySnapshot(snap);
+                    _log("Helper: Bound to MAC " + mac);
+
+                    if (svc.TryGetSnapshot(mac, out var snap))
+                    {
+                        ApplySnapshot(snap);
+                    }
                 }
             }
         }
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
+            // Level-based tile: every value is written, observed or not (an
+            // unobserved record reads as off/stopped/no track, which is the
+            // right thing to show for a player nobody has looked at). The
+            // snapshot already carries EFFECTIVE power/playback (off/stopped
+            // when unavailable). Availability first when available, last when
+            // not — the registry's own order.
             UpdateName(snap.Name);
-            UpdateAvailability(snap.IsAvailable);
+            if (snap.IsAvailable) UpdateAvailability(true);
             UpdatePower(snap.IsPoweredOn);
             UpdatePlayback(snap.PlaybackState);
             UpdateMetadata(snap.Metadata);
@@ -462,78 +516,73 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             UpdateVolume(snap.Volume);
             UpdateMute(snap.Muted);
             UpdateVolumeStep(snap.VolumeStep);
+            if (!snap.IsAvailable) UpdateAvailability(false);
         }
 
         // ===== Lyrion Server event handlers =====
 
+        // Handlers apply under _applyGate with IsMine checked inside it, so a
+        // bind in progress cannot be raced by an event for the MAC it is
+        // binding (see SourceDriver).
+
         private void OnAvailabilityChanged(string mac, bool isAvailable)
         {
-            if (!IsMine(mac)) return;
-            UpdateAvailability(isAvailable);
+            lock (_applyGate) { if (IsMine(mac)) UpdateAvailability(isAvailable); }
         }
 
         private void OnNameChanged(string mac, string name)
         {
-            if (!IsMine(mac)) return;
-            UpdateName(name);
+            lock (_applyGate) { if (IsMine(mac)) UpdateName(name); }
         }
 
         private void OnPowerStateChanged(string mac, bool isOn)
         {
-            if (!IsMine(mac)) return;
-            UpdatePower(isOn);
+            lock (_applyGate) { if (IsMine(mac)) UpdatePower(isOn); }
         }
 
         private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
         {
-            if (!IsMine(mac)) return;
-            UpdatePlayback(state);
+            lock (_applyGate) { if (IsMine(mac)) UpdatePlayback(state); }
         }
 
         private void OnMetadataUpdated(string mac, LyrionMetadata meta)
         {
-            if (!IsMine(mac)) return;
-            UpdateMetadata(meta);
+            lock (_applyGate) { if (IsMine(mac)) UpdateMetadata(meta); }
         }
 
         private void OnShuffleChanged(string mac, bool enabled)
         {
-            if (!IsMine(mac)) return;
-            UpdateShuffle(enabled);
+            lock (_applyGate) { if (IsMine(mac)) UpdateShuffle(enabled); }
         }
 
         private void OnRepeatChanged(string mac, bool enabled)
         {
-            if (!IsMine(mac)) return;
-            UpdateRepeat(enabled);
+            lock (_applyGate) { if (IsMine(mac)) UpdateRepeat(enabled); }
         }
 
         private void OnVolumeChanged(string mac, int level)
         {
-            if (!IsMine(mac)) return;
-            UpdateVolume(level);
+            lock (_applyGate) { if (IsMine(mac)) UpdateVolume(level); }
         }
 
         private void OnMuteChanged(string mac, bool muted)
         {
-            if (!IsMine(mac)) return;
-            UpdateMute(muted);
+            lock (_applyGate) { if (IsMine(mac)) UpdateMute(muted); }
         }
 
         private void OnVolumeStepChanged(string mac, int step)
         {
-            if (!IsMine(mac)) return;
-            UpdateVolumeStep(step);
+            lock (_applyGate) { if (IsMine(mac)) UpdateVolumeStep(step); }
         }
 
         // ===== Feedback into the extension device UI =====
 
         private void UpdateAvailability(bool isAvailable)
         {
-            // Connection only: the registry lowers power/playback itself on
-            // availability loss and publishes them as edges before this one
-            // (see SourceDriver.UpdateAvailability for why deriving it here
-            // too was the bug).
+            // Connection only: the registry publishes effective off/stopped
+            // before this on loss and on/playing after it on restore (see
+            // SourceDriver.UpdateAvailability).
+            lock (_gate) { _lastAvailability = isAvailable; }
             Connected = isAvailable;
         }
 
@@ -758,31 +807,34 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 try { _protocol.PresetReceived -= OnPresetReceived; } catch { }
             }
 
-            ILyrionServerService svc;
-            string mac;
-            lock (_gate)
+            lock (_applyGate)
             {
-                svc = _server;
-                mac = _boundMac;
-                _server = null;
-                _boundMac = null;
-            }
-
-            if (svc != null)
-            {
-                try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { svc.NameChanged -= OnNameChanged; } catch { }
-                try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
-                try { svc.MetadataUpdated -= OnMetadataUpdated; } catch { }
-                try { svc.ShuffleChanged -= OnShuffleChanged; } catch { }
-                try { svc.RepeatChanged -= OnRepeatChanged; } catch { }
-                try { svc.VolumeChanged -= OnVolumeChanged; } catch { }
-                try { svc.MuteChanged -= OnMuteChanged; } catch { }
-                try { svc.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
-                if (!string.IsNullOrEmpty(mac))
+                ILyrionServerService svc;
+                string mac;
+                lock (_gate)
                 {
-                    try { svc.UnbindPlayer(mac); } catch { }
+                    svc = _server;
+                    mac = _boundMac;
+                    _server = null;
+                    _boundMac = null;
+                }
+
+                if (svc != null)
+                {
+                    try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { svc.NameChanged -= OnNameChanged; } catch { }
+                    try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                    try { svc.MetadataUpdated -= OnMetadataUpdated; } catch { }
+                    try { svc.ShuffleChanged -= OnShuffleChanged; } catch { }
+                    try { svc.RepeatChanged -= OnRepeatChanged; } catch { }
+                    try { svc.VolumeChanged -= OnVolumeChanged; } catch { }
+                    try { svc.MuteChanged -= OnMuteChanged; } catch { }
+                    try { svc.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
+                    if (!string.IsNullOrEmpty(mac))
+                    {
+                        try { svc.UnbindPlayer(mac); } catch { }
+                    }
                 }
             }
 

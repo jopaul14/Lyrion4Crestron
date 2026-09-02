@@ -28,6 +28,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
+        // Serialises every write of the RAD-facing state (PowerIsOn,
+        // PlayBackStatus, Connected): the bind-time snapshot read+apply, each
+        // Lyrion Server event handler, and Dispose's unbind. Without it a
+        // CLI-thread event delivered between TryGetSnapshot and ApplySnapshot
+        // was overwritten by the stale forced snapshot — and because the
+        // registry only publishes on change, never corrected — and a Dispose
+        // or MAC edit racing an in-flight bind could unbind a MAC this driver
+        // had not yet bound (decrementing the Helper/Receiver's shared count)
+        // and then leak the late bind. Lock order: _applyGate, then _gate;
+        // never the reverse. The registry raises events outside its own lock,
+        // so holding this while calling TryGetSnapshot cannot invert.
+        private readonly object _applyGate = new object();
+
+        // Last availability the Lyrion Server reported for the bound player,
+        // so Connect() — which the framework re-runs after any MAC edit — can
+        // restore it instead of forcing Connected=true over it.
+        private bool _lastAvailability;
+
         private SourceProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
@@ -53,12 +71,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             BlurayPlayerProtocol = _protocol;
             BlurayPlayerProtocol.Initialize(BlurayPlayerData);
 
+            // Align the framework baseline with the registry's: RAD defaults
+            // PlayBackStatus to NoDisc (enum 0), which is wrong for an audio
+            // player at rest, while an unobserved registry record is Stopped.
+            // Setting it once here means a bind never has to force-publish a
+            // playback value for a player nobody has observed.
+            PlayBackStatus = PlayBackStatusEnum.Stop;
+
             LyrionServerServiceRegistry.Subscribe(OnServerAvailable);
         }
 
         public override void Connect()
         {
-            Connected = true;
+            // The framework calls this at load and again after any change to
+            // a RequiredForConnection attribute (the MAC). An unconditional
+            // Connected=true here overrode the availability already learned
+            // from the Lyrion Server, and the registry — change-gated on its
+            // own unchanged copy — never sent AvailabilityChanged(false) again.
+            bool bound, available;
+            lock (_gate)
+            {
+                bound = _boundMac != null;
+                available = _lastAvailability;
+            }
+            Connected = !bound || available;
         }
 
         // ===== Configuration =====
@@ -66,10 +102,46 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private void OnMacAddressReceived(string rawMac)
         {
             var canon = MacAddress.Normalize(rawMac);
-            if (canon == null) return;
+            if (canon == null)
+            {
+                UnbindInvalidMac(rawMac);
+                return;
+            }
 
             lock (_gate) { _configuredMac = canon; }
             TryBindToServer();
+        }
+
+        /// <summary>
+        /// The installer cleared the MAC or typed something unparseable.
+        /// Before 1.0.13 this was silently ignored and the driver stayed bound
+        /// to — and kept driving — the previous player. Treat it as an unbind:
+        /// release the registry record, report off/stopped then disconnected
+        /// (the registry's loss order), and log the one misconfiguration
+        /// warning the PRD sanctions. Silent when nothing was bound, so an
+        /// unconfigured driver at boot does not log.
+        /// </summary>
+        private void UnbindInvalidMac(string rawMac)
+        {
+            lock (_applyGate)
+            {
+                ILyrionServerService svc;
+                string previous;
+                lock (_gate)
+                {
+                    _configuredMac = null;
+                    previous = _boundMac;
+                    _boundMac = null;
+                    svc = _server;
+                }
+                if (previous == null) return;
+
+                if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
+                UpdatePlayback(LyrionPlaybackState.Stopped, force: true);
+                UpdatePower(false, force: true);
+                UpdateAvailability(false);
+                _log("Source WARNING: player MAC '" + (rawMac ?? string.Empty) + "' is not valid; unbound from " + previous);
+            }
         }
 
         // ===== Lyrion Server binding =====
@@ -108,94 +180,118 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         private void TryBindToServer()
         {
-            ILyrionServerService svc;
-            string mac;
-            string previousMac = null;
-            lock (_gate)
+            // The whole bind — commit _boundMac, unbind the previous MAC, bind,
+            // read the snapshot, apply it — runs under _applyGate, so no event
+            // handler and no concurrent Dispose/MAC edit can interleave with
+            // it (see the field comment).
+            lock (_applyGate)
             {
-                svc = _server;
-                mac = _configuredMac;
-                if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
+                ILyrionServerService svc;
+                string mac;
+                string previousMac;
+                lock (_gate)
                 {
-                    return;
+                    svc = _server;
+                    mac = _configuredMac;
+                    if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    previousMac = _boundMac; // null when nothing was bound
+                    _boundMac = mac;
                 }
-                if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
+
+                if (previousMac != null)
                 {
-                    previousMac = _boundMac;
+                    svc.UnbindPlayer(previousMac);
                 }
-                _boundMac = mac;
-            }
 
-            if (previousMac != null)
-            {
-                svc.UnbindPlayer(previousMac);
-            }
-
-            if (svc.BindPlayer(mac))
-            {
-                _log("Source: Bound to MAC " + mac);
-
-                if (svc.TryGetSnapshot(mac, out var snap))
+                if (svc.BindPlayer(mac))
                 {
-                    ApplySnapshot(snap);
+                    _log("Source: Bound to MAC " + mac);
+
+                    if (svc.TryGetSnapshot(mac, out var snap))
+                    {
+                        ApplySnapshot(snap);
+                    }
                 }
             }
         }
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Force the power emit ONLY for a snapshot the Lyrion Server has
-            // actually observed (a full status response applied). When true,
-            // this is the bind-after-reload case: the registry holds real
-            // state that must reach Crestron Home even where it equals the
-            // framework default (f845ec6).
+            // Two rules, both learned the hard way (RELEASE_NOTES 1.0.11–1.0.13):
             //
-            // When false — every cold boot — the record is a blank default,
-            // and forcing it would report "powered off" for a player nobody
-            // has looked at. With a "Power Is Off -> Room Off" mapping,
-            // Crestron Home acts on that fabrication: Room Off sends PowerOff,
-            // and a player that was playing through the processor reboot gets
-            // shut down. Seen live 2026-09-02: two players playing across a
-            // reboot, one killed every time, always the same one. Un-forced,
-            // the call is a change-gated no-op against the RAD default, and
-            // the real state arrives seconds later as a genuine edge.
+            // 1. Touch power/playback ONLY for a snapshot the Lyrion Server has
+            //    observed (LyrionPlayerSnapshot.IsObserved — a full status
+            //    response applied; NOT IsAvailable, which flips before power
+            //    is parsed). For an unobserved record touch nothing but
+            //    Connected. Not "call UpdatePower un-forced": an un-forced
+            //    false still passes the change-gate when this driver holds
+            //    ON, which is exactly the case on a Lyrion Server reload, and
+            //    it published a fabricated PoweredOff that a "Power Is Off ->
+            //    Room Off" mapping turned into a real power-off.
             //
-            // IsObserved, not IsAvailable: 1.0.11 used availability as the
-            // proxy, and availability flips true on "client new/reconnect"
-            // with no status at all, and inside a status response before the
-            // power field is parsed — a window in which this very fabrication
-            // was still reachable.
+            // 2. Apply in the registry's own order so Crestron Home never
+            //    sees a field edge while this device reports itself
+            //    disconnected: an available snapshot is a restore
+            //    (availability first, then fields); an unavailable one is a
+            //    loss (fields first — they are the effective off/stopped —
+            //    then availability).
             //
-            // Playback is forced regardless. It carries no room action, and
-            // the RAD default for PlayBackStatus is NoDisc (enum 0) — wrong
-            // for an audio player at rest — while the registry's blank default
-            // is Stopped, which is right. Forcing Stop for an unobserved
-            // record is the correct idle representation, not a fabrication
-            // of state Crestron Home would act on.
-            var observed = snap.IsObserved;
-            UpdateAvailability(snap.IsAvailable);
-            UpdatePower(snap.IsPoweredOn, force: observed);
-            UpdatePlayback(snap.PlaybackState, force: true);
+            // No playback force for unobserved records: Initialize() aligns
+            // the RAD baseline (NoDisc) to the registry's (Stopped) once.
+            if (snap.IsAvailable)
+            {
+                UpdateAvailability(true);
+                if (snap.IsObserved)
+                {
+                    UpdatePower(snap.IsPoweredOn, force: true);
+                    UpdatePlayback(snap.PlaybackState, force: true);
+                }
+            }
+            else
+            {
+                if (snap.IsObserved)
+                {
+                    UpdatePlayback(snap.PlaybackState, force: true);
+                    UpdatePower(snap.IsPoweredOn, force: true);
+                }
+                UpdateAvailability(false);
+            }
         }
 
         // ===== Lyrion Server event handlers =====
 
+        // Each handler applies under _applyGate, and checks IsMine inside it
+        // so a bind that completes concurrently cannot be raced by an event
+        // for the MAC it is in the middle of binding.
+
         private void OnAvailabilityChanged(string mac, bool isAvailable)
         {
-            if (!IsMine(mac)) return;
-            UpdateAvailability(isAvailable);
+            lock (_applyGate)
+            {
+                if (!IsMine(mac)) return;
+                UpdateAvailability(isAvailable);
+            }
         }
 
         private void OnPowerStateChanged(string mac, bool isOn)
         {
-            if (!IsMine(mac)) return;
-            UpdatePower(isOn);
+            lock (_applyGate)
+            {
+                if (!IsMine(mac)) return;
+                UpdatePower(isOn);
+            }
         }
 
         private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
         {
-            if (!IsMine(mac)) return;
-            UpdatePlayback(state);
+            lock (_applyGate)
+            {
+                if (!IsMine(mac)) return;
+                UpdatePlayback(state);
+            }
         }
 
         // ===== Feedback into the RAD framework =====
@@ -203,15 +299,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private void UpdateAvailability(bool isAvailable)
         {
             // Connection only. "Unavailable implies powered off and stopped"
-            // is derived in the Lyrion Server's registry (1.0.12), which lowers
-            // its own copy and publishes PoweredOff/Stopped as real edges
-            // BEFORE this event — so by the time Connected goes false here,
-            // UpdatePower/UpdatePlayback have already run through the normal
-            // handlers. Deriving it here as well (as this driver did through
-            // 1.0.11) kept a second copy the registry did not know about, and
-            // on restore the registry's change-gate compared the real value
-            // against ITS unchanged copy, found no change, and this driver
-            // stayed OFF/Stopped for a player that was on and playing.
+            // is the registry's derivation (effective state): it publishes the
+            // off/stopped edges BEFORE this event on loss and the on/playing
+            // edges AFTER it on restore. Deriving it here as well (as this
+            // driver did through 1.0.11) kept a second copy the registry could
+            // not see, and the change-gate then swallowed the correction.
+            lock (_gate) { _lastAvailability = isAvailable; }
             Connected = isAvailable;
             SendStateChangeEvent(BlurayPlayerStateObjects.Connection);
         }
@@ -306,24 +399,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 try { _protocol.PowerToggleRequested -= OnPowerToggleRequested; } catch { }
             }
 
-            ILyrionServerService svc;
-            string mac;
-            lock (_gate)
+            // Under _applyGate so an in-flight TryBindToServer either finishes
+            // before we unbind (and we unbind what it bound) or sees
+            // _boundMac already null and does nothing.
+            lock (_applyGate)
             {
-                svc = _server;
-                mac = _boundMac;
-                _server = null;
-                _boundMac = null;
-            }
-
-            if (svc != null)
-            {
-                try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
-                if (!string.IsNullOrEmpty(mac))
+                ILyrionServerService svc;
+                string mac;
+                lock (_gate)
                 {
-                    try { svc.UnbindPlayer(mac); } catch { }
+                    svc = _server;
+                    mac = _boundMac;
+                    _server = null;
+                    _boundMac = null;
+                }
+
+                if (svc != null)
+                {
+                    try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                    if (!string.IsNullOrEmpty(mac))
+                    {
+                        try { svc.UnbindPlayer(mac); } catch { }
+                    }
                 }
             }
 

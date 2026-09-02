@@ -1,5 +1,99 @@
 # Release Notes
 
+## 1.0.13 — Effective state at the boundary; consumer apply lock (2026-09-02)
+
+All four drivers ship at 1.0.13. This closes the ten findings of a full-file
+review of the Source driver — three of which were holes in 1.0.12's own fix.
+**All four packages must be updated together** (shared contract semantics
+changed; the consumers' bind behaviour changed to match).
+
+### Fixed — the mechanism
+
+- **"Unavailable ⇒ off/stopped" is now applied at the publish boundary, not
+  written into the record.** 1.0.12 lowered the registry's raw power/playback
+  on availability loss and re-armed the first-report rule. Two things it
+  could not see: a status keep-alive for a *disconnected* client
+  (`player_connected:0 power:1`) was noted Offline and lowered, and fourteen
+  lines later its `power:1` counted as a first explicit report and was
+  published — the Source emitted PoweredOn while disconnected, a "Power Is On
+  → Room On" mapping turned on a room for an unreachable player, and the
+  record stuck there; and after an LMS restart the first status reply lands
+  while the FSM still holds the server disconnected, so the same rule
+  published ON before `Connected` went true. Records now keep the raw values;
+  every publish, snapshot, and republish exposes the *effective* value (raw
+  when available, off/stopped when not). A mutation while unavailable stores
+  and publishes nothing; loss publishes effective edges then unavailable;
+  restore publishes available *then* the effective edges. Nothing is re-armed.
+
+- **Consumers serialise every RAD-facing write under one apply lock.** Bind
+  (commit MAC, unbind previous, bind, snapshot, apply), each event handler,
+  Dispose's unbind, and invalid-MAC unbinding now run under `_applyGate`.
+  Before: a CLI-thread event between the snapshot read and its forced apply
+  was overwritten by the stale snapshot and — the registry publishing only on
+  change — never corrected; and a Dispose or MAC edit racing an in-flight
+  bind could unbind a MAC this driver had not yet bound, decrementing the
+  Helper/Receiver's shared count (possibly deleting their record) and then
+  leaking the late bind.
+
+### Fixed — Source, Receiver, Helper
+
+- **A Lyrion Server reload while playing emitted a fabricated PoweredOff.**
+  The rebind's snapshot is a blank record; 1.0.12 called `UpdatePower(false)`
+  un-forced, which is a no-op only when the consumer already holds false —
+  against a Source holding ON it passed the change-gate. Consumers now touch
+  power/playback only for an *observed* snapshot; for an unobserved one they
+  touch nothing but `Connected`.
+- **`Connect()` forced `Connected=true` over registry availability.** The
+  framework re-runs it after any MAC edit, and the registry — change-gated on
+  its own unchanged copy — never sent `AvailabilityChanged(false)` again.
+  `Connect()` now restores the last availability reported (true only while
+  unbound).
+- **A cleared or unparseable MAC was silently ignored**, leaving the driver
+  bound to and controlling the previous player. It is now an unbind: release
+  the record, report off/stopped then offline, one warning line (silent when
+  nothing was bound, so an unconfigured driver does not log at boot).
+- **Bind-time playback was forced after `Connected=false`**, which a
+  framework that drops state from a disconnected device would discard,
+  leaving the RAD default `NoDisc`. The Source now sets `PlayBackStatus =
+  Stop` once in `Initialize` and forces nothing for unobserved records.
+  Snapshots are applied in the registry's order (available: `Connected`
+  first; unavailable: fields first).
+- The dead `_boundMac != mac` guard in `TryBindToServer` is gone (the method
+  had already returned in that case).
+
+### Fixed — Lyrion Server
+
+- **`Dispose` never published an availability loss.** It unregistered the
+  service and tore down the transport but, unlike `RebuildTransport`, never
+  called `SetServerConnected(false)`, so consumers kept asserting a dead
+  server's last state — and a replacement Server's blank record met consumers
+  still holding ON. It now publishes the loss before unregistering.
+
+### Changed
+
+- `VersionDate` in all four `Driver.json` files now matches the release date
+  (it had been stale since 1.0.10).
+- CLAUDE.md's invariants now define "change" as a change in the effective
+  value and record the consumer apply-lock rule.
+
+### Retest
+
+1. **Disconnected keep-alive.** Player playing; unplug its network. Room
+   goes off. Wait ≥ 35 s (one keep-alive). **Room stays off**; the Helper
+   stays off. Reconnect: room and Helper return.
+2. **LMS restart.** Two players playing. Stop LMS ~30 s, start it. Both
+   rooms show off during the outage and **come back on within ~8 s of LMS
+   returning**, with no OFF/ON flicker at the end.
+3. **Server-only reload while playing.** Re-import only the Lyrion Server.
+   **No room turns off; playback continues; rooms show on once the new
+   Server connects.**
+4. **MAC edit while offline.** Player unplugged; edit the Source's MAC to
+   itself and save. **The device still shows disconnected.**
+5. **Invalid MAC.** Set a Source's MAC to `xyz`. **One WARNING line; the
+   room's source shows off and disconnected; the other rooms are unaffected.**
+   Restore the MAC.
+6. Everything from the 1.0.12 retest still holds.
+
 ## 1.0.12 — Registry owns availability; transport and lifecycle fixes (2026-09-02)
 
 All four drivers ship at 1.0.12. This release closes the ten findings of a
