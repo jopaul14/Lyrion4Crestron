@@ -219,6 +219,19 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 if (_disposed) return;
                 DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
 
+                // A rebuild is a hard connectivity boundary: this method
+                // forces _serverConnected=false and the registry disconnected
+                // below, so the FSM must agree, or the new socket's Connected
+                // can never be committed. Before 1.0.12 it did not: the old
+                // client's handler was detached above before it could report
+                // Disconnected, the FSM stayed committed=Connected, the new
+                // client's Connected matched it, TryCommit published nothing,
+                // and the driver sat "disconnected" with a live socket —
+                // every command dropped, every player unavailable, no log —
+                // after any installer re-save of the LMS settings, until LMS
+                // itself dropped for >5 s.
+                _fsm.Reset();
+
                 var lifetime = new CancellationTokenSource();
                 _lifetime = lifetime;
 
@@ -262,7 +275,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
         {
             LmsCliClient oldCli;
             CancellationTokenSource oldLifetime;
-            lock (_gate) { DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime); }
+            lock (_gate)
+            {
+                DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
+                _fsm.Reset(); // same boundary as RebuildTransport
+            }
             DisposeOldTransport(oldCli, oldLifetime);
             _registry.SetServerConnected(false);
         }
@@ -643,8 +660,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // start scanning from index 2 to skip the MAC and "status" tokens.
             var kv = LmsCliParser.ExtractKeyValues(tokens, 2);
 
-            // Lifecycle: if we got a status response the player is reachable.
-            _registry.NoteLifecycle(mac, PlayerLifecycleState.Online);
+            // Lifecycle. A status reply proves the server knows the player,
+            // not that the player is reachable: the subscription keeps pushing
+            // keep-alives for a client that has disconnected, and those carry
+            // player_connected:0. Honour it when present; treat absence as
+            // Online (older/odd replies) so a missing key can never strand a
+            // player as unavailable.
+            var online = !kv.TryGetValue("player_connected", out var connectedStr) || connectedStr != "0";
+            _registry.NoteLifecycle(mac, online ? PlayerLifecycleState.Online : PlayerLifecycleState.Offline);
+
+            // Power BEFORE mode. NotePlaybackState's playback-derived power
+            // raise is a fallback for players with no explicit power state; if
+            // it ran first, a reply carrying mode:play together with power:0
+            // (LMS pauses ~1 ms after "power 0", and a push can land between;
+            // synced slaves; a player started server-side while off) raised
+            // PowerStateChanged(true) and then NoteExplicitPower flipped it
+            // straight back — an ON/OFF pair from one message, the 1.0.5
+            // bounce-back class, repeated on every keep-alive while it held.
+            // With the explicit value noted first, the derivation sees the
+            // authoritative state when it runs.
+            if (kv.TryGetValue("power", out var powerStr))
+            {
+                _registry.NoteExplicitPower(mac, powerStr == "1");
+            }
 
             // Playback mode
             if (kv.TryGetValue("mode", out var mode))
@@ -661,12 +699,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                         _registry.NotePlaybackState(mac, LyrionPlaybackState.Stopped);
                         break;
                 }
-            }
-
-            // Power
-            if (kv.TryGetValue("power", out var powerStr))
-            {
-                _registry.NoteExplicitPower(mac, powerStr == "1");
             }
 
             // Volume — the status response uses "mixer volume" as two tokens
@@ -762,6 +794,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             {
                 _registry.SetCapabilities(mac, cpStr == "1", null);
             }
+
+            // Last, by design: only now has every field of this reply been
+            // noted, so only now is it honest to say the player has been
+            // observed. Consumers gate their bind-time force-publish on this
+            // (LyrionPlayerSnapshot.IsObserved) — never on availability, which
+            // flipped true at the top of this method before power was parsed.
+            _registry.NoteStatusApplied(mac);
         }
 
         private void ApplyPlayersResponse(string[] tokens)

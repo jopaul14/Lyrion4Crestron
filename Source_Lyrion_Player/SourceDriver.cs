@@ -144,30 +144,38 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Force the emits ONLY for a snapshot that reflects something the
-            // Lyrion Server has actually observed. A record is available only
-            // after a status response has arrived (it starts Unknown, and
-            // availability requires Online), so IsAvailable is a sound proxy
-            // for "observed". When it is true this is the bind-after-reload
-            // case: the registry holds real state that must reach Crestron
-            // Home even where it equals the framework default (f845ec6).
+            // Force the power emit ONLY for a snapshot the Lyrion Server has
+            // actually observed (a full status response applied). When true,
+            // this is the bind-after-reload case: the registry holds real
+            // state that must reach Crestron Home even where it equals the
+            // framework default (f845ec6).
             //
-            // When it is false — every cold boot — the record is a blank
-            // default, and forcing it would report "powered off" for a player
-            // nobody has looked at yet. With a "Power Is Off -> Room Off"
-            // mapping, Crestron Home acts on that fabrication: Room Off sends
-            // PowerOff, and a player that was happily playing through the
-            // processor reboot gets shut down (LMS pauses it first, as part of
-            // its own power-off sequence). Seen live 2026-09-02: two players
-            // playing across a reboot, one killed every time, always the same
-            // one — whichever Source bound after the Actions & Events engine
-            // was listening. Un-forced, these calls are change-gated no-ops
-            // against the RAD defaults, and the real state arrives seconds
-            // later as a genuine edge from the registry.
-            var observed = snap.IsAvailable;
+            // When false — every cold boot — the record is a blank default,
+            // and forcing it would report "powered off" for a player nobody
+            // has looked at. With a "Power Is Off -> Room Off" mapping,
+            // Crestron Home acts on that fabrication: Room Off sends PowerOff,
+            // and a player that was playing through the processor reboot gets
+            // shut down. Seen live 2026-09-02: two players playing across a
+            // reboot, one killed every time, always the same one. Un-forced,
+            // the call is a change-gated no-op against the RAD default, and
+            // the real state arrives seconds later as a genuine edge.
+            //
+            // IsObserved, not IsAvailable: 1.0.11 used availability as the
+            // proxy, and availability flips true on "client new/reconnect"
+            // with no status at all, and inside a status response before the
+            // power field is parsed — a window in which this very fabrication
+            // was still reachable.
+            //
+            // Playback is forced regardless. It carries no room action, and
+            // the RAD default for PlayBackStatus is NoDisc (enum 0) — wrong
+            // for an audio player at rest — while the registry's blank default
+            // is Stopped, which is right. Forcing Stop for an unobserved
+            // record is the correct idle representation, not a fabrication
+            // of state Crestron Home would act on.
+            var observed = snap.IsObserved;
             UpdateAvailability(snap.IsAvailable);
             UpdatePower(snap.IsPoweredOn, force: observed);
-            UpdatePlayback(snap.PlaybackState, force: observed);
+            UpdatePlayback(snap.PlaybackState, force: true);
         }
 
         // ===== Lyrion Server event handlers =====
@@ -194,16 +202,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         private void UpdateAvailability(bool isAvailable)
         {
+            // Connection only. "Unavailable implies powered off and stopped"
+            // is derived in the Lyrion Server's registry (1.0.12), which lowers
+            // its own copy and publishes PoweredOff/Stopped as real edges
+            // BEFORE this event — so by the time Connected goes false here,
+            // UpdatePower/UpdatePlayback have already run through the normal
+            // handlers. Deriving it here as well (as this driver did through
+            // 1.0.11) kept a second copy the registry did not know about, and
+            // on restore the registry's change-gate compared the real value
+            // against ITS unchanged copy, found no change, and this driver
+            // stayed OFF/Stopped for a player that was on and playing.
             Connected = isAvailable;
             SendStateChangeEvent(BlurayPlayerStateObjects.Connection);
-
-            if (!isAvailable)
-            {
-                // When the player drops off the server, stop reporting stale
-                // power/playback so the routing graph reflects reality.
-                UpdatePlayback(LyrionPlaybackState.Stopped);
-                UpdatePower(false);
-            }
         }
 
         private void UpdatePower(bool isOn, bool force = false)

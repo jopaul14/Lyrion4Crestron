@@ -33,8 +33,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             LyrionMetadata metadata,
             bool supportsPower,
             bool supportsVolume,
-            int volumeStep)
+            int volumeStep,
+            bool isObserved)
         {
+            IsObserved = isObserved;
             Mac = mac ?? string.Empty;
             Name = name ?? string.Empty;
             IsAvailable = isAvailable;
@@ -82,5 +84,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// published by the Receiver. Default 2 when none has been published.
         /// </summary>
         public int VolumeStep { get; }
+
+        /// <summary>
+        /// True once the Lyrion Server has applied at least one full status
+        /// response to this player — i.e. every other field in this snapshot
+        /// is something the server actually saw rather than a blank default.
+        /// </summary>
+        /// <remarks>
+        /// <para>Consumers that publish power as an <em>edge</em> to Crestron
+        /// Home (Source, Receiver) MUST force their bind-time emit on this and
+        /// nothing else. <see cref="IsAvailable"/> is not a substitute: it
+        /// flips true on a <c>client new</c>/<c>reconnect</c> notification
+        /// with no status at all, and inside a status response it flips
+        /// before the power field is parsed. 1.0.11 used it as a proxy and
+        /// left a window in which a consumer binding for a player that had
+        /// just come online force-published "powered off" for it — and a
+        /// "Power Is Off → Room Off" mapping then switched the player off.</para>
+        /// <para>Sticky: a later availability loss lowers power/playback in the
+        /// registry, but the record has still been observed, so forcing that
+        /// lowered state is honest.</para>
+        /// </remarks>
+        public bool IsObserved { get; }
     }
 }

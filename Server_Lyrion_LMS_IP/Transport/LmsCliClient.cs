@@ -42,6 +42,23 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
         // CLAUDE.md mandates this exact sequence; values are in seconds.
         private static readonly int[] BackoffSecondsSchedule = new[] { 2, 5, 10, 30, 60 };
 
+        /// <summary>
+        /// How long a connected socket must live before it counts as a real
+        /// session — the threshold that resets the backoff schedule, re-arms
+        /// the one-line connect announcement, and re-arms the auth-failure
+        /// notice. A server that accepts the socket and closes it within this
+        /// window (rejected credentials, an IP block) is treated as a failed
+        /// attempt, so the schedule keeps escalating instead of restarting at
+        /// 2 s on every accept. Ten seconds is well past any login/listen
+        /// preamble and well short of anything a homeowner would notice.
+        /// </summary>
+        private static readonly TimeSpan EstablishedSession = TimeSpan.FromSeconds(10);
+
+        // Set when a "login failed" line has been surfaced for the current
+        // outage; cleared when a session is established. Touched only on the
+        // worker task (EmitLine runs inside ReceiveLoopAsync).
+        private bool _authFailureAnnounced;
+
         private readonly string _host;
         private readonly int _port;
         private readonly string _username;
@@ -252,10 +269,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                 var announceThisAttempt = announceNextAttempt;
                 announceNextAttempt = false;
 
-                // Whether this iteration got as far as an established
-                // connection. Losing a live connection is a real error, so it is
-                // logged even mid-cycle when retries are otherwise silent.
+                // Whether this iteration got as far as a connected socket, and
+                // when. Losing a live connection is a real error, so it is
+                // logged even mid-cycle when retries are otherwise silent —
+                // but only once the session has lasted EstablishedSession.
                 var wasConnected = false;
+                var connectedAtUtc = DateTime.MinValue;
 
                 SetState(LmsConnectionState.Connecting);
 
@@ -278,9 +297,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                     _stream = stream;
 
                     SetState(LmsConnectionState.Connected);
-                    attempt = 0;
                     wasConnected = true;
-                    announceNextAttempt = true;
+                    connectedAtUtc = DateTime.UtcNow;
+                    // NOT `attempt = 0` / `announceNextAttempt = true` here.
+                    // A TCP accept proves nothing: a server that takes the
+                    // socket and then closes it (rejected credentials, an IP
+                    // block) would reset the backoff to its first step and
+                    // re-arm the announcement on every cycle — a reconnect
+                    // every 2 s forever with a log line each time, which is
+                    // exactly the retry storm the 2/5/10/30/60 schedule and
+                    // the logging invariant exist to prevent. Both are
+                    // re-armed below, and only for a session that actually
+                    // lived (see EstablishedSession).
 
                     if (!string.IsNullOrEmpty(_username))
                     {
@@ -300,9 +328,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                 {
                     // Same rule as the connect announcement: the first failure
                     // of a cycle is worth a line, the identical failure on every
-                    // subsequent backoff tick is not. A drop of an established
-                    // connection always logs.
-                    if (announceThisAttempt || wasConnected)
+                    // subsequent backoff tick is not. A drop of an ESTABLISHED
+                    // connection always logs — established meaning it lived
+                    // long enough to have been a real session, not a socket
+                    // the server accepted and immediately closed.
+                    var established = wasConnected && DateTime.UtcNow - connectedAtUtc >= EstablishedSession;
+                    if (announceThisAttempt || established)
                     {
                         _log("LmsCliClient: connect/receive error: " + ex.Message);
                     }
@@ -313,6 +344,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                 }
 
                 if (ct.IsCancellationRequested) break;
+
+                // A session that lived is what resets the schedule and
+                // re-arms the one-line announcement for the NEXT drop. A
+                // short-lived accept-then-close keeps escalating and stays
+                // silent, so a wrong password costs one line per backoff
+                // step and then one per minute, not one every two seconds.
+                if (wasConnected && DateTime.UtcNow - connectedAtUtc >= EstablishedSession)
+                {
+                    attempt = 0;
+                    announceNextAttempt = true;
+                    _authFailureAnnounced = false;
+                }
 
                 SetState(LmsConnectionState.Faulted);
 
@@ -456,16 +499,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
 
             // LMS returns a single "login" line on auth failure too — but the
             // canonical signal is the connection drop that follows. We surface
-            // any explicit error line through AuthenticationFailed so the FSM
-            // can log it once and avoid retry-loop chatter.
-            if (message.Kind == LmsMessageKind.GlobalRaw
+            // the explicit error line through AuthenticationFailed so the
+            // driver can log it, once per outage: the flag is cleared only
+            // when a session is established, so the backoff retries that
+            // follow a rejection do not repeat the line.
+            //
+            // The parser classifies EVERY line whose first token is "login" as
+            // LoginAck (the success echo and the failure share it), so the
+            // check must accept that kind. Before 1.0.12 it required GlobalRaw,
+            // which the parser never produces for this line, and the event
+            // could not fire: a wrong password was an endless reconnect loop
+            // with no explanation.
+            if ((message.Kind == LmsMessageKind.LoginAck || message.Kind == LmsMessageKind.GlobalRaw)
                 && message.Tokens != null
                 && message.Tokens.Length >= 2
                 && string.Equals(message.Tokens[0], "login", StringComparison.OrdinalIgnoreCase)
                 && string.Equals(message.Tokens[1], "failed", StringComparison.OrdinalIgnoreCase))
             {
-                try { AuthenticationFailed?.Invoke("LMS rejected credentials."); }
-                catch { }
+                if (!_authFailureAnnounced)
+                {
+                    _authFailureAnnounced = true;
+                    try { AuthenticationFailed?.Invoke("LMS rejected credentials."); }
+                    catch { }
+                }
                 return;
             }
 

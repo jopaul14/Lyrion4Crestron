@@ -530,13 +530,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void UpdateAvailability(bool isAvailable)
         {
+            // Connection only: the registry lowers power/playback itself on
+            // availability loss and publishes them as edges before this one
+            // (see SourceDriver.UpdateAvailability for why deriving it here
+            // too was the bug).
             Connected = isAvailable;
-
-            if (!isAvailable)
-            {
-                UpdatePlayback(LyrionPlaybackState.Stopped);
-                UpdatePower(false);
-            }
         }
 
         private void UpdateName(string name)

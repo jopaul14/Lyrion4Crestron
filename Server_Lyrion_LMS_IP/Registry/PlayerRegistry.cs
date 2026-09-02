@@ -44,22 +44,44 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
         // depends on this gate: if the server is offline, no player is available.
         private bool _serverConnected;
 
-        public bool Bind(string mac)
+        public bool Bind(string mac) => Bind(mac, out _);
+
+        /// <summary>
+        /// Registers a consumer's interest in a MAC. Records are reference
+        /// counted: all three consumer drivers bind the same player, and the
+        /// record must survive any one of them being disposed or re-addressed.
+        /// <paramref name="created"/> is true only for the first bind of a MAC,
+        /// so the caller can do first-bind work (the initial status subscribe)
+        /// exactly once rather than once per consumer.
+        /// </summary>
+        public bool Bind(string mac, out bool created)
         {
+            created = false;
             var canon = MacAddress.Normalize(mac);
             if (canon == null) return false;
 
             lock (_gate)
             {
-                if (!_records.ContainsKey(canon))
+                if (!_records.TryGetValue(canon, out var rec))
                 {
-                    _records[canon] = new PlayerRecord(canon);
+                    rec = new PlayerRecord(canon);
+                    _records[canon] = rec;
+                    created = true;
                 }
+                rec.BindCount++;
             }
 
             return true;
         }
 
+        /// <summary>
+        /// Releases one consumer's interest. The record is removed only when
+        /// the last bound consumer lets go — before 1.0.12 this removed it
+        /// unconditionally, and disposing just the (optional) Receiver left the
+        /// Source and Helper for the same room bound to a MAC the registry no
+        /// longer knew: every notification dropped at IsBound, every command
+        /// dropped, no event, no log, until the Lyrion Server was reloaded.
+        /// </summary>
         public void Unbind(string mac)
         {
             var canon = MacAddress.Normalize(mac);
@@ -67,7 +89,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
 
             lock (_gate)
             {
-                _records.Remove(canon);
+                if (!_records.TryGetValue(canon, out var rec)) return;
+                rec.BindCount--;
+                if (rec.BindCount <= 0)
+                {
+                    _records.Remove(canon);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Marks a record as having had a full status response applied. Called
+        /// by the Lyrion Server driver at the END of ApplyStatusResponse, after
+        /// every field has been noted. Bookkeeping only — no event — because it
+        /// changes nothing a consumer displays; it changes what a consumer may
+        /// <em>force</em> at bind time (see <see cref="LyrionPlayerSnapshot.IsObserved"/>).
+        /// </summary>
+        public void NoteStatusApplied(string mac)
+        {
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null) return;
+            lock (_gate)
+            {
+                if (_records.TryGetValue(canon, out var rec)) rec.HasObservedState = true;
             }
         }
 
@@ -123,7 +167,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                     SnapshotMetadata(rec),
                     rec.CanPowerOff,
                     rec.SupportsVolume,
-                    rec.VolumeStep);
+                    rec.VolumeStep,
+                    rec.HasObservedState);
                 return true;
             }
         }
@@ -140,7 +185,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
         /// </summary>
         public IReadOnlyList<string> SetServerConnected(bool connected)
         {
-            var affected = new List<(string mac, bool nowAvail)>();
+            var affected = new List<AvailabilityChange>();
             lock (_gate)
             {
                 if (_serverConnected == connected) return Array.Empty<string>();
@@ -149,31 +194,124 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 foreach (var kvp in _records)
                 {
                     var rec = kvp.Value;
-                    var nowAvail = ComputeAvailability(rec, _serverConnected);
-                    if (nowAvail != rec.IsAvailable)
-                    {
-                        rec.IsAvailable = nowAvail;
-                        affected.Add((rec.MacAddress, nowAvail));
-
-                        if (!nowAvail)
-                        {
-                            // Freeze metadata immediately on availability loss.
-                            // The 30s clear is handled by the freezer pump in
-                            // the Lyrion Server driver.
-                            rec.IsFrozen = true;
-                            rec.FrozenAtUtc = DateTime.UtcNow;
-                        }
-                    }
+                    var change = ApplyAvailability_NoLock(rec);
+                    if (change != null) affected.Add(change);
                 }
             }
 
             var macs = new List<string>(affected.Count);
             foreach (var item in affected)
             {
-                macs.Add(item.mac);
-                try { AvailabilityChanged?.Invoke(item.mac, item.nowAvail); } catch { }
+                macs.Add(item.Mac);
+                RaiseAvailabilityChange(item);
             }
             return macs;
+        }
+
+        // ===== Availability derivation (the registry owns it) =====
+        //
+        // "Unavailable implies powered off and stopped" used to be derived
+        // inside the Source and Helper (each zeroed its own copy on
+        // AvailabilityChanged(false)) while the registry kept the pre-outage
+        // power/playback. That split is what made 1.0.8 necessary and what
+        // made 1.0.8 wrong: on restore the change-gated NoteExplicitPower /
+        // NotePlaybackState compared the real value against the registry's
+        // UNCHANGED copy, found no change, and published nothing — so the
+        // consumers stayed OFF/Stopped for a player that was on and playing.
+        // A server reconnect was rescued by RepublishAll; a per-player
+        // disconnect/reconnect never was. RepublishAll itself then re-emitted
+        // the stale IsPoweredOn=true for a player still offline, handing a
+        // "Power Is On -> Room On" mapping a PoweredOn edge for an unreachable
+        // player after every LMS restart.
+        //
+        // Now the registry lowers power/playback itself on every availability
+        // loss (server-level and per-player alike), publishes those as real
+        // edges, and resets HasExplicitPower so the next explicit report
+        // counts as a first observation and publishes even if it equals the
+        // lowered value. Restore is then a genuine registry edge that every
+        // consumer receives identically, and the consumers' UpdateAvailability
+        // only sets Connected — no derivation, per the PRD.
+
+        private sealed class AvailabilityChange
+        {
+            public string Mac;
+            public bool NowAvailable;
+            public bool PowerLowered;
+            public bool PlaybackLowered;
+            public LyrionMetadata Unfrozen; // non-null when restore cleared a freeze
+        }
+
+        /// <summary>
+        /// Recomputes a record's availability from its lifecycle and the server
+        /// state, applies the consequences (freeze + lower on loss, unfreeze on
+        /// restore), and returns what to publish — or null if nothing changed.
+        /// Callers raise the returned change OUTSIDE the lock via
+        /// <see cref="RaiseAvailabilityChange"/>.
+        /// </summary>
+        private AvailabilityChange ApplyAvailability_NoLock(PlayerRecord rec)
+        {
+            var nowAvail = ComputeAvailability(rec, _serverConnected);
+            if (nowAvail == rec.IsAvailable) return null;
+
+            rec.IsAvailable = nowAvail;
+            var change = new AvailabilityChange { Mac = rec.MacAddress, NowAvailable = nowAvail };
+
+            if (!nowAvail)
+            {
+                // Freeze metadata immediately on availability loss. The 30s
+                // clear is handled by the freezer pump in the Lyrion Server
+                // driver.
+                rec.IsFrozen = true;
+                rec.FrozenAtUtc = DateTime.UtcNow;
+                LowerForUnavailable_NoLock(rec, out change.PowerLowered, out change.PlaybackLowered);
+            }
+            else if (rec.IsFrozen)
+            {
+                // The freeze only ever cleared via NoteMetadata, so a record
+                // could sit available-but-frozen until the next status push,
+                // publishing frozen payloads from the 1s tick meanwhile. Clear
+                // it here and let consumers know the payload is live again.
+                rec.IsFrozen = false;
+                change.Unfrozen = SnapshotMetadata(rec);
+            }
+
+            return change;
+        }
+
+        private static void LowerForUnavailable_NoLock(PlayerRecord rec, out bool powerLowered, out bool playbackLowered)
+        {
+            powerLowered = rec.IsPoweredOn;
+            playbackLowered = rec.PlaybackState != LyrionPlaybackState.Stopped;
+            rec.IsPoweredOn = false;
+            rec.PlaybackState = LyrionPlaybackState.Stopped;
+            // The next explicit report is a first observation again: it must
+            // publish even when it equals this lowered value (a player that
+            // comes back switched off), so consumers whose copy went stale for
+            // any reason are re-synced at first sight.
+            rec.HasExplicitPower = false;
+        }
+
+        /// <summary>
+        /// Publishes an availability change. Order matters and is the same on
+        /// every path: on loss, the lowered fields go out FIRST and
+        /// AvailabilityChanged LAST, so "unavailable" is a postcondition of
+        /// "power and playback are already off" for anyone reacting to it; on
+        /// restore, AvailabilityChanged goes first and the unfrozen metadata
+        /// follows.
+        /// </summary>
+        private void RaiseAvailabilityChange(AvailabilityChange c)
+        {
+            if (!c.NowAvailable)
+            {
+                if (c.PlaybackLowered) try { PlaybackStateChanged?.Invoke(c.Mac, LyrionPlaybackState.Stopped); } catch { }
+                if (c.PowerLowered) try { PowerStateChanged?.Invoke(c.Mac, false); } catch { }
+                try { AvailabilityChanged?.Invoke(c.Mac, false); } catch { }
+            }
+            else
+            {
+                try { AvailabilityChanged?.Invoke(c.Mac, true); } catch { }
+                if (c.Unfrozen != null) try { MetadataUpdated?.Invoke(c.Mac, c.Unfrozen); } catch { }
+            }
         }
 
         // ===== Per-player mutators =====
@@ -186,61 +324,53 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             var canon = MacAddress.Normalize(mac);
             if (canon == null) return;
 
-            bool availChanged = false;
-            bool nowAvail = false;
-            PlayerRecord rec;
-
+            AvailabilityChange change;
             lock (_gate)
             {
-                if (!_records.TryGetValue(canon, out rec)) return;
-
+                if (!_records.TryGetValue(canon, out var rec)) return;
                 rec.LifecycleState = newState;
                 rec.LastSeenUtc = DateTime.UtcNow;
-
-                var before = rec.IsAvailable;
-                nowAvail = ComputeAvailability(rec, _serverConnected);
-                if (before != nowAvail)
-                {
-                    rec.IsAvailable = nowAvail;
-                    availChanged = true;
-                    if (!nowAvail)
-                    {
-                        rec.IsFrozen = true;
-                        rec.FrozenAtUtc = DateTime.UtcNow;
-                    }
-                }
+                change = ApplyAvailability_NoLock(rec);
             }
 
-            if (availChanged)
-            {
-                RaiseAvailability(canon, nowAvail);
-            }
+            if (change != null) RaiseAvailabilityChange(change);
         }
 
         /// <summary>
-        /// Mark a player as InvalidSession and increment its retry counter.
-        /// Returns true if this is the first invalid-session for this player
-        /// (the caller should attempt rediscovery once). Returns false if
-        /// the retry has already been attempted, meaning the caller should
-        /// mark Offline.
+        /// Mark a player as InvalidSession. Returns true if this is the first
+        /// invalid-session for this player (the caller should attempt
+        /// rediscovery once). Returns false if the retry has already been
+        /// attempted, meaning the caller should mark Offline.
         /// </summary>
+        /// <remarks>
+        /// Goes through the same availability path as <see cref="NoteLifecycle"/>:
+        /// InvalidSession is not Online, so the record becomes unavailable
+        /// (lowered, frozen, published) immediately. Before 1.0.12 this only
+        /// set the lifecycle field, leaving IsAvailable stale-true with no
+        /// event — an internally inconsistent record that consumers kept
+        /// treating as live, with the 1s tick advancing a ghost. It also means
+        /// the documented "if still failing, mark OFFLINE" outcome no longer
+        /// depends on a reply that may never come: an unanswered rediscovery
+        /// leaves the player unavailable, which is the user-visible meaning of
+        /// OFFLINE.
+        /// </remarks>
         public bool NoteInvalidSession(string mac)
         {
             var canon = MacAddress.Normalize(mac);
             if (canon == null) return false;
 
+            AvailabilityChange change;
             lock (_gate)
             {
                 if (!_records.TryGetValue(canon, out var rec)) return false;
-
-                if (rec.LifecycleState == PlayerLifecycleState.InvalidSession)
-                {
-                    return false;
-                }
+                if (rec.LifecycleState == PlayerLifecycleState.InvalidSession) return false;
 
                 rec.LifecycleState = PlayerLifecycleState.InvalidSession;
-                return true;
+                change = ApplyAvailability_NoLock(rec);
             }
+
+            if (change != null) RaiseAvailabilityChange(change);
+            return true;
         }
 
         public void SetPlayerId(string mac, string playerId)
@@ -504,13 +634,44 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             {
                 if (!_records.TryGetValue(canon, out var rec)) return;
 
-                rec.Title = Cap(title ?? rec.Title ?? string.Empty);
-                rec.Artist = Cap(artist ?? rec.Artist ?? string.Empty);
-                rec.Album = Cap(album ?? rec.Album ?? string.Empty);
-                if (trackNumber >= 0) rec.TrackNumber = trackNumber;
-                if (durationSeconds >= 0) rec.DurationSeconds = durationSeconds;
-                if (positionSeconds >= 0) rec.PositionSeconds = positionSeconds;
-                rec.IsFrozen = false;
+                // Change-gated like every other mutator (it was the one that
+                // wasn't: before 1.0.12 every 30s status keep-alive fanned an
+                // identical payload to all three consumers, and the Helper
+                // re-committed its now-playing properties into Crestron Home
+                // each time, forever).
+                var newTitle = Cap(title ?? rec.Title ?? string.Empty);
+                var newArtist = Cap(artist ?? rec.Artist ?? string.Empty);
+                var newAlbum = Cap(album ?? rec.Album ?? string.Empty);
+                var newTrack = trackNumber >= 0 ? trackNumber : rec.TrackNumber;
+                var newDuration = durationSeconds >= 0 ? durationSeconds : rec.DurationSeconds;
+                var newPosition = positionSeconds >= 0 ? positionSeconds : rec.PositionSeconds;
+
+                // A freeze is lifted only for a player that is actually
+                // available. A status reply can arrive for an unavailable
+                // record (the subscription keeps pushing keep-alives for a
+                // disconnected client; a reconcile pass walks every bound
+                // MAC), and blindly clearing IsFrozen there defeated the 30s
+                // clear: the sweep requires frozen && unavailable, so stale
+                // title/artist stayed on screen indefinitely.
+                var unfreeze = rec.IsFrozen && rec.IsAvailable;
+
+                var changed = unfreeze
+                    || !string.Equals(rec.Title, newTitle, StringComparison.Ordinal)
+                    || !string.Equals(rec.Artist, newArtist, StringComparison.Ordinal)
+                    || !string.Equals(rec.Album, newAlbum, StringComparison.Ordinal)
+                    || rec.TrackNumber != newTrack
+                    || rec.DurationSeconds != newDuration
+                    || rec.PositionSeconds != newPosition;
+
+                if (!changed) return;
+
+                rec.Title = newTitle;
+                rec.Artist = newArtist;
+                rec.Album = newAlbum;
+                rec.TrackNumber = newTrack;
+                rec.DurationSeconds = newDuration;
+                rec.PositionSeconds = newPosition;
+                if (unfreeze) rec.IsFrozen = false;
                 rec.LastMetadataUpdateUtc = DateTime.UtcNow;
 
                 snapshot = SnapshotMetadata(rec);
@@ -689,11 +850,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 try { RepeatChanged?.Invoke(canon, repeat); } catch { }
                 try { MetadataUpdated?.Invoke(canon, metaSnap); } catch { }
             }
-        }
-
-        private void RaiseAvailability(string canon, bool nowAvail)
-        {
-            try { AvailabilityChanged?.Invoke(canon, nowAvail); } catch { }
         }
 
         private static bool ComputeAvailability(PlayerRecord rec, bool serverConnected)

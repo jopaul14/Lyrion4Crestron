@@ -153,16 +153,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Force the emits only for an observed snapshot — see the matching
-            // comment in SourceDriver.ApplySnapshot for the full reasoning. A
-            // blank cold-boot record must not be reported as "powered off":
-            // the Receiver mirrors the same MAC as the Source, so a fabricated
-            // PoweredOff here is a second chance for a "Power Is Off -> Room
-            // Off" mapping to shut down a player that was playing through the
-            // reboot. Volume and mute are gated the same way for honesty; they
-            // carry no room action, so for them it is only about not
-            // publishing 0 / unmuted for a player nobody has looked at.
-            var observed = snap.IsAvailable;
+            // Force the emits only for an observed snapshot (a full status
+            // response applied — IsObserved, not IsAvailable; see the matching
+            // comment in SourceDriver.ApplySnapshot). A blank cold-boot record
+            // must not be reported as "powered off": the Receiver mirrors the
+            // same MAC as the Source, so a fabricated PoweredOff here is a
+            // second chance for a "Power Is Off -> Room Off" mapping to shut
+            // down a player that was playing through the reboot. Volume and
+            // mute are gated the same way for honesty; they carry no room
+            // action, so for them it is only about not publishing 0 / unmuted
+            // for a player nobody has looked at.
+            var observed = snap.IsObserved;
             UpdateAvailability(snap.IsAvailable);
             UpdatePower(snap.IsPoweredOn, force: observed);
             UpdateVolume(snap.Volume, force: observed);

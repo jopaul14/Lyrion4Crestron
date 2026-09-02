@@ -26,6 +26,25 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             Album = string.Empty;
         }
 
+        // Number of consumers currently bound to this MAC. Source, Helper, and
+        // Receiver all bind the same player; the record must outlive any one
+        // of them, so Unbind decrements and only removes at zero (1.0.12 —
+        // before that, disposing or re-addressing one consumer deleted the
+        // record out from under the other two).
+        public int BindCount { get; set; }
+
+        // True once a FULL status response has been applied to this record —
+        // set by NoteStatusApplied after every field of the reply has been
+        // noted, never by lifecycle alone. This is the only honest answer to
+        // "has the Lyrion Server actually looked at this player": availability
+        // is not (it flips on `client new/reconnect` with no status at all,
+        // and in ApplyStatusResponse it flips before the power field is
+        // parsed). Consumers force-publish a bind-time snapshot only when
+        // this is true. Sticky: a later availability loss lowers the fields
+        // (see PlayerRegistry.LowerForUnavailable_NoLock) but the record has
+        // still been observed, so publishing that lowered state is honest.
+        public bool HasObservedState { get; set; }
+
         // Identity & capabilities
         public string MacAddress { get; }
         public string Name { get; set; }

@@ -71,9 +71,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
 
         public bool BindPlayer(string mac)
         {
-            if (!_registry.Bind(mac)) return false;
-            try { _onPlayerBound(MacAddress.Normalize(mac)); }
-            catch { }
+            if (!_registry.Bind(mac, out var created)) return false;
+
+            // First-bind work (the initial status subscribe) runs once per
+            // player, not once per consumer: the contract says repeat binds
+            // are no-ops, and three consumers binding the same MAC at boot
+            // used to open three subscriptions for one player.
+            if (created)
+            {
+                try { _onPlayerBound(MacAddress.Normalize(mac)); }
+                catch { }
+            }
             return true;
         }
 

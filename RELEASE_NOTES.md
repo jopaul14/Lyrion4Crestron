@@ -1,5 +1,132 @@
 # Release Notes
 
+## 1.0.12 — Registry owns availability; transport and lifecycle fixes (2026-09-02)
+
+All four drivers ship at 1.0.12. This release closes the ten findings of a
+full-file review of the Lyrion Server and the shared contract. **All four
+packages must be updated together:** `Lyrion_Common.dll` changed (a new
+`IsObserved` field on the player snapshot), and a 1.0.11 consumer beside a
+1.0.12 Server will fail to bind.
+
+### Fixed — Lyrion Server
+
+- **Re-saving the LMS settings while connected left the driver permanently
+  "disconnected".** Rebuilding the transport forced the driver and registry
+  to disconnected but never told the connectivity FSM, and detached the old
+  socket's handler before it could report the drop. The FSM stayed committed
+  =Connected, the new socket's Connected matched it, nothing was published,
+  and every command was dropped and every player unavailable — silently —
+  until LMS itself went down for more than five seconds. The FSM is now reset
+  on every rebuild/teardown, so the replacement socket's Connected commits
+  and reconciles normally.
+
+- **A player that dropped off the network and came back stayed OFF/Stopped
+  in Crestron Home while it was on and playing.** The Source and Helper
+  derived "unavailable ⇒ off/stopped" themselves; the registry kept the
+  pre-outage values; on restore the change-gated mutators compared the real
+  value against the registry's *unchanged* copy and published nothing. This
+  is the gap 1.0.8 tried to patch from the wrong side. The registry now owns
+  that derivation: on any availability loss it lowers its own power/playback,
+  publishes them as edges before `AvailabilityChanged(false)`, and re-arms
+  the first-observation rule, so restore is a genuine edge every consumer
+  receives. Consumers no longer derive anything from availability. As a
+  consequence the Receiver now also reports PoweredOff for an unreachable
+  player, matching the Source.
+
+- **After an LMS restart, a player that was still offline was reported
+  powered ON.** `RepublishAll` re-emitted the registry's stale `IsPoweredOn`
+  for a record that had gone Offline before the outage; the Source lowered
+  power on the availability event and raised it again on the next — a
+  PoweredOn edge for an unreachable player, which a "Power Is On → Room On"
+  mapping turned into a real Room On after every LMS reboot. Fixed by the
+  registry lowering above.
+
+- **Disposing or re-addressing one consumer killed the other two for the
+  same room.** All three consumers bind the same MAC and shared one registry
+  record; `Unbind` removed it outright. Reloading just the (optional)
+  Receiver left the Source and Helper bound to a MAC the registry no longer
+  knew — every notification and command dropped, no event, no log. Records
+  are now reference-counted and removed only when the last consumer lets go.
+  First-bind work (the initial status subscribe) now runs once per player
+  rather than once per consumer.
+
+- **A rejected login was an endless two-second reconnect loop with a log
+  line each cycle and no explanation.** Two bugs: the backoff counter and
+  the connect announcement were reset the instant a socket connected, before
+  login, so a server that accepted and then closed the socket never advanced
+  past the schedule's first step; and the "login failed" line could never be
+  recognised, because the parser classifies it as `LoginAck` and the check
+  required `GlobalRaw`. The schedule now resets only after a session that
+  lived ten seconds, a short-lived accept-then-close keeps escalating in
+  silence, and the auth failure is surfaced once per outage.
+
+- **`NoteMetadata` published on every call and lifted freezes blindly.** It
+  was the one registry mutator without a change-gate: every 30 s status
+  keep-alive fanned an identical payload to all three consumers, and the
+  Helper re-committed its now-playing properties into Crestron Home each
+  time, forever. It also cleared `IsFrozen` unconditionally, so a keep-alive
+  for a *disconnected* player un-froze its record and the documented 30 s
+  clear never ran. Now gated on the six fields, and a freeze is lifted only
+  for an available record. Separately, availability restore now lifts a
+  freeze itself and publishes the live payload, instead of waiting for the
+  next status push.
+
+- **A status reply marked the player Online regardless of
+  `player_connected`, and `client forget` left the record internally
+  inconsistent.** Keep-alives for a disconnected client carry
+  `player_connected:0`; that is now honoured (absence still means Online).
+  `NoteInvalidSession` goes through the same availability path as every
+  other lifecycle change, so a forgotten player becomes unavailable
+  immediately instead of sitting available with a non-Online lifecycle and a
+  1 s tick advancing a ghost.
+
+- **`mode` was noted before `power` in a status reply.** A reply carrying
+  `mode:play` with `power:0` raised a derived ON edge that the explicit OFF
+  a few lines later contradicted — the 1.0.5 bounce-back class, repeated on
+  every keep-alive while it held. Power is now noted first.
+
+- **The 1.0.11 "observed" proxy had a hole.** It used `IsAvailable`, which
+  flips true on `client new`/`reconnect` with no status at all, and inside
+  a status response before power is parsed; a consumer binding in that
+  window still force-published a blank PoweredOff. "Observed" is now a
+  registry fact (`LyrionPlayerSnapshot.IsObserved`), set only after a full
+  status response has been applied, and consumers force on it alone.
+  Playback is forced regardless at bind, because the RAD default `NoDisc` is
+  wrong for an idle audio player and the registry's default `Stopped` is
+  right — the 1.0.11 change had left an idle player showing NoDisc after a
+  cold boot.
+
+- **The connectivity FSM logged "connectivity unstable" on every boot.** Its
+  fast-flap test measured against a last-commit time initialised to
+  construction time, so the first Connecting transition — always within
+  milliseconds — looked like a flap. It now measures against "never".
+
+### Changed
+
+- The Lyrion Server's installer-facing description no longer claims a
+  JSON-RPC connection (reserved, unused) and now names all three consumers.
+- CLAUDE.md's change-gating invariant now lists its three sanctioned
+  exceptions, and two new invariants: the registry owns every derivation,
+  and never force-publish an unobserved value.
+
+### Retest
+
+1. **Per-player reconnect.** Player on and playing; pull its network cable
+   for ~10 s; reconnect. Room shows off during the outage and **comes back
+   on, playing, within a few seconds of reconnect.**
+2. **LMS restart with one player offline.** Two players, one unplugged. Stop
+   LMS for ~30 s, start it. **The unplugged player's room stays off; the
+   other's returns.**
+3. **Config re-save.** With everything connected, open the Lyrion Server's
+   settings in Crestron Home and save them unchanged. **Within ~10 s the
+   log shows `Lyrion Server: LMS CONNECTED`, and the rooms still work.**
+4. **Reload one consumer.** Re-import only the Receiver package. **The
+   Source and Helper for that room keep working.**
+5. **Wrong password.** Set a bad LMS password. **One `ERROR auth` line, then
+   the reconnect interval grows 2→5→10→30→60 s with no further log lines.**
+   Restore the password.
+6. **Boot log.** Reboot the processor. **No "connectivity unstable" line.**
+
 ## 1.0.11 — A processor reboot no longer shuts down a playing player (2026-09-02)
 
 All four drivers ship at 1.0.11.
@@ -47,8 +174,10 @@ All four drivers ship at 1.0.11.
    players on and start music. Power the processor on. **Both keep playing;
    both rooms show on.**
 2. One player on and playing, the other switched off. Reload only the
-   Lyrion Server driver (or bump its version and re-import it alone). **The
-   off player's room shows off; the playing player's room shows on.**
+   Lyrion Server driver. (Re-importing it alone is safe here only because
+   `Lyrion_Common.dll` did not change in 1.0.11; when it does, all four
+   packages must move together — see the 1.0.10 note.) **The off player's
+   room shows off; the playing player's room shows on.**
 
 ## 1.0.10 — The Gateway is now the Lyrion Server (2026-09-02)
 
