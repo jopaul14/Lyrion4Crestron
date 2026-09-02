@@ -162,7 +162,14 @@ Deploy in this order:
 
    Because a preset stores a position rather than a name, **reordering your Lyrion favourites renumbers them** and will silently repoint a button at a different station. Re-check presets after reorganising favourites.
 
-6. **Route audio.** In Crestron Home, route the Source's digital or analog output to the Receiver's matching input (or to a 3rd-party AVR), and from there to the room speakers.
+6. **Route audio, and set the room's default route.** In Crestron Home, route the Source's digital or analog output to the Receiver's matching input (or to a 3rd-party AVR), and from there to the room speakers.
+
+   Then, for each room, make **both** of these settings — they are required, not optional:
+
+   - On the **Source Routes** configuration page, select **Available Sources** and make sure the **Default Source** is the **Lyrion Source** device.
+   - On the **Preferred Routing** page, make sure the **Source** is set to the **Lyrion Source** device and the **Audio Endpoint** is set to the **Lyrion Receiver** device (or the third-party AVR you are using in its place).
+
+   **Why this matters:** a Crestron Home room is "on" when a source is *routed* to it, not when a device reports power. Every `Room On` — from a Quick Action, a scene, or the Power Is On mapping in step 8 — routes the room's **default** source. With no default source set, `Room On` has nothing to route and **silently does nothing**, while `Room Off` still works because it tears down whatever is routed. The symptom is a room that turns off correctly but never turns on from the player, even though the Helper shows the player as on. That is a missing default route, not a driver fault — see the note in step 8.
 
 7. **Optional: decide whether to show the Source tile in the room UI.** The Lyrion Source is a routable Blu-ray Player, so by default Crestron Home shows it as a selectable source in the room, alongside the Helper's rich now-playing UI. You can hide it, but **in most cases you should leave it visible.**
 
@@ -197,6 +204,8 @@ Deploy in this order:
    **Room B is the important one to get right.** In a room with a shared AVR, the Lyrion player may power on or off for reasons that have nothing to do with what the room is doing — a whole-house scene, someone else's app, or the player simply stopping. If those events are mapped, selecting a different input can be interrupted by the room switching itself to Lyrion, or a Lyrion power-off can black out a room mid-movie. Leaving both on *Nothing* does not blind you: the **Lyrion Helper's room-page tile still reports the player's own on/off state** (power badge plus a status line reading `Off` or the current track), and if you left the Source tile visible per step 7 the room's media on/off indication is there too. The player's state is simply reported rather than acted on.
 
    Room C's trade-off: if Lyrion is the active source and it powers off, the room stays on and silent until someone turns it off. That is usually preferable to the room going dark unexpectedly, but it is a real difference from Room A.
+
+   > **If "Power Is Off → Room Off" works but "Power Is On → Room On" does nothing, check step 6 before anything else.** `Room On` routes the room's default source; with no default source (or no preferred route) set, it silently does nothing while `Room Off` keeps working — which looks exactly like a driver that reports off but never on. The Helper tile showing the player as on is not evidence either way: it shows the player's power level, not whether the room can route. A driver-free check settles it in a minute: create a Quick Action that does only `Room On` for that room and press it with the room off. If the room doesn't come on, no driver change can help, and the fix is step 6. (1.0.8 chased this as a driver bug and regressed; see RELEASE_NOTES.)
 
    > **Requires driver version 1.0.5 or later.** On 1.0.4 and earlier, LMS's own power-off sequence briefly reported the player as ON again about a millisecond after reporting it OFF. With Room A or C configured, Crestron Home acted on that spurious edge and turned the room straight back on — the room would appear to power off and then bounce back on with the music playing, one to two seconds later. If you see that symptom, you are running a cached older driver; confirm the version and re-import.
 

@@ -31,15 +31,23 @@ The Receiver was hit hardest. In 1.0.7 it never emitted power on an availability
 change at all, so this path was entirely new there — and the Receiver is the
 device most installers power on.
 
-### Status of the original problem
+### The original problem was configuration, not the driver
 
-The bug 1.0.8 set out to fix is real and remains open: with a Room A mapping,
-"Power Is Off → Room Off" works and "Power Is On → Room On" often does not.
-1.0.8's diagnosis — that power reaches Crestron Home only as an edge, through
-change-gates in series — is still the best available theory, but it was never
-confirmed against a live system, and the fix built on it regressed behaviour.
-The next attempt should start by instrumenting what the Source actually emits,
-not by changing what it emits.
+The bug 1.0.8 set out to fix — "Power Is Off → Room Off" works but "Power Is
+On → Room On" does nothing — was **a missing default route in Crestron Home**.
+A room is on when a source is routed to it; `Room On` routes the room's
+*default* source, and with no Default Source (Source Routes → Available
+Sources) or Preferred Routing set, it silently does nothing while `Room Off`
+keeps working. Setting both to the Lyrion devices fixed it with **no driver
+change at all**. BUILD.md step 6 now makes this a required setup step, and
+step 8 says how to tell this apart from a driver fault in one minute (a
+driver-free `Room On` Quick Action).
+
+1.0.8's "edge starvation" diagnosis was wrong. It did not even fit the
+reported sequence — a genuine off→on cycle still failed — and should not be
+revisited. The Source emits `PoweredOn` and `PoweredOff` symmetrically on
+every real transition; that was verified down to the framework's IL and was
+never the problem.
 
 ## 1.0.7 — Helper layout fixes (2026-08-31)
 
