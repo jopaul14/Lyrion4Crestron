@@ -40,9 +40,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
         // is not (it flips on `client new/reconnect` with no status at all,
         // and in ApplyStatusResponse it flips before the power field is
         // parsed). Consumers force-publish a bind-time snapshot only when
-        // this is true. Sticky: a later availability loss lowers the fields
-        // (effective state — see PlayerRegistry.EffectivePower) but the record has
-        // still been observed, so publishing that lowered state is honest.
+        // this is true. Sticky: a later availability loss changes only what is
+        // PUBLISHED (effective state: off/stopped while unavailable — see
+        // PlayerRegistry.EffectivePower); the record itself has still been
+        // observed, so forcing that effective state at bind is honest.
         public bool HasObservedState { get; set; }
 
         // Identity & capabilities
