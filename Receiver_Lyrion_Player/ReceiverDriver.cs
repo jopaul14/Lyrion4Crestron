@@ -153,13 +153,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Force the emits: the bind-time snapshot must reach Crestron Home
-            // even when a value matches the framework default and would
-            // otherwise be swallowed by the change-gate.
+            // Force the emits only for an observed snapshot — see the matching
+            // comment in SourceDriver.ApplySnapshot for the full reasoning. A
+            // blank cold-boot record must not be reported as "powered off":
+            // the Receiver mirrors the same MAC as the Source, so a fabricated
+            // PoweredOff here is a second chance for a "Power Is Off -> Room
+            // Off" mapping to shut down a player that was playing through the
+            // reboot. Volume and mute are gated the same way for honesty; they
+            // carry no room action, so for them it is only about not
+            // publishing 0 / unmuted for a player nobody has looked at.
+            var observed = snap.IsAvailable;
             UpdateAvailability(snap.IsAvailable);
-            UpdatePower(snap.IsPoweredOn, force: true);
-            UpdateVolume(snap.Volume, force: true);
-            UpdateMute(snap.Muted, force: true);
+            UpdatePower(snap.IsPoweredOn, force: observed);
+            UpdateVolume(snap.Volume, force: observed);
+            UpdateMute(snap.Muted, force: observed);
         }
 
         // ===== Lyrion Server event handlers =====

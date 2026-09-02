@@ -144,12 +144,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Force the emits: the bind-time snapshot must reach Crestron Home
-            // even when a value matches the framework default and would
-            // otherwise be swallowed by the change-gate.
+            // Force the emits ONLY for a snapshot that reflects something the
+            // Lyrion Server has actually observed. A record is available only
+            // after a status response has arrived (it starts Unknown, and
+            // availability requires Online), so IsAvailable is a sound proxy
+            // for "observed". When it is true this is the bind-after-reload
+            // case: the registry holds real state that must reach Crestron
+            // Home even where it equals the framework default (f845ec6).
+            //
+            // When it is false — every cold boot — the record is a blank
+            // default, and forcing it would report "powered off" for a player
+            // nobody has looked at yet. With a "Power Is Off -> Room Off"
+            // mapping, Crestron Home acts on that fabrication: Room Off sends
+            // PowerOff, and a player that was happily playing through the
+            // processor reboot gets shut down (LMS pauses it first, as part of
+            // its own power-off sequence). Seen live 2026-09-02: two players
+            // playing across a reboot, one killed every time, always the same
+            // one — whichever Source bound after the Actions & Events engine
+            // was listening. Un-forced, these calls are change-gated no-ops
+            // against the RAD defaults, and the real state arrives seconds
+            // later as a genuine edge from the registry.
+            var observed = snap.IsAvailable;
             UpdateAvailability(snap.IsAvailable);
-            UpdatePower(snap.IsPoweredOn, force: true);
-            UpdatePlayback(snap.PlaybackState, force: true);
+            UpdatePower(snap.IsPoweredOn, force: observed);
+            UpdatePlayback(snap.PlaybackState, force: observed);
         }
 
         // ===== Lyrion Server event handlers =====

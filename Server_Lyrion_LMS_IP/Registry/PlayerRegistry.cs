@@ -341,16 +341,33 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             var canon = MacAddress.Normalize(mac);
             if (canon == null) return;
 
-            bool changed;
+            bool publish;
             lock (_gate)
             {
                 if (!_records.TryGetValue(canon, out var rec)) return;
+
+                // The FIRST explicit report for a record always publishes, even
+                // when its value equals the blank default. This is still
+                // change-gated in the honest sense: HasExplicitPower flipping
+                // from false to true is the change, and it happens exactly
+                // once per record. Without it a first observation of "power 0"
+                // is silent (false == false), so a consumer whose own copy is
+                // stale — a Source that stayed loaded through a Lyrion Server
+                // driver reload while the player was switched off — would
+                // never be told. Consumers change-gate on their side, so a
+                // first report that matches what they already hold is a no-op
+                // there. Bind-time snapshots are deliberately NOT forced for
+                // unobserved records (see SourceDriver.ApplySnapshot); this
+                // is the other half of that contract: the first real
+                // observation is the moment consumers get synced.
+                var first = !rec.HasExplicitPower;
                 rec.HasExplicitPower = true;
-                changed = rec.IsPoweredOn != isOn;
+                var changed = rec.IsPoweredOn != isOn;
                 if (changed) rec.IsPoweredOn = isOn;
+                publish = changed || first;
             }
 
-            if (changed) try { PowerStateChanged?.Invoke(canon, isOn); } catch { }
+            if (publish) try { PowerStateChanged?.Invoke(canon, isOn); } catch { }
         }
 
         public void NoteVolume(string mac, int level)

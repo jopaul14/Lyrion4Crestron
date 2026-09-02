@@ -20,7 +20,7 @@
       "Manufacturer": "Lyrion Community",
       "BaseModel": "Lyrion Source",
       "VersionDate": "2026-08-31 00:00:00.000",
-      "DriverVersion": "1.0.10",
+      "DriverVersion": "1.0.11",
       "SdkVersion": "4.00.000",
       "Description": "Lyrion Source. Per-room routable audio source for a single Lyrion player. Bound by MAC address; forwards Play/Pause/Stop/Next/Previous/Power to the Lyrion Server and never connects to LMS directly. Declares one digital and one analog audio output for Crestron Home source routing. Volume and rich now-playing UI live in the companion Lyrion Receiver and Lyrion Helper drivers.",
       "Guid": "bfe25c99-f33f-4234-a338-64d42a1cd184",

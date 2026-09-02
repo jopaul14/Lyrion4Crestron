@@ -1,5 +1,55 @@
 # Release Notes
 
+## 1.0.11 — A processor reboot no longer shuts down a playing player (2026-09-02)
+
+All four drivers ship at 1.0.11.
+
+### Fixed
+
+- **Rebooting the Crestron Home processor while a player was playing could
+  power that player off.** Seen live with two players playing through a
+  reboot: one was shut down every time, always the same one, with no
+  configuration difference between the rooms.
+
+  At startup, when a Source or Receiver bound to the Lyrion Server, it
+  force-published its bind-time snapshot to Crestron Home. That force was
+  added in 1.0.3 for the driver-reload case, where the registry holds real
+  state that must reach Crestron Home even when it equals the framework
+  default. But on a cold boot the registry record is brand new — nothing has
+  been observed yet — so the driver was reporting **"powered off" for a
+  player nobody had looked at**. With the recommended "Power Is Off → Room
+  Off" mapping, Crestron Home acted on that fabrication: Room Off sent
+  PowerOff, and LMS paused the player and switched it off. Which player died
+  depended only on whether its Source bound before or after Crestron Home's
+  Actions & Events engine was listening — deterministic by driver load
+  order, hence always the same one.
+
+  The bind-time snapshot is now force-published **only when the record has
+  actually been observed** (it is available, which requires a status
+  response to have arrived). A cold-boot snapshot is a change-gated no-op
+  against the framework defaults, and the real state arrives seconds later
+  as a genuine edge. This change only *removes* an unobserved assertion; it
+  cannot produce a spurious power-on.
+
+- **The first explicit power report for a player now always publishes**,
+  even when its value equals the blank default. Previously a first
+  observation of `power 0` was silent (`false == false`), which the change
+  above would otherwise expose in one corner: a Lyrion Server driver reload
+  while a player was switched off would leave a stale ON in a Source that
+  stayed loaded. `HasExplicitPower` flipping from false to true is the
+  change being gated on, and it happens once per record; consumers still
+  change-gate on their side, so a first report matching what they hold is a
+  no-op there.
+
+### Retest
+
+1. Two players off, both rooms off. Power the processor off. Power both
+   players on and start music. Power the processor on. **Both keep playing;
+   both rooms show on.**
+2. One player on and playing, the other switched off. Reload only the
+   Lyrion Server driver (or bump its version and re-import it alone). **The
+   off player's room shows off; the playing player's room shows on.**
+
 ## 1.0.10 — The Gateway is now the Lyrion Server (2026-09-02)
 
 All four drivers ship at 1.0.10. **No behaviour changed.** This release renames
