@@ -1,31 +1,31 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
 using System.Collections.Generic;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Registry;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Server.Registry;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
+namespace LyrionCommunity.Crestron.Lyrion.Server.Services
 {
     /// <summary>
-    /// Implementation of the cross-driver gateway service. Commands are
+    /// Implementation of the cross-driver Lyrion Server service. Commands are
     /// translated into LMS CLI lines and dispatched via the supplied sender;
     /// events are forwarded from the registry. Commands issued while the
-    /// gateway is not CONNECTED are dropped (per CLAUDE.md "Commands dropped
+    /// Lyrion Server is not CONNECTED are dropped (per CLAUDE.md "Commands dropped
     /// when server is not connected").
     /// </summary>
-    internal sealed class LyrionGatewayServiceImpl : ILyrionGatewayService
+    internal sealed class LyrionServerServiceImpl : ILyrionServerService
     {
         private readonly PlayerRegistry _registry;
         private readonly Func<string, bool> _sendCliLine;
         private readonly Func<bool> _isServerConnected;
         private readonly Action<string> _onPlayerBound;
 
-        public LyrionGatewayServiceImpl(
+        public LyrionServerServiceImpl(
             PlayerRegistry registry,
             Func<string, bool> sendCliLine,
             Func<bool> isServerConnected,

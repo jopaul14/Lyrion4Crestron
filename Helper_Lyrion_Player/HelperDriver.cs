@@ -87,7 +87,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private HelperProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
-        private ILyrionGatewayService _gateway;
+        private ILyrionServerService _server;
         private volatile bool _disposed;
 
         private PropertyValue<string> _titleProp;
@@ -150,7 +150,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             DeviceProtocol = _protocol;
             DeviceProtocol.Initialize(DriverData);
 
-            LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
+            LyrionServerServiceRegistry.Subscribe(OnServerAvailable);
         }
 
         public override void Connect()
@@ -215,26 +215,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         {
             switch (command)
             {
-                case CmdPlay: InvokeOnGateway((svc, mac) => svc.Play(mac)); break;
-                case CmdPause: InvokeOnGateway((svc, mac) => svc.Pause(mac)); break;
-                case CmdStop: InvokeOnGateway((svc, mac) => svc.Stop(mac)); break;
-                case CmdNext: InvokeOnGateway((svc, mac) => svc.Next(mac)); break;
-                case CmdPrevious: InvokeOnGateway((svc, mac) => svc.Previous(mac)); break;
+                case CmdPlay: InvokeOnServer((svc, mac) => svc.Play(mac)); break;
+                case CmdPause: InvokeOnServer((svc, mac) => svc.Pause(mac)); break;
+                case CmdStop: InvokeOnServer((svc, mac) => svc.Stop(mac)); break;
+                case CmdNext: InvokeOnServer((svc, mac) => svc.Next(mac)); break;
+                case CmdPrevious: InvokeOnServer((svc, mac) => svc.Previous(mac)); break;
                 case CmdTogglePlay:
-                    InvokeOnGateway((svc, mac) =>
+                    InvokeOnServer((svc, mac) =>
                     {
                         if (_playbackStateProp.Value == "Playing") svc.Pause(mac);
                         else svc.Play(mac);
                     });
                     break;
-                case CmdToggleRepeat: InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, !_repeatProp.Value)); break;
-                case CmdToggleShuffle: InvokeOnGateway((svc, mac) => svc.SetShuffle(mac, !_shuffleProp.Value)); break;
-                case CmdPowerOn: InvokeOnGateway((svc, mac) => svc.PowerOn(mac)); break;
-                case CmdPowerOff: InvokeOnGateway((svc, mac) => svc.PowerOff(mac)); break;
-                case CmdPowerToggle: InvokeOnGateway((svc, mac) => svc.PowerToggle(mac)); break;
-                case CmdVolumeUp: InvokeOnGateway((svc, mac) => svc.VolumeUp(mac, _volumeStep)); break;
-                case CmdVolumeDown: InvokeOnGateway((svc, mac) => svc.VolumeDown(mac, _volumeStep)); break;
-                case CmdToggleMute: InvokeOnGateway((svc, mac) => svc.SetMute(mac, !_muted)); break;
+                case CmdToggleRepeat: InvokeOnServer((svc, mac) => svc.SetRepeat(mac, !_repeatProp.Value)); break;
+                case CmdToggleShuffle: InvokeOnServer((svc, mac) => svc.SetShuffle(mac, !_shuffleProp.Value)); break;
+                case CmdPowerOn: InvokeOnServer((svc, mac) => svc.PowerOn(mac)); break;
+                case CmdPowerOff: InvokeOnServer((svc, mac) => svc.PowerOff(mac)); break;
+                case CmdPowerToggle: InvokeOnServer((svc, mac) => svc.PowerToggle(mac)); break;
+                case CmdVolumeUp: InvokeOnServer((svc, mac) => svc.VolumeUp(mac, _volumeStep)); break;
+                case CmdVolumeDown: InvokeOnServer((svc, mac) => svc.VolumeDown(mac, _volumeStep)); break;
+                case CmdToggleMute: InvokeOnServer((svc, mac) => svc.SetMute(mac, !_muted)); break;
                 default:
                     var slot = PresetSlotFromCommand(command);
                     if (slot >= 0) TriggerPreset(slot);
@@ -272,7 +272,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             lock (_gate) { preset = _presets[slot]; }
             if (preset == null) return;
 
-            InvokeOnGateway((svc, mac) => svc.SendPlayerCommand(mac, preset.Command));
+            InvokeOnServer((svc, mac) => svc.SendPlayerCommand(mac, preset.Command));
         }
 
         protected override IOperationResult SetDriverPropertyValue<T>(string propertyKey, T value)
@@ -282,19 +282,19 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 case PropShuffle:
                     var shuffle = value as bool?;
                     if (shuffle.HasValue)
-                        InvokeOnGateway((svc, mac) => svc.SetShuffle(mac, shuffle.Value));
+                        InvokeOnServer((svc, mac) => svc.SetShuffle(mac, shuffle.Value));
                     return new OperationResult(OperationResultCode.Success);
 
                 case PropRepeat:
                     var repeat = value as bool?;
                     if (repeat.HasValue)
-                        InvokeOnGateway((svc, mac) => svc.SetRepeat(mac, repeat.Value));
+                        InvokeOnServer((svc, mac) => svc.SetRepeat(mac, repeat.Value));
                     return new OperationResult(OperationResultCode.Success);
 
                 case PropPower:
                     var power = value as bool?;
                     if (power.HasValue)
-                        InvokeOnGateway((svc, mac) =>
+                        InvokeOnServer((svc, mac) =>
                         {
                             if (power.Value) svc.PowerOn(mac);
                             else svc.PowerOff(mac);
@@ -317,7 +317,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (canon == null) return;
 
             lock (_gate) { _configuredMac = canon; }
-            TryBindToGateway();
+            TryBindToServer();
         }
 
         private void OnPresetReceived(int slot, string configured)
@@ -368,20 +368,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         [ProgrammableOperation("Play Preset 4")]
         public void PlayPreset4() => TriggerPreset(3);
 
-        // ===== Gateway binding =====
+        // ===== Lyrion Server binding =====
 
-        private void OnGatewayAvailable(ILyrionGatewayService service)
+        private void OnServerAvailable(ILyrionServerService service)
         {
             if (_disposed) return;
 
-            ILyrionGatewayService oldService;
+            ILyrionServerService oldService;
             lock (_gate)
             {
                 if (_disposed) return;
-                if (ReferenceEquals(_gateway, service)) return;
+                if (ReferenceEquals(_server, service)) return;
 
-                oldService = _gateway;
-                _gateway = service;
+                oldService = _server;
+                _server = service;
                 _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
@@ -410,17 +410,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 try { oldService.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
             }
 
-            TryBindToGateway();
+            TryBindToServer();
         }
 
-        private void TryBindToGateway()
+        private void TryBindToServer()
         {
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             string previousMac = null;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _configuredMac;
                 if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
                 {
@@ -464,7 +464,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             UpdateVolumeStep(snap.VolumeStep);
         }
 
-        // ===== Gateway event handlers =====
+        // ===== Lyrion Server event handlers =====
 
         private void OnAvailabilityChanged(string mac, bool isAvailable)
         {
@@ -725,13 +725,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             return string.Equals(bound, mac, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void InvokeOnGateway(Action<ILyrionGatewayService, string> action)
+        private void InvokeOnServer(Action<ILyrionServerService, string> action)
         {
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _boundMac;
             }
             if (svc == null || string.IsNullOrEmpty(mac)) return;
@@ -752,7 +752,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
 
-            try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
+            try { LyrionServerServiceRegistry.Unsubscribe(OnServerAvailable); } catch { }
 
             if (_protocol != null)
             {
@@ -760,13 +760,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 try { _protocol.PresetReceived -= OnPresetReceived; } catch { }
             }
 
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _boundMac;
-                _gateway = null;
+                _server = null;
                 _boundMac = null;
             }
 

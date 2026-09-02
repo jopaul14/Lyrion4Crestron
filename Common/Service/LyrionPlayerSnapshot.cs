@@ -8,12 +8,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
     /// Immutable point-in-time view of one player. Returned to consumers from
-    /// <see cref="ILyrionGatewayService.TryGetSnapshot"/> so a newly-bound
+    /// <see cref="ILyrionServerService.TryGetSnapshot"/> so a newly-bound
     /// Source / Helper / Receiver driver can paint its UI without waiting for
     /// the next event tick.
     /// </summary>
     /// <remarks>
-    /// Snapshots are produced inside the gateway's player registry under its
+    /// Snapshots are produced inside the Lyrion Server's player registry under its
     /// lock, so all fields are consistent with respect to each other. The
     /// snapshot becomes stale as soon as it is returned — consumers should
     /// subscribe to events for ongoing updates.
@@ -66,8 +66,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 
         /// <summary>
         /// Whether this player supports explicit power on/off. When false,
-        /// <see cref="ILyrionGatewayService.PowerOn"/> falls back to Play
-        /// and <see cref="ILyrionGatewayService.PowerOff"/> falls back to Stop.
+        /// <see cref="ILyrionServerService.PowerOn"/> falls back to Play
+        /// and <see cref="ILyrionServerService.PowerOff"/> falls back to Stop.
         /// </summary>
         public bool SupportsPower { get; }
 

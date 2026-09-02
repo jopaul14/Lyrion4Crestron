@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.9).
+four-driver refactor is **complete** (all drivers ship together at 1.0.10).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -13,19 +13,19 @@ before making behavioral changes; where any other document disagrees, the PRD wi
 
 | Project | Role | Device type |
 |---|---|---|
-| `Gateway_Lyrion_LMS_IP` | Lyrion Server — sole LMS client, owns all state | Platform (Entity Model SDK) |
+| `Server_Lyrion_LMS_IP` | Lyrion Server — sole LMS client, owns all state | Platform (Entity Model SDK) |
 | `Source_Lyrion_Player` | Per-room routable audio source | Bluray Player (RAD) |
 | `Helper_Lyrion_Player` | Per-room rich now-playing UI | Media Player extension (RAD) |
 | `Receiver_Lyrion_Player` | Optional per-room volume/routing endpoint | AV Receiver (RAD) |
-| `Common` | Shared service contract (`ILyrionGatewayService`, DTOs, registry) | class library |
+| `Common` | Shared service contract (`ILyrionServerService`, DTOs, registry) | class library |
 
 ## Invariants (never violate)
 
-- **Only the Gateway opens LMS connections** (CLI socket + reserved JSON-RPC).
-  Source/Helper/Receiver never touch the network; they consume the Gateway's
-  service via `LyrionGatewayServiceRegistry` and bind by MAC address.
+- **Only the Lyrion Server opens LMS connections** (CLI socket + reserved JSON-RPC).
+  Source/Helper/Receiver never touch the network; they consume the Lyrion Server's
+  service via `LyrionServerServiceRegistry` and bind by MAC address.
 - **Source/Helper/Receiver are thin adapters** — no business logic, no state
-  ownership. All derivation lives in the Gateway's `PlayerRegistry`.
+  ownership. All derivation lives in the Lyrion Server's `PlayerRegistry`.
 - **Logging is minimal and flash-safe.** Allowed: server connectivity
   transitions (smoothed, oscillation-suppressed), one reconcile summary per
   reconnect, bound-MAC-missing warning, real errors, one startup line per
@@ -34,15 +34,15 @@ before making behavioral changes; where any other document disagrees, the PRD wi
 - **All registry mutations are change-gated** — no change, no event, no log.
 - Volume (0–100, no rescaling) is owned by the Receiver but also surfaced on the
   Helper page (Vol±/Mute buttons); both route to the same
-  gateway `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows
-  the Receiver's configured `VolumeStep`, shared per-MAC through the Gateway
+  Lyrion Server `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows
+  the Receiver's configured `VolumeStep`, shared per-MAC through the Lyrion Server
   registry. Shuffle/repeat are booleans exposed only by the Helper. Seek is
   contract-only (Crestron Home has no draggable seek bar).
 - **Presets are installer-declared, never discovered.** Four `Name|Icon|Command`
   user attributes on the Helper; the command is the LMS CLI text that follows the
   MAC. The driver never scans the server for playlists — browsing the library is
   an explicit non-goal (see the PRD). Presets reach LMS only through
-  `ILyrionGatewayService.SendPlayerCommand`, which strips control characters so
+  `ILyrionServerService.SendPlayerCommand`, which strips control characters so
   one configured value cannot smuggle in a second CLI command. The four
   `[ProgrammableOperation]` names on `HelperDriver` are baked into the package at
   build time (`programming/HelperDriver.json`) and cannot carry installer labels.

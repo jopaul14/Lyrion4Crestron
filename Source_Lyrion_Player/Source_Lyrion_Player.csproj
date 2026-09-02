@@ -2,7 +2,7 @@
 <!--
   Source_Lyrion_Player - Driver 2 of the four-driver Lyrion architecture.
   Per-room routable audio source (RAD Bluray Player). Binds to one MAC
-  address; consumes the ILyrionGatewayService published by Driver 1. Never
+  address; consumes the ILyrionServerService published by Driver 1. Never
   connects to LMS.
 -->
 <Project Sdk="Microsoft.NET.Sdk">

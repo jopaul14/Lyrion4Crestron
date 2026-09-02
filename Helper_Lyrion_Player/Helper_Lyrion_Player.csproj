@@ -4,7 +4,7 @@
   Per-room rich UI extension device (RAD AExtensionDevice, DeviceType
   "Media Player", IsExtensionDevice=true). Hosts the Crestron Home
   now-playing UI for one Lyrion player: metadata, transport, shuffle,
-  repeat, power. Bound by MAC address; consumes the gateway service.
+  repeat, power. Bound by MAC address; consumes the Lyrion Server service.
   Never connects to LMS.
 -->
 <Project Sdk="Microsoft.NET.Sdk">

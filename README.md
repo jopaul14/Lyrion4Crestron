@@ -10,7 +10,7 @@ Four-driver suite (Crestron Drivers SDK V2 / Entity Model + RAD, .NET Framework 
 
 | Driver | Role | Instances | Connects to LMS? |
 |---|---|---|---|
-| **Gateway_Lyrion_LMS_IP** (Lyrion Server) | Owns the single CLI + JSON-RPC connection to LMS. Publishes a shared service consumed by the other three drivers. | 1 per home | Yes |
+| **Server_Lyrion_LMS_IP** (Lyrion Server) | Owns the single CLI + JSON-RPC connection to LMS. Publishes a shared service consumed by the other three drivers. | 1 per home | Yes |
 | **Source_Lyrion_Player** (Lyrion Source) | Per-room routable audio source (RAD Bluray Player). Surfaces Play/Pause/Stop/Next/Prev/Power; declares analog + digital audio outputs. | 1 per player | No |
 | **Helper_Lyrion_Player** (Lyrion Helper) | Per-room rich UI extension (RAD Media Player extension). Surfaces now-playing metadata, transport, shuffle, repeat, power. | 1 per player | No |
 | **Receiver_Lyrion_Player** (Lyrion Receiver) | Per-room routable AV receiver (RAD AV Receiver). Surfaces volume (0-100), mute, power; declares analog + digital audio inputs and speaker outputs. Optional. | 1 per player | No |
@@ -23,7 +23,7 @@ Pre-built driver packages are attached to each [GitHub Release](https://github.c
 
 | Package | Install | Required? |
 |---|---|---|
-| `Gateway_Lyrion_LMS_IP.pkg` | Once per home | Required |
+| `Server_Lyrion_LMS_IP.pkg` | Once per home | Required |
 | `Source_Lyrion_Player.pkg` | Once per player (room) | Required |
 | `Helper_Lyrion_Player.pkg` | Once per player (room) | Required |
 | `Receiver_Lyrion_Player.pkg` | Once per player (room) | Optional (omit if using an external amp/AVR) |
@@ -31,7 +31,7 @@ Pre-built driver packages are attached to each [GitHub Release](https://github.c
 Quick install — see [BUILD.md](BUILD.md) for the full walk-through:
 
 1. Copy the `.pkg` files to `Internal Flash/user/ThirdPartyDrivers/Import` on the control system using Crestron Toolbox.
-2. In the Crestron Home Setup app, add the **Gateway first** (one per home): set the LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), and optional username/password.
+2. In the Crestron Home Setup app, add the **Lyrion Server first** (one per home): set the LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), and optional username/password.
 3. For each room/player, add **Source** and **Helper** (and optionally **Receiver**) using the **same player MAC address** on all three.
 4. Route the Source's digital or analog output to the Receiver input (or a 3rd-party AVR), then on to the room speakers. Then set the room's **Default Source** (Source Routes → Available Sources) to the Lyrion Source, and on **Preferred Routing** set the Source to the Lyrion Source and the Audio Endpoint to the Lyrion Receiver (or your AVR). Without a default route, `Room On` silently does nothing. See [BUILD.md](BUILD.md) step 6.
 5. Optionally, in **Source Routes → Available Sources**, deselect "Lyrion Source" for the room to hide its tile. Most setups should leave it visible — the room's media on/off indication in the Crestron Home app comes from that tile. See [BUILD.md](BUILD.md) step 7.
@@ -42,7 +42,7 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 
 ```
 +--------------------------------------------------------------------------------+
-|  Gateway_Lyrion_LMS_IP                                         (one per home)  |
+|  Server_Lyrion_LMS_IP                                         (one per home)  |
 |                                                                                |
 |   +--------------+                                                             |
 |   | LmsCliClient |----+      +------------------+                              |
@@ -52,7 +52,7 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 |   +--------------+----+      +------------------+                              |
 |                                        |                                       |
 |                         +--------------v-------------+                         |
-|                         | ILyrionGatewayService (API)|                         |
+|                         | ILyrionServerService (API)|                         |
 |                         +----------------------------+                         |
 +--------------------------------------------------------------------------------+
                                          |
@@ -75,13 +75,13 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
              +--------------  routed by Crestron Home  --------------+
 ```
 
-Inter-driver communication uses a process-wide service registry (`LyrionGatewayServiceRegistry`). The Gateway registers an `ILyrionGatewayService` on startup; the Source, Helper, and Receiver drivers wait for it via `Subscribe(...)`. Commands flow from Source/Helper/Receiver to the Gateway; events flow back the other way. **Only the Gateway opens sockets to LMS.**
+Inter-driver communication uses a process-wide service registry (`LyrionServerServiceRegistry`). The Lyrion Server registers an `ILyrionServerService` on startup; the Source, Helper, and Receiver drivers wait for it via `Subscribe(...)`. Commands flow from Source/Helper/Receiver to the Lyrion Server; events flow back the other way. **Only the Lyrion Server opens sockets to LMS.**
 
 ## Configuration
 
 | Driver | Configuration |
 |---|---|
-| Gateway | LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), optional username/password |
+| Lyrion Server | LMS hostname/IP, HTTP port (default 9000), CLI port (default 9090), optional username/password |
 | Source  | Player MAC address |
 | Helper  | Player MAC address (matches the Source for the same room), plus up to 4 optional presets |
 | Receiver | Player MAC address (matches the Source for the same room), volume step size (default 2) |
@@ -212,9 +212,9 @@ Per [docs/PRD.md](docs/PRD.md) "Out of Scope":
 
 ## Behavioral guarantees
 
-- **Reconnect is a hard state boundary.** When the Gateway reconnects to LMS it re-queries every bound MAC, recomputes availability/power/playback/volume/mute/shuffle/repeat, then republishes everything.
+- **Reconnect is a hard state boundary.** When the Lyrion Server reconnects to LMS it re-queries every bound MAC, recomputes availability/power/playback/volume/mute/shuffle/repeat, then republishes everything.
 - **Metadata freezes immediately when a player becomes unavailable.** If it stays unavailable for 30 seconds, metadata is cleared.
-- **Logging is flash-safe.** The Gateway logs state transitions only, with a 5-second minimum stable time and oscillation suppression. Source, Helper, and Receiver each log a single 'Bound to MAC ...' line.
+- **Logging is flash-safe.** The Lyrion Server logs state transitions only, with a 5-second minimum stable time and oscillation suppression. Source, Helper, and Receiver each log a single 'Bound to MAC ...' line.
 - **Backoff is bounded.** CLI reconnect schedule: 2s → 5s → 10s → 30s → 60s (cap).
 - **Capability-driven fallbacks.** Players that don't accept power-off receive 'stop' instead, without warnings.
 
@@ -228,19 +228,19 @@ Lyrion4Crestron/
   CLAUDE.md
   Lyrion4Crestron.sln
   Common/Service/                       (shared service contract)
-    ILyrionGatewayService.cs
-    LyrionGatewayServiceRegistry.cs
+    ILyrionServerService.cs
+    LyrionServerServiceRegistry.cs
     LyrionMetadata.cs / LyrionPlayerSnapshot.cs / LyrionPlaybackState.cs / LyrionPresetConfig.cs
     MacAddress.cs
-  Gateway_Lyrion_LMS_IP/                (Driver 1)
-    Gateway_Lyrion_LMS_IP.csproj
+  Server_Lyrion_LMS_IP/                (Driver 1)
+    Server_Lyrion_LMS_IP.csproj
     Driver.json
-    EntryPoint.cs / GatewayDriver.cs
+    EntryPoint.cs / ServerDriver.cs
     Lifecycle/ServerConnectivityFsm.cs
     Protocol/ (LmsCliCommands, LmsCliParser, LmsTokenCodec, LmsJsonRpcRequests)
     Transport/ (LmsCliClient, LmsJsonRpcClient)
     Registry/ (PlayerRecord, PlayerRegistry, PlayerLifecycleState)
-    Services/LyrionGatewayServiceImpl.cs
+    Services/LyrionServerServiceImpl.cs
   Source_Lyrion_Player/                 (Driver 2)
     Source_Lyrion_Player.csproj
     Driver.json

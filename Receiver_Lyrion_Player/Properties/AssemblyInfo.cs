@@ -7,7 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 [assembly: AssemblyTitle("Receiver_Lyrion_Player")]
-[assembly: AssemblyDescription("Lyrion Receiver. Per-room routable AV receiver (RAD AV Receiver); consumes the Lyrion gateway service for volume, mute, and power.")]
+[assembly: AssemblyDescription("Lyrion Receiver. Per-room routable AV receiver (RAD AV Receiver); consumes the Lyrion Server service for volume, mute, and power.")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Lyrion Community")]
 [assembly: AssemblyProduct("Receiver_Lyrion_Player")]

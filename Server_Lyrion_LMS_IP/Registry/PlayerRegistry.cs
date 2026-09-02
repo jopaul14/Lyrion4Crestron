@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -7,7 +7,7 @@ using System;
 using System.Collections.Generic;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
+namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
 {
     /// <summary>
     /// Per-MAC store of <see cref="PlayerRecord"/> instances. All reads and
@@ -17,7 +17,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
     /// <remarks>
     /// Only MACs that have been <see cref="Bind"/>ed by a Source, Helper, or
     /// Receiver driver have records here. Player notifications for MACs we
-    /// don't care about are dropped silently in the gateway driver before
+    /// don't care about are dropped silently in the Lyrion Server driver before
     /// they reach us.
     /// </remarks>
     internal sealed class PlayerRegistry
@@ -159,7 +159,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
                         {
                             // Freeze metadata immediately on availability loss.
                             // The 30s clear is handled by the freezer pump in
-                            // the gateway driver.
+                            // the Lyrion Server driver.
                             rec.IsFrozen = true;
                             rec.FrozenAtUtc = DateTime.UtcNow;
                         }
@@ -178,7 +178,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
 
         // ===== Per-player mutators =====
         // Each returns true and raises the corresponding event when state
-        // actually changed. The gateway driver calls these from the CLI
+        // actually changed. The Lyrion Server driver calls these from the CLI
         // receive thread.
 
         public void NoteLifecycle(string mac, PlayerLifecycleState newState)
@@ -528,7 +528,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         /// <summary>
         /// Sweep metadata-freeze records. If a record has been frozen for
         /// 30s+, clear it and republish empty metadata. Called once per
-        /// second by the gateway driver's pump.
+        /// second by the Lyrion Server driver's pump.
         /// </summary>
         /// <remarks>
         /// Short-circuits when no record is currently frozen so the steady-
@@ -582,7 +582,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
         /// <summary>
         /// Advance the playback position by one second for every player that is
         /// currently Playing and available, then republish its metadata. Called
-        /// once per second by the gateway driver's pump so the Helper's elapsed
+        /// once per second by the Lyrion Server driver's pump so the Helper's elapsed
         /// time counts up smoothly between the sparse status snapshots LMS
         /// pushes (otherwise elapsed only refreshes on the ~30s keep-alive).
         /// </summary>
@@ -632,7 +632,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
 
         /// <summary>
         /// Republish all derived state for the given MACs after a server
-        /// reconnect. The gateway driver calls this after recomputing state
+        /// reconnect. The Lyrion Server driver calls this after recomputing state
         /// from a fresh LMS status snapshot.
         /// </summary>
         public void RepublishAll(IReadOnlyList<string> macs)

@@ -7,7 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 [assembly: AssemblyTitle("Helper_Lyrion_Player")]
-[assembly: AssemblyDescription("Lyrion Helper. Per-room rich UI extension device (RAD Media Player extension); consumes the Lyrion gateway service for metadata, transport, shuffle, repeat, seek, and power.")]
+[assembly: AssemblyDescription("Lyrion Helper. Per-room rich UI extension device (RAD Media Player extension); consumes the Lyrion Server service for metadata, transport, shuffle, repeat, seek, and power.")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Lyrion Community")]
 [assembly: AssemblyProduct("Helper_Lyrion_Player")]

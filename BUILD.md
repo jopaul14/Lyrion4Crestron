@@ -4,12 +4,12 @@ The repository ships four Crestron Certified Drivers that build into four `.pkg`
 
 | Driver | Output |
 |---|---|
-| `Gateway_Lyrion_LMS_IP`   | `Gateway_Lyrion_LMS_IP.pkg`   |
+| `Server_Lyrion_LMS_IP`   | `Server_Lyrion_LMS_IP.pkg`   |
 | `Source_Lyrion_Player`    | `Source_Lyrion_Player.pkg`    |
 | `Helper_Lyrion_Player`    | `Helper_Lyrion_Player.pkg`    |
 | `Receiver_Lyrion_Player`  | `Receiver_Lyrion_Player.pkg`  |
 
-Each `.pkg` is deployed to a Crestron control system independently. The Gateway must be installed once per home; the Source, Helper, and Receiver drivers are installed once per room/player.
+Each `.pkg` is deployed to a Crestron control system independently. The Lyrion Server must be installed once per home; the Source, Helper, and Receiver drivers are installed once per room/player.
 
 ## 1. One-time prerequisites
 
@@ -69,7 +69,7 @@ msbuild Lyrion4Crestron.sln /p:Configuration=Release /restore
 To build just one driver:
 
 ```bat
-msbuild Gateway_Lyrion_LMS_IP\Gateway_Lyrion_LMS_IP.csproj /p:Configuration=Release /restore
+msbuild Server_Lyrion_LMS_IP\Server_Lyrion_LMS_IP.csproj /p:Configuration=Release /restore
 ```
 
 ### 2.3 A note on the ManifestUtil output
@@ -81,7 +81,7 @@ You may also see `System.IO.FileLoadException` for `Microsoft.Office.Interop.Wor
 ### 2.4 .pkg location
 
 After building, the .pkg files will be located under the following locations (dependent on your higher-level directory structure)
-Gateway_Lyrion_LMS_IP\bin\Release\net472\Gateway_Lyrion_LMS_IP.pkg
+Server_Lyrion_LMS_IP\bin\Release\net472\Server_Lyrion_LMS_IP.pkg
 Source_Lyrion_Player\bin\Release\net472\Source_Lyrion_Player.pkg
 Helper_Lyrion_Player\bin\Release\net472\Helper_Lyrion_Player.pkg
 Receiver_Lyrion_Player\bin\Release\net472\Receiver_Lyrion_Player.pkg
@@ -107,23 +107,23 @@ msbuild Lyrion4Crestron.sln /p:Configuration=Release /p:CrestronSdkPath=D:\Crest
 Deploy in this order:
 
 1. **Copy .pkg files** to `Internal Flash/user/ThirdPartyDrivers/Import` on the control system using Crestron Toolbox
-   - Gateway_Lyrion_LMS_IP.pkg
+   - Server_Lyrion_LMS_IP.pkg
    - Source_Lyrion_Player.pkg
    - Helper_Lyrion_Player.pkg
    - Receiver_Lyrion_Player.pkg (if using Lyrion to control volume/mute)
 
 2. **Reboot the Crestron Home processor** - while it may not always be necessary, it sometimes helps.
 
-3. **Gateway first.** Using the Crestron Home Setup app, Configure Pro, etc., add the Gateway - it's recommended to add this to an equipment or similar room.  Only one is needed per Crestron processor:
-   - Server hostname or IP
+3. **Lyrion Server first.** Devices are added from the **Pair Devices** screen in the Crestron Home Setup app (or Configure Pro). Select **Drivers → Platform → Lyrion Community → Lyrion Server** and add it to the desired room. Only one is needed per Crestron processor, and it has no room-level function of its own, so a hidden **Equipment** room is a good home for it if you have one. Configure it with:
+   - LMS hostname or IP
    - HTTP port (default 9000)
    - CLI port (default 9090)
    - Optional username/password
 
-4. **Then Source / Helper / Receiver drivers.** For each player you want to control, deploy the files listed below — use the same player MAC address on all three:
-   - `Source_Lyrion_Player.pkg` (configure with the player MAC) — required for source routing
-   - `Helper_Lyrion_Player.pkg` (configure with the same player MAC, plus up to four optional presets — see step 5) — required for the rich now-playing UI, shuffle, repeat, seek
-   - `Receiver_Lyrion_Player.pkg` (configure with the same player MAC and a volume step size) — optional
+4. **Then Source / Helper / Receiver drivers.** For each player you want to control, add the drivers below from the same **Pair Devices** screen — use the same player MAC address on all three:
+   - **Lyrion Source** — found under **Drivers → Blu-ray Player → Lyrion Community → Lyrion Source**; add it to the desired room and configure it with the player MAC. Required for source routing. (Package: `Source_Lyrion_Player.pkg`.)
+   - **Lyrion Helper** — found under **Drivers → Media Player → Lyrion Community → Lyrion Helper**; add it to the same room and configure it with the same player MAC, plus up to four optional presets (see step 5). Required for the rich now-playing UI, shuffle, repeat, and seek. (Package: `Helper_Lyrion_Player.pkg`.)
+   - **Lyrion Receiver** — found under **Drivers → AV Receiver → Lyrion Community → Lyrion Receiver**; add it to the same room and configure it with the same player MAC and a volume step size. Optional. (Package: `Receiver_Lyrion_Player.pkg`.)
 
    If you are using an external amp / AVR for the room you do not need the Receiver driver — just install the Source and Helper.
 
@@ -183,7 +183,7 @@ Deploy in this order:
 
 8. **Decide whether the player's power should drive the room on/off.** By default it does not. Crestron Home treats a room's on/off state as a room-level concept, and a source driver reporting its own power does not move it — so out of the box, powering the Lyrion player on from Material Skin (or the player's own front panel) leaves the room showing off. If you want the room to follow the player, you have to say so explicitly.
 
-   **Always map the Lyrion Source, not the Lyrion Receiver.** Both drivers bind to the same MAC and mirror the same power signal from the Gateway, so mapping both fires the room action twice for one event. The Source is the right one to use because it is the routable device that *is* the Lyrion player in the room, and because it is always installed — the Lyrion Receiver is optional, so mapping the Source keeps this step identical whether you use it or a third-party AVR.
+   **Always map the Lyrion Source, not the Lyrion Receiver.** Both drivers bind to the same MAC and mirror the same power signal from the Lyrion Server, so mapping both fires the room action twice for one event. The Source is the right one to use because it is the routable device that *is* the Lyrion player in the room, and because it is always installed — the Lyrion Receiver is optional, so mapping the Source keeps this step identical whether you use it or a third-party AVR.
 
    Then pick the behaviour that matches the room. **This choice depends on how many sources the room has, not on which receiver you use:**
 
@@ -211,7 +211,7 @@ Deploy in this order:
 
 9. Restart the control system program (or hot-reload via Toolbox) to pick up the new drivers.
 
-The Source, Helper, and Receiver drivers will each log a single `Bound to MAC ...` line and then surface state as it changes; the Gateway logs server connectivity transitions only.
+The Source, Helper, and Receiver drivers will each log a single `Bound to MAC ...` line and then surface state as it changes; the Lyrion Server logs server connectivity transitions only.
 
 ## 5. Troubleshooting
 
@@ -219,5 +219,5 @@ The Source, Helper, and Receiver drivers will each log a single `Bound to MAC ..
 - **`ManifestUtil.exe not found ...` warning** — `.dll` built, but no `.pkg` was produced. Install the full Crestron SDK (ManifestUtil is bundled).
 - **`Null Exception` from ManifestUtil for each SDK DLL** — Harmless (see section 2.3).
 - **`Microsoft.Office.Interop.Word` load failure** — Harmless. The `.pkg` is produced before this point; only the optional `.dat` doc file is skipped.
-- **Driver loads but Source/Helper/Receiver shows "unavailable"** — The Gateway is not connected to LMS, or the configured MAC does not match a player. Check the Gateway's `lyrion:connectionState` diagnostic property; the LMS web UI shows each player's MAC under Settings → Information.
-- **Source/Helper/Receiver does nothing** — The Gateway must be deployed and successfully connected to LMS before commands take effect. Commands issued while the Gateway is `DISCONNECTED` are dropped silently per design (CLAUDE.md "Commands dropped when server is not connected").
+- **Driver loads but Source/Helper/Receiver shows "unavailable"** — The Lyrion Server is not connected to LMS, or the configured MAC does not match a player. Check the Lyrion Server's `lyrion:connectionState` diagnostic property; the LMS web UI shows each player's MAC under Settings → Information.
+- **Source/Helper/Receiver does nothing** — The Lyrion Server must be deployed and successfully connected to LMS before commands take effect. Commands issued while the Lyrion Server is `DISCONNECTED` are dropped silently per design (CLAUDE.md "Commands dropped when server is not connected").

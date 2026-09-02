@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
 using System.Threading;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Transport;
+using LyrionCommunity.Crestron.Lyrion.Server.Transport;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
+namespace LyrionCommunity.Crestron.Lyrion.Server.Lifecycle
 {
     /// <summary>
     /// Smooths raw <see cref="LmsConnectionState"/> transitions into the
@@ -78,7 +78,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
                 if (fastFlap && !_oscillationLogged)
                 {
                     _oscillationLogged = true;
-                    try { _infoLog("Gateway: Server connectivity unstable - suppressing transition logs"); }
+                    try { _infoLog("Lyrion Server: LMS connectivity unstable - suppressing transition logs"); }
                     catch { }
                 }
 
@@ -129,7 +129,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
 
             if (!publish) return;
 
-            try { _infoLog("Gateway: Server " + committed.ToString().ToUpperInvariant()); }
+            try { _infoLog("Lyrion Server: LMS " + committed.ToString().ToUpperInvariant()); }
             catch { }
 
             try { SmoothedTransition?.Invoke(committed); }

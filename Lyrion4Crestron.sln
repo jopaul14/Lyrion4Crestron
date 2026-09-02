@@ -2,7 +2,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.30114.105
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Gateway_Lyrion_LMS_IP", "Gateway_Lyrion_LMS_IP\Gateway_Lyrion_LMS_IP.csproj", "{A1B2C3D4-2026-0512-0000-100000000001}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Server_Lyrion_LMS_IP", "Server_Lyrion_LMS_IP\Server_Lyrion_LMS_IP.csproj", "{A1B2C3D4-2026-0512-0000-100000000001}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Source_Lyrion_Player", "Source_Lyrion_Player\Source_Lyrion_Player.csproj", "{A1B2C3D4-2026-0512-0000-100000000002}"
 EndProject

@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Registry
+namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
 {
     /// <summary>
     /// One player's authoritative state. Fields match CLAUDE.md "DRIVER 1

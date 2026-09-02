@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -13,23 +13,49 @@ using Crestron.DeviceDrivers.EntityModel.Data;
 using Crestron.DeviceDrivers.SDK;
 using Crestron.DeviceDrivers.SDK.EntityModel;
 using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Registry;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Services;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Transport;
+using LyrionCommunity.Crestron.Lyrion.Server.Lifecycle;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Server.Registry;
+using LyrionCommunity.Crestron.Lyrion.Server.Services;
+using LyrionCommunity.Crestron.Lyrion.Server.Transport;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway
+namespace LyrionCommunity.Crestron.Lyrion.Server
 {
     /// <summary>
     /// Root V2 entity for Driver 1. Owns the LMS transport clients, the
-    /// player registry, the connectivity FSM, and the gateway service
+    /// player registry, the connectivity FSM, and the Lyrion Server service
     /// implementation. Has no Crestron Home room assignment — its only
     /// public surface is the service exposed via
-    /// <see cref="LyrionGatewayServiceRegistry"/>.
+    /// <see cref="LyrionServerServiceRegistry"/>.
     /// </summary>
-    public sealed class GatewayDriver : ReflectedAttributeDriverEntity, IDisposable
+    /// <remarks>
+    /// <para><b>Naming history — read this before grepping.</b> Through
+    /// 1.0.9 this driver, its project, its assembly, and its package were all
+    /// called <c>Gateway_Lyrion_LMS_IP</c>, the class was <c>GatewayDriver</c>,
+    /// the namespace was <c>…Lyrion.Gateway</c>, and the shared contract was
+    /// <c>ILyrionGatewayService</c>. "Gateway" described its role — the one
+    /// process that fronts LMS for the other three drivers. But the name an
+    /// installer actually sees in the Crestron Home Setup app and Configure
+    /// Pro is the <c>BaseModel</c> in <c>Driver.json</c>: <b>Lyrion Server</b>.
+    /// Having the package called Gateway and the device called Server sent
+    /// people looking for a driver that did not exist, so in 1.0.10 the code
+    /// was renamed to match the user-facing name. The rename is purely
+    /// lexical: no behaviour changed, the driver GUID and
+    /// <c>DependencyGroup</c> are the same, and the only runtime by-name lookup
+    /// (<c>Lyrion_Common.dll</c>, in <c>EntryPoint</c>) was never affected.</para>
+    /// <para><b>Two meanings of "Server".</b> That rename introduced an
+    /// ambiguity the old name avoided. In this codebase <i>the Lyrion
+    /// Server</i> means this driver; <i>LMS</i> or <i>the server</i> means the
+    /// Lyrion Media Server it connects to. So <see cref="ServerConnectivityFsm"/>,
+    /// <c>_serverConnected</c>, <c>ServerConnectivityChanged</c>, and the
+    /// CONNECTED / DISCONNECTED log lines are all about <b>LMS</b>, not about
+    /// this driver. Log prefixes were changed to "Lyrion Server:" and the
+    /// connectivity messages to say "LMS" for the same reason. When adding
+    /// code, keep that convention: qualify the driver as "Lyrion Server" and
+    /// the media server as "LMS".</para>
+    /// </remarks>
+    public sealed class ServerDriver : ReflectedAttributeDriverEntity, IDisposable
     {
         private static readonly TimeSpan MetadataFreezeTtl = TimeSpan.FromSeconds(30);
 
@@ -48,7 +74,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         /// </summary>
         private const int StatusSubscribeSeconds = 30;
 
-        private readonly LyrionGatewayServiceImpl _service;
+        private readonly LyrionServerServiceImpl _service;
         private readonly ServerConnectivityFsm _fsm;
 
         // volatile: written under _gate but read locklessly from the SDK
@@ -87,12 +113,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         [EntityProperty(Id = "lyrion:serverVersion")]
         public string ServerVersion { get; private set; } = string.Empty;
 
-        public GatewayDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
+        public ServerDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
             _log = BuildLogger();
             _registry = new PlayerRegistry();
-            _service = new LyrionGatewayServiceImpl(
+            _service = new LyrionServerServiceImpl(
                 _registry,
                 SendCliLineSync,
                 () => _serverConnected,
@@ -108,7 +134,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 null,
                 null);
 
-            LyrionGatewayServiceRegistry.Register(_service);
+            LyrionServerServiceRegistry.Register(_service);
         }
 
         internal DataDrivenConfigurationController ConfigurationController { get; }
@@ -212,7 +238,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                     if (s == LmsConnectionState.Connected) ResubscribeBoundPlayers();
                     _fsm.OnRawTransition(s);
                 };
-                _cliAuthHandler = msg => _log("Gateway ERROR auth: " + msg);
+                _cliAuthHandler = msg => _log("Lyrion Server ERROR auth: " + msg);
 
                 cli.MessageReceived += OnCliMessage;
                 cli.ConnectionStateChanged += _cliStateHandler;
@@ -463,7 +489,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 var disconnects = cliSnap?.DisconnectCount ?? 0;
                 try
                 {
-                    _log("Gateway: reconcile players=" + _registry.Count
+                    _log("Lyrion Server: reconcile players=" + _registry.Count
                         + " connects=" + connects + " disconnects=" + disconnects);
                 }
                 catch { }
@@ -777,7 +803,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             {
                 if (!seen.Contains(mac))
                 {
-                    _log("Gateway WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
+                    _log("Lyrion Server WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
                 }
             }
         }
@@ -804,7 +830,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // and would leave installers with no log output at all.
             return message =>
             {
-                try { Trace.WriteLine("[Lyrion.Gateway " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
+                try { Trace.WriteLine("[Lyrion.Server " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
                 catch { }
             };
         }
@@ -814,7 +840,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
 
-            try { LyrionGatewayServiceRegistry.Unregister(_service); } catch { }
+            try { LyrionServerServiceRegistry.Unregister(_service); } catch { }
 
             try { _freezePump?.Dispose(); } catch { }
             _freezePump = null;

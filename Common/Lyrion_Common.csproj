@@ -2,8 +2,8 @@
 <!--
   Lyrion_Common - Shared service contract library.
   Compiled once and referenced by all three driver assemblies so they share
-  a single copy of the ILyrionGatewayService interface, registry, and data
-  types at runtime. This ensures static state in LyrionGatewayServiceRegistry
+  a single copy of the ILyrionServerService interface, registry, and data
+  types at runtime. This ensures static state in LyrionServerServiceRegistry
   is truly process-wide when all drivers are loaded into the same AppDomain
   via the DependencyGroup "LyrionLMS".
 -->

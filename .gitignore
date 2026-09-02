@@ -28,9 +28,9 @@ Thumbs.db
 # Crestron SDK
 crestron_drivers_sdk_*/
 
-# Local test harness. Compiles the real gateway sources (parser/transport/
+# Local test harness. Compiles the real Lyrion Server sources (parser/transport/
 # registry/FSM) into a console app and drives them against a live LMS server.
 # Deliberately untracked: it hardcodes a personal server IP and player MAC, and
-# it carries copies of GatewayDriver logic that would drift from the real thing.
+# it carries copies of ServerDriver logic that would drift from the real thing.
 # Sanitize both before ever committing it.
 tmp_harness/

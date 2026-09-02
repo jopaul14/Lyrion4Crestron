@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -9,9 +9,9 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
+namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
 {
     /// <summary>Connection state reported by <see cref="LmsCliClient"/>.</summary>
     public enum LmsConnectionState
@@ -52,7 +52,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         // Serializes Start/Stop transitions so the _cts and _workerTask
         // fields cannot be reassigned concurrently. Today only RebuildTransport
-        // calls Start, and it holds GatewayDriver._gate — but relying on that
+        // calls Start, and it holds ServerDriver._gate — but relying on that
         // invariant from outside is a foot-gun, so we guard locally too.
         private readonly object _startLock = new object();
 

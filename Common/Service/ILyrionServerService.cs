@@ -8,12 +8,21 @@ using System;
 namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
-    /// Cross-driver contract published by the Gateway driver (Driver 1) and
+    /// Cross-driver contract published by the Lyrion Server driver (Driver 1) and
     /// consumed by the Source (Driver 2), Helper (Driver 3), and Receiver
     /// (Driver 4) drivers. All state mutation goes through this interface;
     /// Drivers 2, 3, and 4 never open sockets to LMS.
     /// </summary>
     /// <remarks>
+    /// <para><b>Naming:</b> this interface was <c>ILyrionGatewayService</c>
+    /// through 1.0.9, and <see cref="LyrionServerServiceRegistry"/> was
+    /// <c>LyrionGatewayServiceRegistry</c>. They were renamed in 1.0.10 so the
+    /// code matches the driver's user-facing name ("Lyrion Server", the
+    /// <c>BaseModel</c> installers see in Crestron Home). Nothing about the
+    /// contract changed. The slightly awkward "ServerService" reads as "the
+    /// service published by the Lyrion Server driver" — the word <i>server</i>
+    /// on its own, elsewhere in this codebase, means LMS. See the class
+    /// remarks on <c>ServerDriver</c> for the full history.</para>
     /// <para><b>Threading contract:</b> Events are raised on the CLI receive
     /// thread. Handlers that perform long-running work will block subsequent
     /// event delivery. Consumers should return quickly from event handlers.</para>
@@ -21,7 +30,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// <list type="bullet">
     /// <item>Events MAY be raised on a background thread; consumers must not
     /// block.</item>
-    /// <item>Events are only published for MACs the gateway knows about. A
+    /// <item>Events are only published for MACs the Lyrion Server knows about. A
     /// consumer that subscribes before binding will simply not receive
     /// events until <see cref="BindPlayer"/> succeeds.</item>
     /// <item>The MAC string passed to each event is the lowercase
@@ -30,15 +39,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// <para><b>Command semantics:</b></para>
     /// <list type="bullet">
     /// <item>Commands are best-effort and never throw on transport errors.</item>
-    /// <item>Commands are dropped silently if the gateway is not currently
+    /// <item>Commands are dropped silently if the Lyrion Server is not currently
     /// CONNECTED to LMS. The next state-change event will reflect reality.</item>
     /// <item>All command methods accept a <c>mac</c> parameter in any valid
-    /// format (colon- or dash-separated, any case). The gateway normalizes
+    /// format (colon- or dash-separated, any case). The Lyrion Server normalizes
     /// the MAC internally. Commands for unbound or malformed MACs are
     /// silently dropped.</item>
     /// </list>
     /// </remarks>
-    public interface ILyrionGatewayService
+    public interface ILyrionServerService
     {
         // ===== Service identity =====
 
@@ -67,7 +76,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// <summary>
         /// Removes a MAC from the bound set. Idempotent; calling with an
         /// already-unbound or malformed MAC is a no-op. After unbinding,
-        /// the gateway stops maintaining state for this MAC and no further
+        /// the Lyrion Server stops maintaining state for this MAC and no further
         /// events will be raised for it.
         /// </summary>
         void UnbindPlayer(string mac);
@@ -88,7 +97,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         // ===== Events (Driver 1 → Drivers 2/3) =====
 
         /// <summary>
-        /// Raised when the gateway's smoothed connectivity state to LMS
+        /// Raised when the Lyrion Server's smoothed connectivity state to LMS
         /// changes. <c>true</c> = CONNECTED, <c>false</c> = DISCONNECTED.
         /// Consumers can use this to show a server-offline indicator. Player-
         /// level availability events are raised separately.

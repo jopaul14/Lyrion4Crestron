@@ -1,5 +1,44 @@
 # Release Notes
 
+## 1.0.10 — The Gateway is now the Lyrion Server (2026-09-02)
+
+All four drivers ship at 1.0.10. **No behaviour changed.** This release renames
+the first driver so its package, code, and documentation match the name
+installers actually see.
+
+### Changed
+
+- **`Gateway_Lyrion_LMS_IP.pkg` is now `Server_Lyrion_LMS_IP.pkg`.** The
+  driver has always presented itself in the Crestron Home Setup app and
+  Configure Pro as **Lyrion Server** (its `BaseModel`), so a package called
+  "Gateway" sent people looking for a device that did not exist. The project,
+  assembly, namespace (`…Lyrion.Gateway` → `…Lyrion.Server`), driver class
+  (`GatewayDriver` → `ServerDriver`), and the shared contract
+  (`ILyrionGatewayService` → `ILyrionServerService`, and its registry and
+  implementation) were renamed to match. The driver GUID and
+  `DependencyGroup` are unchanged, so Crestron Home treats it as the same
+  driver.
+
+- **Log prefixes** changed from `Gateway:` to `Lyrion Server:`, and the
+  connectivity lines now say `LMS CONNECTED` / `LMS DISCONNECTED` rather than
+  `Server CONNECTED`, because "Server" alone is now ambiguous. In this
+  codebase *the Lyrion Server* is the driver; *LMS* is the media server it
+  talks to. `ServerDriver` carries a remarks block explaining the history and
+  that convention for anyone reading the code cold.
+
+- **All documentation** now says Lyrion Server, and the deploy steps in
+  BUILD.md give the exact Pair Devices path for each driver (Drivers →
+  Platform / Blu-ray Player / Media Player / AV Receiver → Lyrion Community).
+
+### Upgrading from 1.0.9 or earlier
+
+Because the package filename changed, import `Server_Lyrion_LMS_IP.pkg` and
+remove the old `Gateway_Lyrion_LMS_IP.pkg` from the processor's driver store.
+The other three packages keep their names but are re-versioned so Crestron
+Home reloads them; they embed the renamed `Lyrion_Common.dll` and **must** be
+updated together with the Server — a 1.0.9 Source loading beside a 1.0.10
+Server would look for `ILyrionGatewayService` and fail to bind.
+
 ## 1.0.9 — Revert 1.0.8 (2026-08-31)
 
 **1.0.8 made room power tracking worse and is fully reverted here.** All four
@@ -18,7 +57,7 @@ The player did power on and playback did start — only the room's state was
 wrong.
 
 1.0.8 made a player's availability-restore re-emit its power state, forced past
-the change-gate. But `ApplyStatusResponse` in the Gateway parses a status push
+the change-gate. But `ApplyStatusResponse` in the Lyrion Server parses a status push
 in this order: `NoteLifecycle` first, then playback mode, then the `power`
 field. `NoteLifecycle` is what flips availability, so the forced power emit ran
 against the registry's *previous* power value — twenty-odd lines before the same
@@ -118,7 +157,7 @@ never released separately.
 
   This is why presets are declared rather than discovered: an LMS library can
   hold hundreds of playlists and favourites, and enumerating them would mean a
-  browsing UI and a discovery cycle in the Gateway to surface a list the
+  browsing UI and a discovery cycle in the Lyrion Server to surface a list the
   homeowner would immediately want filtered. The installer names the few that
   matter for the room instead, and the driver never scans the server.
 
@@ -150,7 +189,7 @@ never released separately.
   ever fired with an empty list) and described a different feature: physical
   preset buttons on a Squeezebox Radio, not playlists. Its replacement is the
   configurable presets above, backed by a single pass-through
-  `ILyrionGatewayService.SendPlayerCommand`.
+  `ILyrionServerService.SendPlayerCommand`.
 
 ### Security
 
@@ -207,27 +246,27 @@ four-driver suite that integrates [Lyrion Media Server](https://lyrion.org/)
 The suite splits responsibilities across four cooperating drivers so a Lyrion
 player presents cleanly in Crestron Home's source-routing graph — a routable
 audio source, a rich now-playing UI, and an optional volume endpoint — while a
-single Gateway owns the one and only connection to LMS.
+single Lyrion Server owns the one and only connection to LMS.
 
 ### Drivers in this release
 
 | Driver | Crestron device type | Instances | Version |
 |---|---|---|---|
-| `Gateway_Lyrion_LMS_IP` (Lyrion Server) | Platform (Entity Model) | 1 per home | 1.0.0 |
+| `Server_Lyrion_LMS_IP` (Lyrion Server) | Platform (Entity Model) | 1 per home | 1.0.0 |
 | `Source_Lyrion_Player` (Lyrion Source) | Bluray Player (RAD) | 1 per player | 1.0.0 |
 | `Helper_Lyrion_Player` (Lyrion Helper) | Media Player extension (RAD) | 1 per player | 1.0.0 |
 | `Receiver_Lyrion_Player` (Lyrion Receiver) | AV Receiver (RAD) | 1 per player (optional) | 1.0.0 |
 
-Each driver ships as an independent `.pkg`. The Gateway is installed once per
+Each driver ships as an independent `.pkg`. The Lyrion Server is installed once per
 home; the Source, Helper, and (optional) Receiver are installed once per
 room/player and bound by the player's MAC address.
 
 ### Highlights
 
-- **Single LMS connection.** Only the Gateway opens sockets to LMS — one
+- **Single LMS connection.** Only the Lyrion Server opens sockets to LMS — one
   persistent CLI connection plus stateless JSON-RPC over HTTP. The Source,
   Helper, and Receiver drivers never touch the network; they communicate with
-  the Gateway through a process-wide service registry (`ILyrionGatewayService`).
+  the Lyrion Server through a process-wide service registry (`ILyrionServerService`).
 - **Routable source.** The Source declares one digital (Coaxial) and one analog
   (RCA) audio output, so a Lyrion player can be routed to any room endpoint in
   the Crestron Home Source Routes graph.
@@ -262,12 +301,12 @@ room/player and bound by the player's MAC address.
 
 ### Reliability & behavior
 
-- **Reconnect is a hard state boundary.** On reconnect the Gateway re-queries
+- **Reconnect is a hard state boundary.** On reconnect the Lyrion Server re-queries
   every bound MAC and recomputes availability, power, playback, volume, mute,
   shuffle, and repeat before republishing — no stale or out-of-order state.
 - **Metadata freeze/clear.** Metadata freezes the instant a player goes
   unavailable and is cleared after 30 seconds if it stays offline.
-- **Flash-safe, low-chatter logging.** The Gateway logs connectivity
+- **Flash-safe, low-chatter logging.** The Lyrion Server logs connectivity
   transitions only, with a 5-second minimum stable time and oscillation
   suppression; each room driver logs a single `Bound to MAC ...` line.
 - **Bounded backoff.** CLI reconnect schedule: 2s → 5s → 10s → 30s → 60s (cap).
@@ -286,7 +325,7 @@ room/player and bound by the player's MAC address.
 
 ### Installation
 
-Deploy the `.pkg` files via Crestron Toolbox, add the **Gateway first** (one per
+Deploy the `.pkg` files via Crestron Toolbox, add the **Lyrion Server first** (one per
 home), then add the Source / Helper / (optional) Receiver per player using the
 same MAC address on all three, and route the Source output to the room endpoint.
 Full step-by-step instructions, including hiding the Source tile from the room

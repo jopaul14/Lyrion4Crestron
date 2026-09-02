@@ -18,7 +18,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
     /// Bluray Player. Exposes only the transport and power controls the
     /// Bluray Player type supports natively (Play / Pause / Stop /
     /// ForwardSkip / ReverseSkip / Power). Never opens a socket to LMS — every
-    /// command is forwarded to the Lyrion Server gateway service, and all
+    /// command is forwarded to the Lyrion Server service, and all
     /// feedback (availability, power, playback) arrives from that service.
     /// Volume, metadata, shuffle, repeat, and seek live in the companion
     /// Helper and Receiver drivers, not here.
@@ -31,7 +31,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private SourceProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
-        private ILyrionGatewayService _gateway;
+        private ILyrionServerService _server;
         private volatile bool _disposed;
 
         public SourceDriver()
@@ -53,7 +53,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             BlurayPlayerProtocol = _protocol;
             BlurayPlayerProtocol.Initialize(BlurayPlayerData);
 
-            LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
+            LyrionServerServiceRegistry.Subscribe(OnServerAvailable);
         }
 
         public override void Connect()
@@ -69,26 +69,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             if (canon == null) return;
 
             lock (_gate) { _configuredMac = canon; }
-            TryBindToGateway();
+            TryBindToServer();
         }
 
-        // ===== Gateway binding =====
+        // ===== Lyrion Server binding =====
 
-        private void OnGatewayAvailable(ILyrionGatewayService service)
+        private void OnServerAvailable(ILyrionServerService service)
         {
             // May be invoked more than once: on initial subscription and again
-            // whenever the Gateway driver reloads and registers a fresh service.
+            // whenever the Lyrion Server driver reloads and registers a fresh service.
             // Detach from the old service and rebind to the new one.
             if (_disposed) return;
 
-            ILyrionGatewayService oldService;
+            ILyrionServerService oldService;
             lock (_gate)
             {
                 if (_disposed) return;
-                if (ReferenceEquals(_gateway, service)) return;
+                if (ReferenceEquals(_server, service)) return;
 
-                oldService = _gateway;
-                _gateway = service;
+                oldService = _server;
+                _server = service;
                 _boundMac = null;
 
                 service.AvailabilityChanged += OnAvailabilityChanged;
@@ -103,17 +103,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
             }
 
-            TryBindToGateway();
+            TryBindToServer();
         }
 
-        private void TryBindToGateway()
+        private void TryBindToServer()
         {
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             string previousMac = null;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _configuredMac;
                 if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
                 {
@@ -152,7 +152,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             UpdatePlayback(snap.PlaybackState, force: true);
         }
 
-        // ===== Gateway event handlers =====
+        // ===== Lyrion Server event handlers =====
 
         private void OnAvailabilityChanged(string mac, bool isAvailable)
         {
@@ -214,20 +214,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             }
         }
 
-        // ===== Commands (routed to the gateway) =====
+        // ===== Commands (routed to the Lyrion Server) =====
 
         // Transport commands are virtual on the driver and intercepted here.
-        public override void Play() => InvokeOnGateway((svc, mac) => svc.Play(mac));
-        public override void Pause() => InvokeOnGateway((svc, mac) => svc.Pause(mac));
-        public override void Stop() => InvokeOnGateway((svc, mac) => svc.Stop(mac));
-        public override void ForwardSkip() => InvokeOnGateway((svc, mac) => svc.Next(mac));
-        public override void ReverseSkip() => InvokeOnGateway((svc, mac) => svc.Previous(mac));
+        public override void Play() => InvokeOnServer((svc, mac) => svc.Play(mac));
+        public override void Pause() => InvokeOnServer((svc, mac) => svc.Pause(mac));
+        public override void Stop() => InvokeOnServer((svc, mac) => svc.Stop(mac));
+        public override void ForwardSkip() => InvokeOnServer((svc, mac) => svc.Next(mac));
+        public override void ReverseSkip() => InvokeOnServer((svc, mac) => svc.Previous(mac));
 
         // Power commands are non-virtual on the driver; they arrive via the
         // protocol's power events (wired up in Initialize).
-        private void OnPowerOnRequested() => InvokeOnGateway((svc, mac) => svc.PowerOn(mac));
-        private void OnPowerOffRequested() => InvokeOnGateway((svc, mac) => svc.PowerOff(mac));
-        private void OnPowerToggleRequested() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
+        private void OnPowerOnRequested() => InvokeOnServer((svc, mac) => svc.PowerOn(mac));
+        private void OnPowerOffRequested() => InvokeOnServer((svc, mac) => svc.PowerOff(mac));
+        private void OnPowerToggleRequested() => InvokeOnServer((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Helpers =====
 
@@ -238,13 +238,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             return string.Equals(bound, mac, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void InvokeOnGateway(Action<ILyrionGatewayService, string> action)
+        private void InvokeOnServer(Action<ILyrionServerService, string> action)
         {
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _boundMac;
             }
             if (svc == null || string.IsNullOrEmpty(mac)) return;
@@ -268,7 +268,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
 
-            try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
+            try { LyrionServerServiceRegistry.Unsubscribe(OnServerAvailable); } catch { }
 
             if (_protocol != null)
             {
@@ -278,13 +278,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 try { _protocol.PowerToggleRequested -= OnPowerToggleRequested; } catch { }
             }
 
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _boundMac;
-                _gateway = null;
+                _server = null;
                 _boundMac = null;
             }
 
