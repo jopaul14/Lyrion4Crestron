@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Crestron.RAD.Common.Attributes.Programming;
 using Crestron.RAD.Common.Enums;
@@ -40,6 +41,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private const string PropDuration = "Duration";
         private const string PropPlaybackState = "PlaybackState";
         private const string PropPlaybackIcon = "PlaybackIcon";
+        // Current-state glyph for the room tile (play while playing, pause
+        // otherwise) — distinct from PlaybackIcon, which is the NEXT action.
+        private const string PropPlaybackStateIcon = "PlaybackStateIcon";
         private const string PropShuffle = "Shuffle";
         private const string PropRepeat = "Repeat";
         private const string PropPower = "Power";
@@ -90,8 +94,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private readonly object _applyGate = new object();
 
         // Last availability reported for the bound player, so Connect() can
-        // restore it instead of forcing Connected=true over it.
-        private bool _lastAvailability;
+        // restore it instead of forcing Connected=true over it. Starts true —
+        // the framework's own default for a driver that has not bound yet —
+        // and is driven false by an availability loss OR by UnbindInvalidMac,
+        // so "unbound because never configured" and "unbound because the MAC
+        // is invalid" read differently after Connect() re-runs.
+        private bool _lastAvailability = true;
 
         private HelperProtocol _protocol;
         private string _configuredMac;
@@ -106,6 +114,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private PropertyValue<string> _durationProp;
         private PropertyValue<string> _playbackStateProp;
         private PropertyValue<string> _playbackIconProp;
+        private PropertyValue<string> _playbackStateIconProp;
+
+        // Per-track caches for the 1 Hz metadata tick (see UpdateMetadata).
+        private int _lastTrackNumber = -1;
+        private int _lastDurationSeconds = -1;
+        private string _lastDurationText = string.Empty;
         private PropertyValue<bool> _shuffleProp;
         private PropertyValue<bool> _repeatProp;
         private PropertyValue<bool> _powerProp;
@@ -165,14 +179,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         public override void Connect()
         {
             // Re-run by the framework after any MAC edit; must not override
-            // the availability already learned (see SourceDriver.Connect).
-            bool bound, available;
-            lock (_gate)
-            {
-                bound = _boundMac != null;
-                available = _lastAvailability;
-            }
-            Connected = !bound || available;
+            // the availability already learned. 1.0.13 used
+            // `!bound || available`, which read an UNBOUND driver as connected
+            // and so undid UnbindInvalidMac's "offline" the moment the
+            // framework re-ran this for the very edit that caused the unbind.
+            bool available;
+            lock (_gate) { available = _lastAvailability; }
+            Connected = available;
         }
 
         // ===== Extension device definition =====
@@ -186,6 +199,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             _durationProp = CreateProperty<string>(new PropertyDefinition(PropDuration, null, DevicePropertyType.String));
             _playbackStateProp = CreateProperty<string>(new PropertyDefinition(PropPlaybackState, null, DevicePropertyType.String));
             _playbackIconProp = CreateProperty<string>(new PropertyDefinition(PropPlaybackIcon, null, DevicePropertyType.String));
+            _playbackStateIconProp = CreateProperty<string>(new PropertyDefinition(PropPlaybackStateIcon, null, DevicePropertyType.String));
             _shuffleProp = CreateProperty<bool>(new PropertyDefinition(PropShuffle, null, DevicePropertyType.Boolean));
             _repeatProp = CreateProperty<bool>(new PropertyDefinition(PropRepeat, null, DevicePropertyType.Boolean));
             _powerProp = CreateProperty<bool>(new PropertyDefinition(PropPower, null, DevicePropertyType.Boolean));
@@ -230,6 +244,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         protected override IOperationResult DoCommand(string command, string[] parameters)
         {
+            // Under _applyGate: the Toggle* cases read RAD-facing state
+            // (_playbackStateProp, _repeatProp, _shuffleProp, _muted,
+            // _volumeStep) that the event handlers write under the same lock
+            // on other threads. Held only for the read + the service call
+            // (which sends a CLI line asynchronously and publishes nothing
+            // synchronously), so nothing here re-enters or blocks for long.
+            lock (_applyGate)
+            {
+                DoCommandLocked(command);
+            }
+            return new OperationResult(OperationResultCode.Success);
+        }
+
+        private void DoCommandLocked(string command)
+        {
             switch (command)
             {
                 case CmdPlay: InvokeOnServer((svc, mac) => svc.Play(mac)); break;
@@ -257,7 +286,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                     if (slot >= 0) TriggerPreset(slot);
                     break;
             }
-            return new OperationResult(OperationResultCode.Success);
         }
 
         /// <summary>
@@ -360,9 +388,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 if (previous == null) return;
 
                 if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
+
+                // The whole view goes blank, not just power/playback: this
+                // driver no longer represents any player, and because the
+                // record was unbound the registry's 30 s metadata clear can
+                // never reach it. Fields first, availability last (loss order),
+                // one commit.
+                UpdateName(string.Empty);
                 UpdatePlayback(LyrionPlaybackState.Stopped);
                 UpdatePower(false);
+                UpdateMetadata(LyrionMetadata.Empty);
+                UpdateShuffle(false);
+                UpdateRepeat(false);
+                UpdateVolume(0);
+                UpdateMute(false);
                 UpdateAvailability(false);
+                Commit();
                 _log("Helper WARNING: player MAC '" + (rawMac ?? string.Empty) + "' is not valid; unbound from " + previous);
             }
         }
@@ -372,26 +413,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             if (slot < 0 || slot >= HelperProtocol.PresetCount) return;
 
             var parsed = LyrionPresetConfig.Parse(configured);
-            lock (_gate) { _presets[slot] = parsed; }
 
-            // Drive the button's label/icon/visibility straight from the parsed
-            // value. A slot that fails to parse renders exactly like an empty
-            // one — hidden — so a typo can never leave a dead button on the page.
-            _presetLabelProps[slot].Value = parsed?.Name ?? string.Empty;
-            _presetIconProps[slot].Value = parsed?.Icon ?? LyrionPresetConfig.DefaultIcon;
-            _presetVisibleProps[slot].Value = parsed != null;
-
-            var any = false;
-            lock (_gate)
+            // Under _applyGate like every other RAD-facing write: this runs on
+            // Crestron Home's configuration thread and used to write four
+            // properties and Commit() with no lock while a CLI-thread handler
+            // could be mid-Commit under _applyGate.
+            lock (_applyGate)
             {
-                for (var i = 0; i < _presets.Length; i++)
-                {
-                    if (_presets[i] != null) { any = true; break; }
-                }
-            }
-            _anyPresetsProp.Value = any;
+                lock (_gate) { _presets[slot] = parsed; }
 
-            Commit();
+                // Drive the button's label/icon/visibility straight from the
+                // parsed value. A slot that fails to parse renders exactly like
+                // an empty one — hidden — so a typo can never leave a dead
+                // button on the page.
+                Set(_presetLabelProps[slot], parsed?.Name ?? string.Empty);
+                Set(_presetIconProps[slot], parsed?.Icon ?? LyrionPresetConfig.DefaultIcon);
+                Set(_presetVisibleProps[slot], parsed != null);
+
+                var any = false;
+                lock (_gate)
+                {
+                    for (var i = 0; i < _presets.Length; i++)
+                    {
+                        if (_presets[i] != null) { any = true; break; }
+                    }
+                }
+                Set(_anyPresetsProp, any);
+
+                Commit();
+            }
         }
 
         // ===== Programmable operations (Crestron Home sequences) =====
@@ -499,14 +549,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Level-based tile: every value is written, observed or not (an
-            // unobserved record reads as off/stopped/no track, which is the
-            // right thing to show for a player nobody has looked at). The
-            // snapshot already carries EFFECTIVE power/playback (off/stopped
-            // when unavailable). Availability first when available, last when
-            // not — the registry's own order.
-            UpdateName(snap.Name);
+            // OBSERVED records only, like the Source and Receiver. 1.0.13 wrote
+            // every level "observed or not" on the theory that a blank record
+            // reads as off/stopped — but on a Lyrion Server reload that wiped
+            // the live name, track, volume, shuffle/repeat and mute, and any
+            // field whose real value equals the blank default was never
+            // corrected, because the registry change-gates against that blank
+            // record (mute is never in a status reply at all, so a muted
+            // player showed "Mute" until the next live notification). The
+            // loss publish from the old Server's Dispose already put the tile
+            // at off/stopped; an unobserved bind has nothing to add.
+            //
+            // The snapshot carries EFFECTIVE power/playback. Availability
+            // first when available, last when not — the registry's order.
+            // One commit for the whole snapshot.
+            if (!snap.IsObserved)
+            {
+                UpdateAvailability(snap.IsAvailable);
+                return;
+            }
+
             if (snap.IsAvailable) UpdateAvailability(true);
+            UpdateName(snap.Name);
             UpdatePower(snap.IsPoweredOn);
             UpdatePlayback(snap.PlaybackState);
             UpdateMetadata(snap.Metadata);
@@ -517,6 +581,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             UpdateMute(snap.Muted);
             UpdateVolumeStep(snap.VolumeStep);
             if (!snap.IsAvailable) UpdateAvailability(false);
+            Commit();
         }
 
         // ===== Lyrion Server event handlers =====
@@ -525,6 +590,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         // bind in progress cannot be raced by an event for the MAC it is
         // binding (see SourceDriver).
 
+        // Each handler: one unit of work, one Commit(). The Update* methods
+        // only assign (through Set, which skips unchanged values), so a
+        // snapshot or a multi-field reply costs one commit, not one per field.
+
         private void OnAvailabilityChanged(string mac, bool isAvailable)
         {
             lock (_applyGate) { if (IsMine(mac)) UpdateAvailability(isAvailable); }
@@ -532,42 +601,42 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void OnNameChanged(string mac, string name)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdateName(name); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdateName(name); Commit(); } }
         }
 
         private void OnPowerStateChanged(string mac, bool isOn)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdatePower(isOn); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdatePower(isOn); Commit(); } }
         }
 
         private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdatePlayback(state); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdatePlayback(state); Commit(); } }
         }
 
         private void OnMetadataUpdated(string mac, LyrionMetadata meta)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdateMetadata(meta); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdateMetadata(meta); Commit(); } }
         }
 
         private void OnShuffleChanged(string mac, bool enabled)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdateShuffle(enabled); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdateShuffle(enabled); Commit(); } }
         }
 
         private void OnRepeatChanged(string mac, bool enabled)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdateRepeat(enabled); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdateRepeat(enabled); Commit(); } }
         }
 
         private void OnVolumeChanged(string mac, int level)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdateVolume(level); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdateVolume(level); Commit(); } }
         }
 
         private void OnMuteChanged(string mac, bool muted)
         {
-            lock (_applyGate) { if (IsMine(mac)) UpdateMute(muted); }
+            lock (_applyGate) { if (IsMine(mac)) { UpdateMute(muted); Commit(); } }
         }
 
         private void OnVolumeStepChanged(string mac, int step)
@@ -586,93 +655,123 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             Connected = isAvailable;
         }
 
+        // Assigns a property only when the value actually changed. The SDK
+        // documents Commit() as sending "all of the modified property values"
+        // and says nothing about the setter change-gating, so this is what
+        // keeps the 1 Hz metadata tick from re-sending nine unchanged strings
+        // per player per second. Returns whether anything was written.
+        private static bool Set<T>(PropertyValue<T> prop, T value)
+        {
+            if (EqualityComparer<T>.Default.Equals(prop.Value, value)) return false;
+            prop.Value = value;
+            return true;
+        }
+
+        // The Update* methods below ASSIGN ONLY. The caller — an event
+        // handler, ApplySnapshot, OnPresetReceived, UnbindInvalidMac — commits
+        // once per unit of work. (Through 1.0.13 each Update* committed
+        // itself: ten commits per bind, one per field per status reply.)
+
         private void UpdateName(string name)
         {
-            _sourceNameProp.Value = name ?? string.Empty;
-            Commit();
+            Set(_sourceNameProp, name ?? string.Empty);
         }
 
         private void UpdatePower(bool isOn)
         {
-            _powerProp.Value = isOn;
-            RefreshTileStatus();
-            Commit();
+            if (Set(_powerProp, isOn)) RefreshTileStatus();
         }
 
         private void UpdatePlayback(LyrionPlaybackState state)
         {
             string label;
             string icon;
-            // PlaybackIcon shows the *next* transport action (toggle affordance):
-            // while playing, show Pause (tap = pause); while paused or stopped,
-            // show Play (tap = play). The state label still reflects the actual
-            // state for any text display bound to PlaybackState.
+            string stateIcon;
+            // PlaybackIcon is the *next* transport action (a toggle affordance
+            // for the Play/Pause button): while playing, show Pause; while
+            // paused or stopped, show Play. PlaybackStateIcon is the *current*
+            // state for the room tile, which has no play/pause tap: a play
+            // glyph while music is playing, a pause glyph otherwise. Binding
+            // the tile to the affordance showed a pause symbol while playing.
             switch (state)
             {
                 case LyrionPlaybackState.Playing:
                     label = "Playing";
                     icon = IconPause;
+                    stateIcon = IconPlay;
                     break;
                 case LyrionPlaybackState.Paused:
                     label = "Paused";
                     icon = IconPlay;
+                    stateIcon = IconPause;
                     break;
                 default:
                     label = "Stopped";
                     icon = IconPlay;
+                    stateIcon = IconPause;
                     break;
             }
-            _playbackStateProp.Value = label;
-            _playbackIconProp.Value = icon;
-            RefreshTileStatus();
-            Commit();
+            var changed = Set(_playbackStateProp, label);
+            changed |= Set(_playbackIconProp, icon);
+            changed |= Set(_playbackStateIconProp, stateIcon);
+            if (changed) RefreshTileStatus();
         }
 
         private void UpdateMetadata(LyrionMetadata meta)
         {
-            _titleProp.Value = meta.Title;
-            _artistProp.Value = meta.Artist;
-            _albumProp.Value = meta.Album;
+            var textChanged = Set(_titleProp, meta.Title);
+            textChanged |= Set(_artistProp, meta.Artist);
+            textChanged |= Set(_albumProp, meta.Album);
 
-            // Composite now-playing lines for the layout.
+            // Composite now-playing lines for the layout — rebuilt only when
+            // the text they are made of changed, which on the 1 Hz position
+            // tick is never.
             //   Line 1: "<track>  <bullet>  <title>" (or just the title when no track #)
             //   Line 2: "by <artist>"   Line 3: "from <album>"
             // The bullet (U+2022) is built from its code point so the source stays ASCII.
-            var bullet = (char)0x2022;
-            _trackLineProp.Value = meta.TrackNumber > 0
-                ? meta.TrackNumber.ToString() + "  " + bullet + "  " + meta.Title
-                : meta.Title;
-            _byArtistProp.Value = string.IsNullOrEmpty(meta.Artist) ? string.Empty : "by " + meta.Artist;
-            _fromAlbumProp.Value = string.IsNullOrEmpty(meta.Album) ? string.Empty : "from " + meta.Album;
+            if (textChanged || meta.TrackNumber != _lastTrackNumber)
+            {
+                _lastTrackNumber = meta.TrackNumber;
+                var bullet = (char)0x2022;
+                Set(_trackLineProp, meta.TrackNumber > 0
+                    ? meta.TrackNumber.ToString() + "  " + bullet + "  " + meta.Title
+                    : meta.Title);
+                Set(_byArtistProp, string.IsNullOrEmpty(meta.Artist) ? string.Empty : "by " + meta.Artist);
+                Set(_fromAlbumProp, string.IsNullOrEmpty(meta.Album) ? string.Empty : "from " + meta.Album);
+            }
 
             // Timing. TimeText is what the page actually shows (on the track
             // card's fourth line): "elapsed / total" when the duration is
             // known, elapsed alone for a radio stream. Progress / HasDuration /
             // NoDuration are still published for the driver's property surface
-            // but are no longer drawn — the progress bar cost a full card to
-            // render one thin, unseekable line. See UiDefinition.xml.
-            var elapsed = FormatTime(meta.PositionSeconds);
-            _elapsedProp.Value = elapsed;
-            _durationProp.Value = FormatTime(meta.DurationSeconds);
-
-            bool hasDuration = meta.DurationSeconds > 0;
-            _hasDurationProp.Value = hasDuration;
-            _noDurationProp.Value = !hasDuration;
-
-            if (hasDuration)
+            // but are no longer drawn. The formatted duration is cached per
+            // track so the tick formats one number, not three.
+            if (meta.DurationSeconds != _lastDurationSeconds)
             {
-                _timeTextProp.Value = elapsed + " / " + FormatTime(meta.DurationSeconds);
+                _lastDurationSeconds = meta.DurationSeconds;
+                _lastDurationText = FormatTime(meta.DurationSeconds);
+                Set(_durationProp, _lastDurationText);
+                var has = meta.DurationSeconds > 0;
+                Set(_hasDurationProp, has);
+                Set(_noDurationProp, !has);
+            }
+
+            var elapsed = FormatTime(meta.PositionSeconds);
+            Set(_elapsedProp, elapsed);
+
+            if (meta.DurationSeconds > 0)
+            {
+                Set(_timeTextProp, elapsed + " / " + _lastDurationText);
                 var pct = (int)((long)meta.PositionSeconds * 100 / meta.DurationSeconds);
-                _progressProp.Value = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+                Set(_progressProp, pct < 0 ? 0 : (pct > 100 ? 100 : pct));
             }
             else
             {
-                _timeTextProp.Value = elapsed;
-                _progressProp.Value = 0;
+                Set(_timeTextProp, elapsed);
+                Set(_progressProp, 0);
             }
 
-            RefreshTileStatus();
-            Commit();
+            if (textChanged) RefreshTileStatus();
         }
 
         // Surfaces power / playback state onto the room-page tile so the room
@@ -684,7 +783,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         private void RefreshTileStatus()
         {
             bool on = _powerProp.Value;
-            _powerIconProp.Value = on ? IconPowerOn : IconPowerOff;
+            Set(_powerIconProp, on ? IconPowerOn : IconPowerOff);
 
             string status;
             if (!on)
@@ -699,36 +798,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             {
                 status = string.IsNullOrEmpty(_playbackStateProp.Value) ? "On" : _playbackStateProp.Value;
             }
-            _tileStatusProp.Value = status;
+            Set(_tileStatusProp, status);
         }
 
         private void UpdateShuffle(bool enabled)
         {
-            _shuffleProp.Value = enabled;
-            _shuffleIconProp.Value = enabled ? IconShuffleOn : IconShuffleOff;
-            Commit();
+            Set(_shuffleProp, enabled);
+            Set(_shuffleIconProp, enabled ? IconShuffleOn : IconShuffleOff);
         }
 
         private void UpdateRepeat(bool enabled)
         {
-            _repeatProp.Value = enabled;
-            _repeatIconProp.Value = enabled ? IconRepeatOn : IconRepeatOff;
-            Commit();
+            Set(_repeatProp, enabled);
+            Set(_repeatIconProp, enabled ? IconRepeatOn : IconRepeatOff);
         }
 
         private void UpdateVolume(int level)
         {
             if (level < 0) level = 0;
             if (level > 100) level = 100;
-            _volumeProp.Value = level;
-            Commit();
+            Set(_volumeProp, level);
         }
 
         private void UpdateMute(bool muted)
         {
             _muted = muted;
-            _muteLabelProp.Value = muted ? LabelUnmute : LabelMute;
-            Commit();
+            Set(_muteLabelProp, muted ? LabelUnmute : LabelMute);
         }
 
         // The step is internal only (it parameterizes the Vol+/- commands); it
@@ -742,8 +837,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void UpdateSupportsVolume(bool supported)
         {
-            _supportsVolumeProp.Value = supported;
-            Commit();
+            Set(_supportsVolumeProp, supported);
         }
 
         // Formats seconds as xx:yy:zz. Minutes and seconds are always shown

@@ -59,6 +59,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
     {
         private static readonly TimeSpan MetadataFreezeTtl = TimeSpan.FromSeconds(30);
 
+        // 1 = a pump tick is in progress. See SweepFrozenMetadata.
+        private int _pumpBusy;
+
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
@@ -350,13 +353,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // Timer.Dispose does not block in-flight callbacks. Guard against
             // the freeze pump firing after Dispose() began nulling fields.
             if (_disposed) return;
-            try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
-            catch { }
 
-            // Same 1s pump advances the elapsed position for playing players so
-            // the Helper's time display counts up between status snapshots.
-            try { _registry.TickPlayingPositions(); }
-            catch { }
+            // System.Threading.Timer will fire the next tick on another pool
+            // thread if this one is still running (a slow consumer Commit()
+            // inside the fan-out is enough). Two overlapping ticks would
+            // advance the same record twice and race their payloads into the
+            // consumers out of order. Skip the tick instead — one missed
+            // second of elapsed time is corrected by the next status push.
+            if (Interlocked.Exchange(ref _pumpBusy, 1) != 0) return;
+            try
+            {
+                try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
+                catch { }
+
+                // Same 1s pump advances the elapsed position for playing players so
+                // the Helper's time display counts up between status snapshots.
+                try { _registry.TickPlayingPositions(); }
+                catch { }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _pumpBusy, 0);
+            }
         }
 
         // ===== CLI events =====
@@ -447,7 +465,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                         {
                             case "new":
                             case "reconnect":
-                                _registry.NoteLifecycle(message.Mac, PlayerLifecycleState.Online);
+                                // Do NOT mark Online here. A client notification
+                                // carries no state; marking the record available
+                                // now would publish whatever raw power/playback it
+                                // held before the player went away as fresh edges.
+                                // Query status instead — its reply notes lifecycle
+                                // LAST, after every field, so "available" always
+                                // means "freshly observed".
                                 _ = SendCliForPlayer(message.Mac, LmsCliCommands.QueryStatus(message.Mac));
                                 break;
 
@@ -660,14 +684,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // start scanning from index 2 to skip the MAC and "status" tokens.
             var kv = LmsCliParser.ExtractKeyValues(tokens, 2);
 
-            // Lifecycle. A status reply proves the server knows the player,
-            // not that the player is reachable: the subscription keeps pushing
+            // Lifecycle is decided here but NOTED LAST (see the end of this
+            // method). A status reply proves the server knows the player, not
+            // that the player is reachable: the subscription keeps pushing
             // keep-alives for a client that has disconnected, and those carry
             // player_connected:0. Honour it when present; treat absence as
             // Online (older/odd replies) so a missing key can never strand a
             // player as unavailable.
             var online = !kv.TryGetValue("player_connected", out var connectedStr) || connectedStr != "0";
-            _registry.NoteLifecycle(mac, online ? PlayerLifecycleState.Online : PlayerLifecycleState.Offline);
 
             // Power BEFORE mode. NotePlaybackState's playback-derived power
             // raise is a fallback for players with no explicit power state; if
@@ -797,10 +821,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
 
             // Last, by design: only now has every field of this reply been
             // noted, so only now is it honest to say the player has been
-            // observed. Consumers gate their bind-time force-publish on this
-            // (LyrionPlayerSnapshot.IsObserved) — never on availability, which
-            // flipped true at the top of this method before power was parsed.
+            // observed — and only now may it become AVAILABLE. Availability is
+            // what makes the registry publish a record's effective power and
+            // playback; noting it before the fields (as this method did through
+            // 1.0.13) published the PREVIOUS values as fresh edges. With
+            // lifecycle last, "available" is a postcondition of "this reply's
+            // fields are in the record", and a consumer binding at any point
+            // in between sees observed-but-unavailable and touches nothing.
             _registry.NoteStatusApplied(mac);
+            _registry.NoteLifecycle(mac, online ? PlayerLifecycleState.Online : PlayerLifecycleState.Offline);
         }
 
         private void ApplyPlayersResponse(string[] tokens)

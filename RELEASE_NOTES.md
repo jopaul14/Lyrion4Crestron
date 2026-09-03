@@ -1,5 +1,100 @@
 # Release Notes
 
+## 1.0.14 — Available means freshly observed; Helper hardening (2026-09-02)
+
+All four drivers ship at 1.0.14. This closes the ten findings of a full-file
+review of the Helper driver — two of them regressions from 1.0.13. **All four
+packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **A reconnect republished cached pre-outage state before any status
+  arrived.** 1.0.13's effective-state model publishes edges the instant a
+  player becomes available, but a player's lifecycle survived a server outage
+  as Online, so `SetServerConnected(true)` made every record available at once
+  and published its *cached* raw power/playback. A player switched off during
+  an LMS restart produced a PoweredOn edge — Room On — and the real OFF one
+  round-trip later: the 1.0.5 bounce-back class. The driver still carried the
+  comment saying this must never happen. Now a record becomes Online **only
+  from a full status response, noted as that response's last step**;
+  `client new`/`reconnect` only trigger the status query; a server-level loss
+  resets every lifecycle to Unknown. "Available" is a postcondition of
+  "freshly observed", by construction.
+- **Commands for an unreachable player were handed to LMS as stored
+  preferences.** `PowerToggle` on an offline player read its effective power
+  (always false) and sent `power 1`; LMS applied it on reconnect and the room
+  switched on unexpectedly. Every player command is now gated on the player
+  being available (`CanCommand`), the same silent-drop rule the PRD applies to
+  a disconnected server.
+- **The 1 s pump could overlap itself.** `System.Threading.Timer` fires the
+  next tick on another thread if the previous one is still running (a slow
+  consumer commit inside the fan-out is enough), advancing the same record
+  twice and racing payloads out of order. An `Interlocked` guard now skips
+  the tick instead.
+
+### Fixed — Source, Receiver, Helper
+
+- **`Connect()` re-enabled a device the installer had just unbound.**
+  1.0.13's `!bound || available` read an unbound driver as connected, so the
+  framework's post-edit `Connect()` undid `UnbindInvalidMac`'s "offline" for
+  the very edit that caused it. `Connect()` now applies `_lastAvailability`
+  alone (initialised true; driven false by a loss or an invalid-MAC unbind).
+- **An invalid-MAC unbind left the old player's name, track, volume and mute
+  on screen.** It now blanks the whole view (Helper and Receiver).
+
+### Fixed — Helper
+
+- **A Lyrion Server reload wiped the live tile with a blank record, and mute
+  could never recover.** The Helper wrote every level of an unobserved
+  snapshot; name, track (defeating the 30 s freeze), volume, shuffle/repeat
+  and mute were replaced with defaults, and any field whose real value equals
+  the default was never corrected because the registry change-gates against
+  that blank record — mute is not in a status reply at all, so a muted player
+  showed "Mute" and the first tap was a no-op. The Helper now applies a
+  bind-time snapshot for observed records only, like the Source and Receiver.
+- **Preset edits and button presses bypassed the apply lock.**
+  `OnPresetReceived` wrote four properties and committed on Crestron Home's
+  configuration thread with no lock while a CLI-thread handler could be
+  mid-commit; `DoCommand` read playback/mute/step state unlocked. Both now run
+  under `_applyGate`.
+- **One commit per unit of work, and nothing rewritten that did not change.**
+  `Update*` methods now only assign, through a change-gated `Set`; each event
+  handler, the bind snapshot, a preset edit and an unbind commit once. The
+  1 Hz position tick used to rewrite fourteen properties, format time three
+  times and rebuild four strings per playing player; it now writes the time
+  text and touches nothing else. A bind cost ten commits; it costs one.
+- **The room tile showed a pause icon while music played.** Its secondary
+  icon was bound to the Play/Pause *button's* next-action glyph. A new
+  `PlaybackStateIcon` (play while playing, pause otherwise) drives the tile;
+  the button keeps its affordance.
+
+### Changed
+
+- CLAUDE.md and the PRD no longer claim `Lyrion_Common.dll` is embedded in
+  the consumer packages. The Server embeds it; the consumers ship it as a
+  package dependency declared in `Driver.json` — removing that entry breaks
+  the consumer at load.
+- CLAUDE.md invariants record the lifecycle rule, the command gate, and the
+  widened apply-lock rule.
+
+### Retest
+
+1. **LMS restart with a player switched off during the outage.** Two
+   players playing; stop LMS; switch one player off (front panel or Material
+   Skin — LMS is down, so at the device); start LMS. **The switched-off
+   player's room stays off with no flicker; the other's returns.**
+2. **Offline player, tile tap.** Unplug a player; tap its room tile. **Nothing
+   is sent; when the player is plugged back in it is in the state it was in
+   before, not powered on.**
+3. **Server-only reload while muted.** Mute a player; re-import only the
+   Lyrion Server. **The Helper still says "Unmute" and one tap unmutes.**
+4. **Invalid MAC.** Set a Helper's MAC to `xyz`. **The page blanks — no name,
+   no track, volume 0 — and shows offline, and STAYS offline after the
+   settings screen closes.** Restore the MAC.
+5. **Tile glyph.** Play, then pause. **The room tile's secondary icon shows
+   play while playing and pause while paused.**
+6. Everything from the 1.0.13 retest still holds.
+
 ## 1.0.13 — Effective state at the boundary; consumer apply lock (2026-09-02)
 
 All four drivers ship at 1.0.13. This closes the ten findings of a full-file

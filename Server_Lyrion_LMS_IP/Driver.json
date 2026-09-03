@@ -15,7 +15,7 @@
       "Website": "https://github.com/jopaul14/Lyrion4Crestron",
       "PhoneNumber": "(555) 867-5309"
     },
-    "DriverVersion": "1.0.13",
+    "DriverVersion": "1.0.14",
     "VersionDate": "2026-09-02 00:00:00.000",
     "Description": "Lyrion Server. Maintains the single CLI connection to LMS and publishes an in-process service consumed by the Lyrion Source, Lyrion Helper, and Lyrion Receiver drivers. Install one instance per home; it has no room-level function of its own."
   },

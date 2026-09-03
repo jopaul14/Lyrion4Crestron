@@ -43,8 +43,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         // Last availability the Lyrion Server reported for the bound player,
         // so Connect() — which the framework re-runs after any MAC edit — can
-        // restore it instead of forcing Connected=true over it.
-        private bool _lastAvailability;
+        // restore it instead of forcing Connected=true over it. Starts true
+        // (the framework's pre-bind default).
+        private bool _lastAvailability = true;
 
         private SourceProtocol _protocol;
         private string _configuredMac;
@@ -88,13 +89,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             // Connected=true here overrode the availability already learned
             // from the Lyrion Server, and the registry — change-gated on its
             // own unchanged copy — never sent AvailabilityChanged(false) again.
-            bool bound, available;
-            lock (_gate)
-            {
-                bound = _boundMac != null;
-                available = _lastAvailability;
-            }
-            Connected = !bound || available;
+            // Not `!bound || available` (1.0.13): that read an UNBOUND driver as
+            // connected and undid UnbindInvalidMac's "offline" as soon as the
+            // framework re-ran this for the edit that caused the unbind.
+            // _lastAvailability starts true (the pre-bind default) and is
+            // driven false by a loss or by an invalid-MAC unbind.
+            bool available;
+            lock (_gate) { available = _lastAvailability; }
+            Connected = available;
         }
 
         // ===== Configuration =====

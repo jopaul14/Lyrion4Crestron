@@ -3,9 +3,13 @@
   <version ver="1.0"/>
 
   <!-- Tile tap toggles POWER (primary icon + status reflect on/off); the
-       playback state stays visible via the secondary icon. Play/Pause and the
-       rest of the transport live in the NowPlaying layout below. -->
-  <tile icon="{PowerIcon}" secondaryicon="{PlaybackIcon}" status="{TileStatus}" action="command:PowerToggle" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
+       playback STATE stays visible via the secondary icon — PlaybackStateIcon,
+       a play glyph while playing and a pause glyph otherwise. Not
+       PlaybackIcon: that is the Play/Pause button's NEXT-action affordance
+       (pause while playing), and binding it here showed a pause symbol on a
+       playing room (1.0.13 and earlier). Play/Pause and the rest of the
+       transport live in the NowPlaying layout below. -->
+  <tile icon="{PowerIcon}" secondaryicon="{PlaybackStateIcon}" status="{TileStatus}" action="command:PowerToggle" navigation="show:NowPlaying" showinhomepage="#false" showinroompage="#true"/>
 
   <layouts>
 

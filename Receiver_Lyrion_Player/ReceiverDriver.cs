@@ -25,8 +25,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
         private readonly object _applyGate = new object();
 
         // Last availability reported for the bound player, so Connect() can
-        // restore it instead of forcing Connected=true over it.
-        private bool _lastAvailability;
+        // restore it instead of forcing Connected=true over it. Starts true
+        // (the framework's pre-bind default).
+        private bool _lastAvailability = true;
 
         private ReceiverProtocol _protocol;
         private string _configuredMac;
@@ -67,13 +68,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
         {
             // Re-run by the framework after any MAC edit; must not override
             // the availability already learned (see SourceDriver.Connect).
-            bool bound, available;
-            lock (_gate)
-            {
-                bound = _boundMac != null;
-                available = _lastAvailability;
-            }
-            Connected = !bound || available;
+            // See SourceDriver.Connect: _lastAvailability alone, never
+            // `!bound || available`.
+            bool available;
+            lock (_gate) { available = _lastAvailability; }
+            Connected = available;
         }
 
         // ===== Configuration =====
@@ -109,6 +108,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
                 if (previous == null) return;
 
                 if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
+                // The whole view goes blank — this driver represents no player
+                // now. Fields first, availability last (loss order).
+                UpdateVolume(0, force: true);
+                UpdateMute(false, force: true);
                 UpdatePower(false, force: true);
                 UpdateAvailability(false);
                 _log("Receiver WARNING: player MAC '" + (rawMac ?? string.Empty) + "' is not valid; unbound from " + previous);

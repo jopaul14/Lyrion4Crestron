@@ -123,6 +123,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             lock (_gate) return _records.ContainsKey(canon);
         }
 
+        /// <summary>
+        /// True when the MAC is bound AND currently available (server connected,
+        /// player Online). The service gates every player command on this: a
+        /// command for an unreachable player is dropped the same way a command
+        /// for a disconnected server is, rather than being handed to LMS as a
+        /// stored preference that fires when the player next reconnects
+        /// (PowerToggle on an offline player used to send `power 1`, which LMS
+        /// applied on reconnect and switched the room on unexpectedly).
+        /// </summary>
+        public bool IsAvailable(string mac)
+        {
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null) return false;
+
+            lock (_gate)
+            {
+                return _records.TryGetValue(canon, out var rec) && rec.IsAvailable;
+            }
+        }
+
         public IReadOnlyList<string> BoundMacs()
         {
             lock (_gate)
@@ -196,6 +216,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 foreach (var kvp in _records)
                 {
                     var rec = kvp.Value;
+
+                    // A server-level loss means we no longer know any player's
+                    // lifecycle. Forget it, so that when the server returns
+                    // nothing springs back to "available" on the strength of
+                    // pre-outage state: a record becomes Online again only when
+                    // a fresh status response says so (ApplyStatusResponse
+                    // notes lifecycle LAST), and only then are its effective
+                    // edges published. Before 1.0.14 the lifecycle survived the
+                    // outage, so SetServerConnected(true) made every record
+                    // available at once and published the CACHED raw
+                    // power/playback as edges before any status arrived — a
+                    // player switched off during the outage produced a
+                    // PoweredOn edge (Room On) followed by the real OFF one
+                    // round-trip later, the 1.0.5 bounce-back class.
+                    if (!connected) rec.LifecycleState = PlayerLifecycleState.Unknown;
+
                     var change = ApplyAvailability_NoLock(rec);
                     if (change != null) affected.Add(change);
                 }

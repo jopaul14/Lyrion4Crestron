@@ -63,6 +63,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
             }
         }
 
+        /// <summary>
+        /// The single gate every player command passes: bound, server
+        /// connected, AND the player itself available. Commands are dropped
+        /// silently otherwise — the PRD's rule for a disconnected server,
+        /// extended to an unreachable player. Without the last test,
+        /// PowerToggle read an offline player's EFFECTIVE power (always false)
+        /// and sent `power 1` to a player LMS reported disconnected; LMS
+        /// stored it as a preference and switched the player (and its room)
+        /// on when it next reconnected. Configuration publishes
+        /// (SetVolumeStep) are not commands and are not gated.
+        /// </summary>
+        private bool CanCommand(string canon)
+        {
+            return canon != null && _isServerConnected() && _registry.IsAvailable(canon);
+        }
+
         // ===== Service identity =====
 
         public string ServiceVersion => "1.0";
@@ -127,28 +143,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
         public void Seek(string mac, int positionSeconds)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SeekTo(canon, positionSeconds));
         }
 
         public void SetShuffle(string mac, bool enabled)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetShuffle(canon, enabled));
         }
 
         public void SetRepeat(string mac, bool enabled)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetRepeat(canon, enabled));
         }
 
         public void PowerOn(string mac)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
 
             _registry.TryGetCapabilities(canon, out var canPowerOff, out _);
             if (canPowerOff)
@@ -164,7 +180,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
         public void PowerOff(string mac)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
 
             _registry.TryGetCapabilities(canon, out var canPowerOff, out _);
             if (canPowerOff)
@@ -191,7 +207,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
 
             var safe = SanitizeCommand(command);
             if (safe.Length == 0) return;
-            if (!_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (!CanCommand(canon)) return;
 
             _sendCliLine(LmsCliCommands.PlayerCommand(canon, safe));
         }
@@ -225,28 +241,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
         public void SetVolume(string mac, int level)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetVolume(canon, level));
         }
 
         public void VolumeUp(string mac, int step)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.VolumeUp(canon, step));
         }
 
         public void VolumeDown(string mac, int step)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.VolumeDown(canon, step));
         }
 
         public void SetMute(string mac, bool muted)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetMute(canon, muted));
         }
 
@@ -261,7 +277,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
         private void SendForPlayer(string mac, Func<string, string> commandBuilder)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(commandBuilder(canon));
         }
     }
