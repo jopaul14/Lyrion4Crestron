@@ -183,9 +183,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             // `!bound || available`, which read an UNBOUND driver as connected
             // and so undid UnbindInvalidMac's "offline" the moment the
             // framework re-ran this for the very edit that caused the unbind.
-            bool available;
-            lock (_gate) { available = _lastAvailability; }
-            Connected = available;
+            // Under _applyGate like every other write of Connected (1.0.15),
+            // so it cannot interleave with a loss arriving on the CLI thread
+            // and leave a stale true that the registry would never correct.
+            lock (_applyGate)
+            {
+                bool available;
+                lock (_gate) { available = _lastAvailability; }
+                Connected = available;
+            }
         }
 
         // ===== Extension device definition =====
@@ -371,7 +377,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         // A cleared or unparseable MAC is an unbind, not a no-op — see
         // SourceDriver.UnbindInvalidMac. The tile goes to off/stopped, then
-        // offline.
+        // offline. With nothing bound there is no state to lower, but a
+        // NON-BLANK value still gets the warning (a typo at first setup is
+        // the one moment the installer is looking at the log); an empty
+        // attribute at boot stays silent.
         private void UnbindInvalidMac(string rawMac)
         {
             lock (_applyGate)
@@ -385,7 +394,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                     _boundMac = null;
                     svc = _server;
                 }
-                if (previous == null) return;
+                if (previous == null)
+                {
+                    if (!string.IsNullOrWhiteSpace(rawMac))
+                    {
+                        _log("Helper WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
+                    }
+                    return;
+                }
 
                 if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
 
@@ -469,45 +485,53 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         private void OnServerAvailable(ILyrionServerService service)
         {
+            // Invoked on initial subscription and again whenever the Lyrion
+            // Server driver reloads and registers a fresh service. The whole
+            // swap runs under _applyGate (1.0.15) so it cannot interleave with
+            // a bind already in flight on the OLD service — see
+            // SourceDriver.OnServerAvailable.
             if (_disposed) return;
 
-            ILyrionServerService oldService;
-            lock (_gate)
+            lock (_applyGate)
             {
-                if (_disposed) return;
-                if (ReferenceEquals(_server, service)) return;
+                ILyrionServerService oldService;
+                lock (_gate)
+                {
+                    if (_disposed) return;
+                    if (ReferenceEquals(_server, service)) return;
 
-                oldService = _server;
-                _server = service;
-                _boundMac = null;
+                    oldService = _server;
+                    _server = service;
+                    _boundMac = null;
 
-                service.AvailabilityChanged += OnAvailabilityChanged;
-                service.NameChanged += OnNameChanged;
-                service.PowerStateChanged += OnPowerStateChanged;
-                service.PlaybackStateChanged += OnPlaybackStateChanged;
-                service.MetadataUpdated += OnMetadataUpdated;
-                service.ShuffleChanged += OnShuffleChanged;
-                service.RepeatChanged += OnRepeatChanged;
-                service.VolumeChanged += OnVolumeChanged;
-                service.MuteChanged += OnMuteChanged;
-                service.VolumeStepChanged += OnVolumeStepChanged;
+                    service.AvailabilityChanged += OnAvailabilityChanged;
+                    service.NameChanged += OnNameChanged;
+                    service.PowerStateChanged += OnPowerStateChanged;
+                    service.PlaybackStateChanged += OnPlaybackStateChanged;
+                    service.MetadataUpdated += OnMetadataUpdated;
+                    service.ShuffleChanged += OnShuffleChanged;
+                    service.RepeatChanged += OnRepeatChanged;
+                    service.VolumeChanged += OnVolumeChanged;
+                    service.MuteChanged += OnMuteChanged;
+                    service.VolumeStepChanged += OnVolumeStepChanged;
+                }
+
+                if (oldService != null)
+                {
+                    try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { oldService.NameChanged -= OnNameChanged; } catch { }
+                    try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                    try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
+                    try { oldService.ShuffleChanged -= OnShuffleChanged; } catch { }
+                    try { oldService.RepeatChanged -= OnRepeatChanged; } catch { }
+                    try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
+                    try { oldService.MuteChanged -= OnMuteChanged; } catch { }
+                    try { oldService.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
+                }
+
+                TryBindToServer();
             }
-
-            if (oldService != null)
-            {
-                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { oldService.NameChanged -= OnNameChanged; } catch { }
-                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
-                try { oldService.MetadataUpdated -= OnMetadataUpdated; } catch { }
-                try { oldService.ShuffleChanged -= OnShuffleChanged; } catch { }
-                try { oldService.RepeatChanged -= OnRepeatChanged; } catch { }
-                try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
-                try { oldService.MuteChanged -= OnMuteChanged; } catch { }
-                try { oldService.VolumeStepChanged -= OnVolumeStepChanged; } catch { }
-            }
-
-            TryBindToServer();
         }
 
         private void TryBindToServer()

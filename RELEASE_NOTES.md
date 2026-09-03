@@ -1,5 +1,97 @@
 # Release Notes
 
+## 1.0.15 — Mute is observed; Receiver volume ramp; consumer lock scope (2026-09-02)
+
+All four drivers ship at 1.0.15. This closes the nine findings of a full-file
+review of the Receiver driver — the last of the five projects to get one.
+**All four packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **Mute was never observed, so a Lyrion Server reload while muted showed
+  "unmuted".** A status reply has no mute field and nothing ever queried one,
+  so a rebuilt record held `Muted=false` unobserved; two seconds after the
+  reconnect `RepublishAll` pushed that to every consumer — the Receiver's mute
+  and the Helper's Mute/Unmute label both flipped — and a muted player's
+  volume, which LMS reports as a **negative** number while muted, was clamped
+  to 0. The sign is now read: every status reply notes mute (negative =
+  muted) and the absolute volume, so `IsObserved` vouches for mute like every
+  other field. (Verified against LMS 9.1: `status` reports `mixer volume:-N`
+  while `mixer muting` is 1.)
+- **`RepublishAll` republished records no status reply had reached.** It
+  pushed default volume/mute/name/metadata for them, fabricating edges on
+  consumers still showing the real pre-outage values. It now skips unobserved
+  records: their loss was already published at the disconnect, and they
+  publish the moment their first status reply is applied.
+
+### Fixed — Receiver
+
+- **Press-and-hold on the room volume moved exactly one step.** Crestron Home
+  delivers a hold as press then release and the framework ramps between them;
+  the Receiver forwarded the press as a single step and never saw the release.
+  It now steps once on press and every 300 ms until release (a tap is still
+  one step), with a 12 s fuse should the release never arrive. The framework's
+  own ramp is deliberately bypassed — it fabricates volume feedback each tick,
+  which would fight the real feedback from LMS.
+- **An invalid or cleared `VolumeStep` silently kept the previous step.** The
+  same persisted value stepped by the old amount until a reload and by 2 after
+  it. It now falls back to the default (2), re-publishes it to the Helper, and
+  logs one warning for a non-blank invalid value.
+- **A `VolumeStep` edit could race the bind's re-publish** and leave the
+  Helper stepping by a different amount than the Receiver. The write and the
+  publish now run under the apply lock.
+
+### Fixed — Source, Receiver, Helper
+
+- **The service swap on a Lyrion Server reload ran outside the apply lock.**
+  A bind already in flight on the old service could force-apply a disposed
+  registry's stale snapshot *after* the swap and leave it standing. The whole
+  swap — detach, attach, rebind — now runs under `_applyGate`.
+- **`Connect()` wrote `Connected` outside the apply lock.** Re-run by the
+  framework after a MAC edit, it could interleave with a loss on the CLI
+  thread and leave a stale true that the registry never corrects.
+- **A mistyped MAC at first setup logged nothing.** A blank attribute still
+  stays silent (an unconfigured driver at boot); a non-blank unparseable value
+  now logs one warning.
+
+### Changed
+
+- Receiver `ApplySnapshot` collapsed to one branch (Connected first on a
+  restore, last on a loss; fields only for an observed record).
+- CLAUDE.md and the PRD record that mute is observed from the status volume
+  sign, that `RepublishAll` skips unobserved records, and the widened
+  apply-lock rule (service swap, `Connect()`, `VolumeStep`).
+
+### Deferred
+
+- **Shared consumer binding helper** (the review's reuse finding). The three
+  consumers still hand-roll the same bind/apply/dispose choreography, and this
+  release applied the same two lock-scope fixes three times over. Deferred to
+  after the 1.0.15 hardware pass: it is a refactor of all three consumers, and
+  there is no compiler on the development machine to catch a slip.
+
+### Retest (1.0.15)
+
+1. **Mute survives a Lyrion Server reload.** Mute a player from the Helper.
+   Re-import only the Server package; wait 10 s. The Receiver's mute and the
+   Helper's "Unmute" label must still show muted, and the Receiver's volume
+   must show the real level, not 0. Unmute from the Helper: both must follow.
+2. **Mute is seen at first sight.** Mute a player from the LMS web UI, then
+   reboot the processor. After boot the Receiver and the Helper must show
+   muted without any tap.
+3. **Volume hold ramps.** In the Crestron Home app hold the room volume-up
+   for about two seconds: the volume must climb several steps and stop on
+   release; a tap must move exactly one step. Same for volume-down.
+4. **VolumeStep fallback.** Set the Receiver's VolumeStep to `x`: Vol± on
+   the Receiver and the Helper must step by 2 and the log must carry one
+   WARNING. Clear it: still 2, no warning. Set 5: both step by 5.
+5. **Typo at first setup.** Pair a fresh Receiver with a one-character-short
+   MAC: one WARNING "nothing bound" in the log, no "Bound to MAC". Correct
+   it: "Bound to MAC" follows.
+6. **Regression pass.** The 1.0.14 retest list unchanged: LMS restart with a
+   player switched off during the outage, offline tile tap, invalid-MAC
+   unbind, tile glyph.
+
 ## 1.0.14 — Available means freshly observed; Helper hardening (2026-09-02)
 
 All four drivers ship at 1.0.14. This closes the ten findings of a full-file

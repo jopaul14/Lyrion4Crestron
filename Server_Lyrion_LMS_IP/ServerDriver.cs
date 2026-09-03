@@ -738,12 +738,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             if (volStr != null && int.TryParse(volStr, System.Globalization.NumberStyles.Integer,
                 System.Globalization.CultureInfo.InvariantCulture, out var vol))
             {
-                _registry.NoteVolume(mac, vol);
+                // Mute rides on the SIGN: LMS stores a muted player's volume
+                // pref as -volume, and the status reply reports that raw
+                // value, so "mixer volume:-25" means muted at 25. There is no
+                // separate mute field in a status reply and nothing here ever
+                // queried one, which through 1.0.14 left mute the one field
+                // IsObserved could not vouch for: a Server reload while muted
+                // rebuilt the record with Muted=false, and RepublishAll then
+                // pushed "unmuted" to every consumer two seconds after the
+                // reconnect (and NoteVolume clamped the negative to 0, so a
+                // muted player also showed volume 0). Note mute first so a
+                // consumer's first sight of the record carries both.
+                _registry.NoteMute(mac, vol < 0);
+                _registry.NoteVolume(mac, vol < 0 ? -vol : vol);
             }
-
-            // Mute — not always present in every status response
-            // Not a standard tag in "status - 1 tags:..." but may appear via
-            // "mixer muting" prefset. We handle it if present.
 
             // Shuffle
             if (kv.TryGetValue("playlist shuffle", out var shuffleStr)

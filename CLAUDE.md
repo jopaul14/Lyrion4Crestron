@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.14).
+four-driver refactor is **complete** (all drivers ship together at 1.0.15).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -36,9 +36,10 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   three sanctioned publishes without one, each of which IS a change in
   disguise: the first explicit power report for an available record
   (`HasExplicitPower` false→true); `RepublishAll` after a committed server
-  reconnect (a hard state boundary); and the availability-restore metadata
-  publish that lifts a freeze (`IsFrozen` true→false). Anything else that
-  publishes without a change is a bug.
+  reconnect (a hard state boundary — and only for records a status reply has
+  reached, an unobserved record holds nothing true to republish); and the
+  availability-restore metadata publish that lifts a freeze (`IsFrozen`
+  true→false). Anything else that publishes without a change is a bug.
 - **The registry owns every derivation, and applies "unavailable ⇒ powered
   off and stopped" at the publish boundary, not in the record.** Records hold
   the RAW values LMS last reported; every publish, snapshot, and republish
@@ -65,9 +66,11 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   to LMS as a stored preference to fire on reconnect.
 - **Consumers serialise every write AND every read of RAD-facing state under
   one apply lock** (`_applyGate`: bind+snapshot+apply, each event handler,
-  `DoCommand`, `SetUserAttribute`-driven writes such as presets, Dispose's
-  unbind, invalid-MAC unbind). Lock order is `_applyGate` then `_gate`, never
-  the reverse. `Update*` methods assign only (through a change-gated `Set`);
+  the service swap in `OnServerAvailable`, `Connect()`, `DoCommand`,
+  `SetUserAttribute`-driven writes such as presets and the Receiver's
+  `VolumeStep`, Dispose's unbind, invalid-MAC unbind). Lock order is
+  `_applyGate` then `_gate`, never the reverse. `Update*` methods assign only
+  (through a change-gated `Set`);
   the unit of work that called them commits once. A bind-time snapshot is
   applied for OBSERVED records only — for an unobserved one, touch nothing
   but `Connected`; do not "call it un-forced", an un-forced value still
@@ -77,13 +80,21 @@ before making behavioral changes; where any other document disagrees, the PRD wi
 - **Never force-publish a value the Lyrion Server has not observed.** The
   only honest signal is `LyrionPlayerSnapshot.IsObserved` (set after a FULL
   status response is applied). `IsAvailable` is now set after it, but it is
-  still the wrong test: a record can be observed and unavailable.
+  still the wrong test: a record can be observed and unavailable. A status
+  reply carries EVERY snapshot field, mute included: LMS reports a muted
+  player's `mixer volume` as a negative number, and `ApplyStatusResponse`
+  notes the sign as mute and the magnitude as volume. Through 1.0.14 the sign
+  was dropped and mute was the one field `IsObserved` could not vouch for.
 - Volume (0–100, no rescaling) is owned by the Receiver but also surfaced on the
   Helper page (Vol±/Mute buttons); both route to the same
   Lyrion Server `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows
   the Receiver's configured `VolumeStep`, shared per-MAC through the Lyrion Server
-  registry. Shuffle/repeat are booleans exposed only by the Helper. Seek is
-  contract-only (Crestron Home has no draggable seek bar).
+  registry; a blank or invalid `VolumeStep` means the default (2), never the
+  previous value. A held volume button ramps (one step on press, one per
+  300 ms until release) with a Receiver-owned timer — the RAD base ramp is
+  bypassed because it fabricates volume feedback. Shuffle/repeat are booleans
+  exposed only by the Helper. Seek is contract-only (Crestron Home has no
+  draggable seek bar).
 - **Presets are installer-declared, never discovered.** Four `Name|Icon|Command`
   user attributes on the Helper; the command is the LMS CLI text that follows the
   MAC. The driver never scans the server for playlists — browsing the library is

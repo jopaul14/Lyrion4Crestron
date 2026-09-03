@@ -93,10 +93,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             // connected and undid UnbindInvalidMac's "offline" as soon as the
             // framework re-ran this for the edit that caused the unbind.
             // _lastAvailability starts true (the pre-bind default) and is
-            // driven false by a loss or by an invalid-MAC unbind.
-            bool available;
-            lock (_gate) { available = _lastAvailability; }
-            Connected = available;
+            // driven false by a loss or by an invalid-MAC unbind. Under
+            // _applyGate like every other write of Connected (1.0.15), so it
+            // cannot interleave with a loss arriving on the CLI thread and
+            // leave a stale true that the registry would never correct.
+            lock (_applyGate)
+            {
+                bool available;
+                lock (_gate) { available = _lastAvailability; }
+                Connected = available;
+            }
         }
 
         // ===== Configuration =====
@@ -120,8 +126,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         /// to — and kept driving — the previous player. Treat it as an unbind:
         /// release the registry record, report off/stopped then disconnected
         /// (the registry's loss order), and log the one misconfiguration
-        /// warning the PRD sanctions. Silent when nothing was bound, so an
-        /// unconfigured driver at boot does not log.
+        /// warning the PRD sanctions. With nothing bound there is no state to
+        /// lower, but a NON-BLANK value still gets the warning: a typo at
+        /// first setup is the one moment the installer is looking at the log,
+        /// and through 1.0.14 it produced no line at all. An empty attribute
+        /// at boot stays silent.
         /// </summary>
         private void UnbindInvalidMac(string rawMac)
         {
@@ -136,7 +145,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                     _boundMac = null;
                     svc = _server;
                 }
-                if (previous == null) return;
+                if (previous == null)
+                {
+                    if (!string.IsNullOrWhiteSpace(rawMac))
+                    {
+                        _log("Source WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
+                    }
+                    return;
+                }
 
                 if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
                 UpdatePlayback(LyrionPlaybackState.Stopped, force: true);
@@ -151,33 +167,42 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private void OnServerAvailable(ILyrionServerService service)
         {
             // May be invoked more than once: on initial subscription and again
-            // whenever the Lyrion Server driver reloads and registers a fresh service.
-            // Detach from the old service and rebind to the new one.
+            // whenever the Lyrion Server driver reloads and registers a fresh
+            // service. Detach from the old service and rebind to the new one.
+            // The whole swap runs under _applyGate (1.0.15) so it cannot
+            // interleave with a bind already in flight on the OLD service:
+            // that bind either finishes first (and the rebind below replaces
+            // what it applied) or sees the new service — never half of each,
+            // which could force-apply a disposed registry's stale snapshot
+            // and leave it standing.
             if (_disposed) return;
 
-            ILyrionServerService oldService;
-            lock (_gate)
+            lock (_applyGate)
             {
-                if (_disposed) return;
-                if (ReferenceEquals(_server, service)) return;
+                ILyrionServerService oldService;
+                lock (_gate)
+                {
+                    if (_disposed) return;
+                    if (ReferenceEquals(_server, service)) return;
 
-                oldService = _server;
-                _server = service;
-                _boundMac = null;
+                    oldService = _server;
+                    _server = service;
+                    _boundMac = null;
 
-                service.AvailabilityChanged += OnAvailabilityChanged;
-                service.PowerStateChanged += OnPowerStateChanged;
-                service.PlaybackStateChanged += OnPlaybackStateChanged;
+                    service.AvailabilityChanged += OnAvailabilityChanged;
+                    service.PowerStateChanged += OnPowerStateChanged;
+                    service.PlaybackStateChanged += OnPlaybackStateChanged;
+                }
+
+                if (oldService != null)
+                {
+                    try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                }
+
+                TryBindToServer();
             }
-
-            if (oldService != null)
-            {
-                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
-            }
-
-            TryBindToServer();
         }
 
         private void TryBindToServer()
@@ -243,6 +268,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             //
             // No playback force for unobserved records: Initialize() aligns
             // the RAD baseline (NoDisc) to the registry's (Stopped) once.
+            //
+            // Field order within a restore is power then playback and within
+            // a loss playback then power (the registry's RaiseAvailabilityChange
+            // order), so the pair is written out per branch.
             if (snap.IsAvailable)
             {
                 UpdateAvailability(true);

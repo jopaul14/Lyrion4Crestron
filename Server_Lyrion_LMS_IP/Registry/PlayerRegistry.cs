@@ -915,6 +915,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 lock (_gate)
                 {
                     if (!_records.TryGetValue(canon, out var rec)) continue;
+
+                    // A record nobody has observed yet holds only defaults.
+                    // Its loss (if it ever was available) was already
+                    // published at the disconnect, so there is nothing true
+                    // to republish — and pushing a default volume/mute/name
+                    // to a consumer that still shows the real pre-outage
+                    // values would fabricate an edge. It publishes the moment
+                    // its first status reply is applied.
+                    if (!rec.HasObservedState) continue;
+
                     avail = rec.IsAvailable;
                     power = EffectivePower(rec);
                     pbs = EffectivePlayback(rec);

@@ -5,36 +5,62 @@
 
 using System;
 using System.Diagnostics;
+using System.Threading;
 using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.DeviceTypes.RADAVReceiver;
 using LyrionCommunity.Crestron.Lyrion.Service;
+// Inside the driver the bare name "ReceiverProtocol" is the base class's
+// PROPERTY (ABasicAVReceiver.ReceiverProtocol), so the class's constants are
+// reached through this alias.
+using Proto = LyrionCommunity.Crestron.Lyrion.Receiver.ReceiverProtocol;
 
 namespace LyrionCommunity.Crestron.Lyrion.Receiver
 {
+    /// <summary>
+    /// Optional per-room routing endpoint, surfaced to Crestron Home as a RAD
+    /// AV Receiver: volume (0–100), mute, and power for one Lyrion player.
+    /// Never opens a socket to LMS — every command goes to the Lyrion Server
+    /// service and all feedback comes back from it. Same bind/apply/dispose
+    /// choreography as SourceDriver; the rules are repeated where they apply.
+    /// </summary>
     public class ReceiverDriver : ABasicAVReceiver, ICloudConnected
     {
-        private const int DefaultVolumeStep = 2;
+        // Volume ramp: one step on press, then one step per interval until
+        // release. 300 ms is comfortably above the CLI's turnaround and slow
+        // enough that a short hold is a couple of steps, not a leap. The tick
+        // cap is a fuse for a Release that never arrives (~12 s of ramp).
+        private static readonly TimeSpan RampInterval = TimeSpan.FromMilliseconds(300);
+        private const int RampMaxTicks = 40;
 
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
-        // Serialises the bind-time snapshot read+apply, every event handler,
-        // and Dispose's unbind — see the matching comment in SourceDriver.
-        // Lock order: _applyGate, then _gate; never the reverse.
+        // Serialises every read and write of the RAD-facing state (PowerIsOn,
+        // VolumePercent, Muted, Connected): the bind-time snapshot read+apply,
+        // each Lyrion Server event handler, the service swap on a Lyrion
+        // Server reload, Connect(), the VolumeStep attribute write, Dispose's
+        // unbind and the invalid-MAC unbind. Lock order: _applyGate, then
+        // _gate; never the reverse. The registry raises events outside its
+        // own lock, so holding this while calling into it cannot invert.
         private readonly object _applyGate = new object();
 
         // Last availability reported for the bound player, so Connect() can
         // restore it instead of forcing Connected=true over it. Starts true
-        // (the framework's pre-bind default).
+        // (the framework's pre-bind default); driven false by a loss or by an
+        // invalid-MAC unbind.
         private bool _lastAvailability = true;
 
         private ReceiverProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
-        private int _volumeStep = DefaultVolumeStep;
+        private int _volumeStep = Proto.DefaultVolumeStep;
         private ILyrionServerService _server;
         private volatile bool _disposed;
+
+        private Timer _rampTimer;
+        private int _rampDirection; // +1 up, -1 down, 0 idle
+        private int _rampTicks;
 
         public ReceiverDriver()
         {
@@ -58,6 +84,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             _protocol.SetVolumeRequested += OnSetVolumeRequested;
             _protocol.VolumeUpRequested += OnVolumeUpRequested;
             _protocol.VolumeDownRequested += OnVolumeDownRequested;
+            _protocol.VolumeReleaseRequested += OnVolumeReleaseRequested;
             ReceiverProtocol = _protocol;
             ReceiverProtocol.Initialize(AvrData);
 
@@ -66,13 +93,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         public override void Connect()
         {
-            // Re-run by the framework after any MAC edit; must not override
-            // the availability already learned (see SourceDriver.Connect).
-            // See SourceDriver.Connect: _lastAvailability alone, never
-            // `!bound || available`.
-            bool available;
-            lock (_gate) { available = _lastAvailability; }
-            Connected = available;
+            // The framework calls this at load and again after any change to
+            // a RequiredForConnection attribute (the MAC). It must re-apply
+            // the availability already learned from the Lyrion Server, not
+            // force Connected=true over it — the registry is change-gated on
+            // its own copy and would never send the loss again. Not
+            // `!bound || available` (1.0.13): that read an UNBOUND driver as
+            // connected and undid the invalid-MAC unbind. Under _applyGate
+            // like every other write of Connected, so it cannot interleave
+            // with a loss arriving on the CLI thread and leave a stale true.
+            lock (_applyGate)
+            {
+                bool available;
+                lock (_gate) { available = _lastAvailability; }
+                Connected = available;
+            }
         }
 
         // ===== Configuration =====
@@ -90,8 +125,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             TryBindToServer();
         }
 
-        // A cleared or unparseable MAC is an unbind, not a no-op — see
-        // SourceDriver.UnbindInvalidMac.
+        /// <summary>
+        /// The installer cleared the MAC or typed something unparseable. It is
+        /// an unbind, not a no-op: release the registry record, blank the
+        /// whole view (fields first, then Connected — the registry's loss
+        /// order) and log the one misconfiguration warning the PRD sanctions.
+        /// With nothing bound there is no state to lower, but a NON-BLANK
+        /// value still gets the warning: a typo at first setup is the one
+        /// moment the installer is looking at the log, and through 1.0.14 it
+        /// produced no line at all. An empty attribute at boot stays silent.
+        /// </summary>
         private void UnbindInvalidMac(string rawMac)
         {
             lock (_applyGate)
@@ -105,11 +148,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
                     _boundMac = null;
                     svc = _server;
                 }
-                if (previous == null) return;
+                if (previous == null)
+                {
+                    if (!string.IsNullOrWhiteSpace(rawMac))
+                    {
+                        _log("Receiver WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
+                    }
+                    return;
+                }
 
                 if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
-                // The whole view goes blank — this driver represents no player
-                // now. Fields first, availability last (loss order).
                 UpdateVolume(0, force: true);
                 UpdateMute(false, force: true);
                 UpdatePower(false, force: true);
@@ -118,50 +166,77 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             }
         }
 
-        private void OnVolumeStepReceived(int step)
+        private void OnVolumeStepReceived(int step, string invalidRaw)
         {
-            _volumeStep = step;
-            // Publish so other consumers (the Helper's Vol+/- buttons) match the
-            // same step. Dropped if not yet bound; TryBindToServer re-publishes.
-            InvokeOnServer((svc, mac) => svc.SetVolumeStep(mac, step));
+            // Under _applyGate: TryBindToServer reads and re-publishes
+            // _volumeStep under the same lock, so an attribute edit landing
+            // during a Lyrion Server reload cannot leave the registry (and the
+            // Helper's Vol+/- buttons) holding a different step than this
+            // driver. Dropped by InvokeOnServer if not yet bound; the bind
+            // publishes it then.
+            lock (_applyGate)
+            {
+                _volumeStep = step;
+                InvokeOnServer((svc, mac) => svc.SetVolumeStep(mac, step));
+            }
+
+            if (!string.IsNullOrWhiteSpace(invalidRaw))
+            {
+                _log("Receiver WARNING: volume step '" + invalidRaw + "' is not valid ("
+                    + Proto.MinVolumeStep + "-" + Proto.MaxVolumeStep + "); using " + step);
+            }
         }
 
         // ===== Lyrion Server binding =====
 
         private void OnServerAvailable(ILyrionServerService service)
         {
+            // Invoked on initial subscription and again whenever the Lyrion
+            // Server driver reloads and registers a fresh service. The whole
+            // swap runs under _applyGate so it cannot interleave with a bind
+            // already in flight on the OLD service: that bind either finishes
+            // first (and the rebind below replaces what it applied) or sees
+            // the new service and binds to it — never half of each, which
+            // through 1.0.14 could force-apply a disposed registry's stale
+            // snapshot and then leave it standing.
             if (_disposed) return;
 
-            ILyrionServerService oldService;
-            lock (_gate)
+            lock (_applyGate)
             {
-                if (_disposed) return;
-                if (ReferenceEquals(_server, service)) return;
+                ILyrionServerService oldService;
+                lock (_gate)
+                {
+                    if (_disposed) return;
+                    if (ReferenceEquals(_server, service)) return;
 
-                oldService = _server;
-                _server = service;
-                _boundMac = null;
+                    oldService = _server;
+                    _server = service;
+                    _boundMac = null;
 
-                service.AvailabilityChanged += OnAvailabilityChanged;
-                service.PowerStateChanged += OnPowerStateChanged;
-                service.VolumeChanged += OnVolumeChanged;
-                service.MuteChanged += OnMuteChanged;
+                    service.AvailabilityChanged += OnAvailabilityChanged;
+                    service.PowerStateChanged += OnPowerStateChanged;
+                    service.VolumeChanged += OnVolumeChanged;
+                    service.MuteChanged += OnMuteChanged;
+                }
+
+                if (oldService != null)
+                {
+                    try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
+                    try { oldService.MuteChanged -= OnMuteChanged; } catch { }
+                }
+
+                TryBindToServer();
             }
-
-            if (oldService != null)
-            {
-                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { oldService.VolumeChanged -= OnVolumeChanged; } catch { }
-                try { oldService.MuteChanged -= OnMuteChanged; } catch { }
-            }
-
-            TryBindToServer();
         }
 
         private void TryBindToServer()
         {
-            // Whole bind under _applyGate — see SourceDriver.TryBindToServer.
+            // The whole bind — commit _boundMac, unbind the previous MAC, bind,
+            // publish the step, read the snapshot, apply it — runs under
+            // _applyGate so no event handler, Dispose, MAC edit, or service
+            // swap can interleave with it.
             lock (_applyGate)
             {
                 ILyrionServerService svc;
@@ -202,31 +277,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            // Same two rules as SourceDriver.ApplySnapshot: touch fields only
-            // for an OBSERVED snapshot (never call UpdatePower for an
-            // unobserved one — un-forced false still passes the gate when this
-            // driver holds ON), and apply in the registry's order (restore:
-            // availability then fields; loss: fields then availability).
-            if (snap.IsAvailable)
+            // Two rules (RELEASE_NOTES 1.0.11–1.0.15):
+            //
+            // 1. Touch the fields ONLY for a snapshot the Lyrion Server has
+            //    observed (IsObserved — a full status response applied; NOT
+            //    IsAvailable). For an unobserved record touch nothing but
+            //    Connected; an un-forced false still passes the change-gate
+            //    when this driver holds ON. Since 1.0.15 a status reply
+            //    carries mute too (the sign of the volume), so IsObserved
+            //    vouches for all three fields here — through 1.0.14 it did
+            //    not vouch for mute, and the forced UpdateMute below could
+            //    publish "unmuted" for a muted player.
+            //
+            // 2. Apply in the registry's own order, so Crestron Home never
+            //    sees a field edge while this device reports itself
+            //    disconnected: restore = Connected first, then fields;
+            //    loss = fields first, then Connected.
+            if (snap.IsAvailable) UpdateAvailability(true);
+            if (snap.IsObserved)
             {
-                UpdateAvailability(true);
-                if (snap.IsObserved)
-                {
-                    UpdatePower(snap.IsPoweredOn, force: true);
-                    UpdateVolume(snap.Volume, force: true);
-                    UpdateMute(snap.Muted, force: true);
-                }
+                UpdatePower(snap.IsPoweredOn, force: true);
+                UpdateVolume(snap.Volume, force: true);
+                UpdateMute(snap.Muted, force: true);
             }
-            else
-            {
-                if (snap.IsObserved)
-                {
-                    UpdatePower(snap.IsPoweredOn, force: true);
-                    UpdateVolume(snap.Volume, force: true);
-                    UpdateMute(snap.Muted, force: true);
-                }
-                UpdateAvailability(false);
-            }
+            if (!snap.IsAvailable) UpdateAvailability(false);
         }
 
         // ===== Lyrion Server event handlers =====
@@ -317,16 +391,66 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             InvokeOnServer((svc, mac) => svc.SetVolume(mac, (int)volume));
         }
 
-        private void OnVolumeUpRequested()
+        // Volume ramp (see ReceiverProtocol): a press sends one step at once
+        // and arms the repeat; the release disarms it. A tap is press+release
+        // back to back, so the timer never gets to fire and it stays exactly
+        // one step. Each tick is a fresh LMS command, and each one comes back
+        // as real VolumeChanged feedback, so nothing here fakes a level.
+        private void OnVolumeUpRequested() => StartRamp(+1);
+        private void OnVolumeDownRequested() => StartRamp(-1);
+        private void OnVolumeReleaseRequested() => StopRamp();
+
+        private void StartRamp(int direction)
         {
-            var step = _volumeStep;
-            InvokeOnServer((svc, mac) => svc.VolumeUp(mac, step));
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _rampDirection = direction;
+                _rampTicks = 0;
+                if (_rampTimer == null)
+                {
+                    _rampTimer = new Timer(RampTick, null, RampInterval, RampInterval);
+                }
+                else
+                {
+                    _rampTimer.Change(RampInterval, RampInterval);
+                }
+            }
+            SendVolumeStep(direction);
         }
 
-        private void OnVolumeDownRequested()
+        private void StopRamp()
+        {
+            lock (_gate)
+            {
+                _rampDirection = 0;
+                try { _rampTimer?.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+            }
+        }
+
+        private void RampTick(object state)
+        {
+            int direction;
+            lock (_gate)
+            {
+                direction = _rampDirection;
+                if (direction == 0 || _disposed) return;
+                if (++_rampTicks >= RampMaxTicks)
+                {
+                    // Fuse: no Release arrived. Stop rather than ramp forever.
+                    _rampDirection = 0;
+                    try { _rampTimer?.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+                    return;
+                }
+            }
+            SendVolumeStep(direction);
+        }
+
+        private void SendVolumeStep(int direction)
         {
             var step = _volumeStep;
-            InvokeOnServer((svc, mac) => svc.VolumeDown(mac, step));
+            if (direction > 0) InvokeOnServer((svc, mac) => svc.VolumeUp(mac, step));
+            else InvokeOnServer((svc, mac) => svc.VolumeDown(mac, step));
         }
 
         // ===== Helpers =====
@@ -379,8 +503,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
                 try { _protocol.SetVolumeRequested -= OnSetVolumeRequested; } catch { }
                 try { _protocol.VolumeUpRequested -= OnVolumeUpRequested; } catch { }
                 try { _protocol.VolumeDownRequested -= OnVolumeDownRequested; } catch { }
+                try { _protocol.VolumeReleaseRequested -= OnVolumeReleaseRequested; } catch { }
             }
 
+            // Under _applyGate so an in-flight TryBindToServer either finishes
+            // before we unbind (and we unbind what it bound) or sees
+            // _boundMac already null and does nothing.
             lock (_applyGate)
             {
                 ILyrionServerService svc;
@@ -391,6 +519,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
                     mac = _boundMac;
                     _server = null;
                     _boundMac = null;
+
+                    _rampDirection = 0;
+                    try { _rampTimer?.Dispose(); } catch { }
+                    _rampTimer = null;
                 }
 
                 if (svc != null)
