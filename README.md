@@ -88,6 +88,14 @@ Inter-driver communication uses a process-wide service registry (`LyrionServerSe
 
 ## Features
 
+### Lyrion Server (Driver 1) — the bridge to Lyrion Media Server
+
+- The only driver that talks to Lyrion Media Server. It owns the single CLI connection (port 9090) to LMS for the whole home — the JSON-RPC client (port 9000) is reserved and unused in 1.0.x — and the other three drivers reach LMS only through it.
+- Publishes a shared `ILyrionServerService` that the Source, Helper, and Receiver drivers in every room subscribe to: their commands flow in, LMS state and now-playing events flow back out.
+- Tracks each bound player MAC in a registry, so availability, power, playback, volume, mute, shuffle, and repeat are resolved in one place and every room driver sees the same state.
+- Owns the connection lifecycle — bounded reconnect backoff and a full re-query of every bound MAC after a reconnect. See [Behavioral guarantees](#behavioral-guarantees).
+- No room-facing UI of its own: install one per home and configure the LMS hostname/IP, ports, and optional credentials.
+
 ### Lyrion Source (Driver 2) — routable audio source
 
 - Play / Pause / Stop
@@ -100,7 +108,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionServerSe
 - Source-name header (LMS player name) at the top of the now-playing screen
 - Now-playing metadata: title, artist, album, track number, elapsed, duration
 - Elapsed/total time on the track card (`00:29 / 02:54`, or elapsed alone for radio streams with no duration). There is no progress bar: Crestron Home has no draggable seek bar, so it could only ever be a read-only line, and it cost a full-height card to draw one.
-- Transport: Play / Pause / Stop / Next / Previous
+- Transport: Play / Pause / Next / Previous
 - Shuffle (bool) and Repeat (bool), shown as state-driven button icons
 - PowerOn / PowerOff / TogglePower
 - Volume Up / Down and Mute, stepping by the Receiver's configured amount. There is no volume level bar — it cost a full-height card to draw one thin, unadjustable line.
@@ -202,7 +210,7 @@ preset field will too.
 
 Per [docs/PRD.md](docs/PRD.md) "Out of Scope":
 
-- No sleep timer
+- No sleep timer — use the native sleep timer functionality in Crestron Home to set a sleep timer
 - No browse / favorites / queue APIs — presets cover the common case by letting
   the installer name specific entries up front
 - No arbitrary LMS command pass-through at runtime — only the fixed command
