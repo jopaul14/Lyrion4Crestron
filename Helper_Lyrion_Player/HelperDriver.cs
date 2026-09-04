@@ -173,7 +173,63 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             DeviceProtocol = _protocol;
             DeviceProtocol.Initialize(DriverData);
 
+            InitialiseView();
+
             LyrionServerServiceRegistry.Subscribe(OnServerAvailable);
+        }
+
+        /// <summary>
+        /// Gives every bound label, icon and text line its idle value once, at
+        /// driver load, before any bind or event can arrive.
+        /// </summary>
+        /// <remarks>
+        /// Without this, a property that nothing ever writes keeps the RAD
+        /// default (no value), and Crestron Home renders a placeholder in its
+        /// place: a button whose bound icon is unset falls back to its literal
+        /// label, so ShuffleBtn showed "S..." at 5-across, and MuteBtn — which
+        /// has no literal label — showed "Tex...".
+        ///
+        /// A property goes unwritten whenever a player's first observed value
+        /// happens to EQUAL the record's default, because the registry
+        /// change-gates and publishes nothing (the sole exception is the first
+        /// explicit power report). Combined with a bind that lands before the
+        /// player is observed — which touches nothing but Connected (1.0.14) —
+        /// the consumer never hears the field at all. Seen on hardware after a
+        /// processor reboot: a player with power:1, mode:play and repeat:2
+        /// rendered those three buttons correctly and broke on exactly the two
+        /// fields whose real values matched the defaults, shuffle:0 and
+        /// unmuted. A player that is simply switched off at boot loses its
+        /// power icon and tile status the same way.
+        ///
+        /// This asserts nothing about a player. The values written here are
+        /// the labels for the state the properties already hold by default, so
+        /// the two cannot disagree; the moment the Lyrion Server observes
+        /// anything different it publishes and these are overwritten. It is
+        /// the same baseline the Source sets with PlayBackStatus = Stop.
+        /// </remarks>
+        private void InitialiseView()
+        {
+            lock (_applyGate)
+            {
+                UpdateName(string.Empty);
+                UpdatePlayback(LyrionPlaybackState.Stopped);
+                UpdateShuffle(false);
+                UpdateRepeat(false);
+                UpdateMute(false);
+
+                // The track card's lines, blank rather than absent. Set
+                // directly rather than through UpdateMetadata: that would also
+                // seed the timing text with a formatted "00:00" for a player
+                // nothing has looked at, which is a claim, where an empty line
+                // is not.
+                Set(_trackLineProp, string.Empty);
+                Set(_byArtistProp, string.Empty);
+                Set(_fromAlbumProp, string.Empty);
+                Set(_timeTextProp, string.Empty);
+
+                RefreshTileStatus();
+                Commit();
+            }
         }
 
         public override void Connect()

@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.16).
+four-driver refactor is **complete** (all drivers ship together at 1.0.17).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -90,6 +90,19 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   passes the change-gate when the consumer holds the opposite. `Connect()`
   applies `_lastAvailability` alone (initialised true; driven false by a
   loss or an invalid-MAC unbind) — never `!bound || available`.
+- **Every bound label, icon and text line gets its idle value in
+  `Initialize`** (`HelperDriver.InitialiseView`, and the Source's
+  `PlayBackStatus = Stop`). A property nothing ever writes keeps the RAD
+  default, and Crestron Home renders a placeholder for it — an unset icon
+  makes a button fall back to its literal label. This is not a state
+  assertion: the values written are the labels for the state the properties
+  already hold by default, so they cannot disagree, and the first real
+  observation overwrites them. It is needed because a field whose first
+  observed value EQUALS the record's default publishes nothing (the change
+  gate; only the first explicit power report is excepted), so a consumer that
+  bound before the player was observed never hears that field at all. Seen on
+  hardware: a player with `power:1 mode:play repeat:2` rendered those three
+  buttons and broke on exactly `shuffle:0` and unmuted.
 - **Never force-publish a value the Lyrion Server has not observed.** The
   only honest signal is `LyrionPlayerSnapshot.IsObserved` (set after a FULL
   status response is applied). `IsAvailable` is now set after it, but it is
