@@ -1,6 +1,6 @@
 # Lyrion4Crestron — Product Requirements Document
 
-**Status:** Authoritative. This document supersedes the original refactor specification (formerly in `CLAUDE.md`) and describes the system **as built** at driver version 1.0.16. Where this document and older documents disagree, this document wins.
+**Status:** Authoritative. This document supersedes the original refactor specification (formerly in `CLAUDE.md`) and describes the system **as built** at driver version 1.0.17. Where this document and older documents disagree, this document wins.
 
 **Audience:** Developers and contributors maintaining or extending the driver suite.
 
@@ -104,6 +104,7 @@ This Source + Helper split (routable shell + extension-device UI) is the same pa
 - **1-second position tick.** LMS does not push elapsed position continuously, and the Helper UI does not interpolate. The Lyrion Server advances position by one second for each *Playing, available* player on its existing 1s pump and republishes metadata (position field only). Authoritative status pushes re-seed position and correct drift. No logging, no flash writes.
 - **Invalid session handling.** On player-ID rejection: mark INVALID_SESSION, rediscover once, retry the command once; if still failing, mark OFFLINE. Never infinite retries.
 - **Metadata freeze/clear.** On loss of availability, metadata freezes immediately (frozen timestamp recorded). A 1s sweep clears metadata still frozen after 30 seconds. Reconnect republishes fresh metadata.
+- **A full status reply is authoritative about absence; a notification is not.** `NoteMetadata` treats a null field as "unchanged", which is what the `NewSong` notification needs — it carries only a title and relies on artist/album/duration surviving until the full status query returns. `ApplyStatusResponse` therefore coerces an absent `title`/`artist`/`album` to empty and an absent `duration` to 0 before calling it, because in that reply an absent key means the field has no value. Passing the sentinels there left a radio stream wearing the previous track's artist, album and total time, permanently, since no later reply contradicted them. Position keeps the sentinel: the 1s pump advances it between replies, and a reply that omits `time` must not snap the display back to zero.
 
 ### Logging (normative surface)
 

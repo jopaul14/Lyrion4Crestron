@@ -803,9 +803,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // t=tracknum, o=type, N=remote_title, r=bitrate, y=year, u=url. Cover
             // art is not displayable in Crestron Home for a third-party source,
             // so artwork tags are neither requested nor parsed.
-            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
-            var artist = TryGet(kv, "artist");
-            var album = TryGet(kv, "album");
+            // Absent means EMPTY here, never "unchanged". NoteMetadata reads a
+            // null field as "keep what you had", which is right for the
+            // NewSong notification — a genuine partial update carrying only a
+            // title — but wrong for this reply, which is the authoritative
+            // full picture. Passing null for an absent key left the previous
+            // track's artist and album on screen when a radio favourite
+            // supplied neither: "FROM IT STILL MOVES" stayed under a stream
+            // that has no album, forever, because no later reply ever
+            // contradicted it. Material Skin renders the same reply with the
+            // field simply missing. Coerce here rather than changing
+            // NoteMetadata, so the partial NewSong path keeps its sentinels.
+            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title") ?? string.Empty;
+            var artist = TryGet(kv, "artist") ?? string.Empty;
+            var album = TryGet(kv, "album") ?? string.Empty;
 
             // Track number is authoritative from a full status reply: absent
             // (e.g. radio streams) means "no track number", so default to 0.
@@ -817,7 +828,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 trackNumber = tnVal;
             }
 
-            int duration = -1;
+            // Same rule, same reason: 0 (no duration, so the Helper shows
+            // elapsed alone) rather than the -1 "unchanged" sentinel, which
+            // would leave a finished track's total hanging off a stream's
+            // elapsed time as "03:14 / 04:52".
+            int duration = 0;
             if (kv.TryGetValue("duration", out var durStr) &&
                 double.TryParse(durStr, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var durVal))
@@ -825,6 +840,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 duration = (int)durVal;
             }
 
+            // Position keeps the "unchanged" sentinel, unlike its neighbours
+            // above: the 1 s pump advances this between replies, and a reply
+            // that happens to omit "time" should let the pump's value stand
+            // rather than snap the display back to zero.
             int position = -1;
             if (kv.TryGetValue("time", out var timeStr) &&
                 double.TryParse(timeStr, System.Globalization.NumberStyles.Float,
