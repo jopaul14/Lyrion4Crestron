@@ -72,6 +72,36 @@ To build just one driver:
 msbuild Server_Lyrion_LMS_IP\Server_Lyrion_LMS_IP.csproj /p:Configuration=Release /restore
 ```
 
+### 2.2.1 Always name the configuration, and build the whole solution
+
+**The projects default to `Debug`.** Each `.csproj` carries
+`<Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>`,
+so any build that does not name a configuration — `msbuild` without
+`/p:Configuration=`, `dotnet build` without `-c`, or Visual Studio with the
+dropdown left on Debug — writes to `bin\Debug\net472`, not `bin\Release`. If
+you cannot find the `.pkg` files where section 2.4 says they are, look there
+first: a fresh clone that has only ever been built this way has no `bin\Release`
+folder at all.
+
+A Debug build is not broken — the packaging target is not gated on
+configuration, so it produces a valid `.pkg`, and the drivers contain no
+`#if DEBUG`, `Debug.WriteLine`, `Debug.Assert`, or `[Conditional]` code, so
+behaviour is identical. Logging uses `Trace.WriteLine` precisely because
+`TRACE` is defined in both configurations. Release is still what you should
+deploy and test: it is what these instructions, the release packages, and the
+retest lists in RELEASE_NOTES all assume.
+
+**Build the solution, not individual projects, and never mix configurations.**
+The Server embeds the shared assembly from a configuration-matched path:
+
+```xml
+<EmbeddedResource Include="..\Common\bin\$(Configuration)\net472\Lyrion_Common.dll">
+```
+
+So a Release build of `Server_Lyrion_LMS_IP` looks for a Release `Lyrion_Common.dll`
+and fails outright if `Common` has only ever been built in Debug. Building
+`Lyrion4Crestron.sln` gets the order and the configuration right for you.
+
 ### 2.3 A note on the ManifestUtil output
 
 You will see ManifestUtil print `Null Exception: String reference not set to an instance of a String.` once for each Crestron SDK reference DLL — it scans every DLL in the output folder. These messages are harmless.
