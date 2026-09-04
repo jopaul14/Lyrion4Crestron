@@ -12,7 +12,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 {
     /// <summary>
     /// Minimal Bluray-player protocol. There is no real device protocol — the
-    /// transport is a no-op and all state comes from the gateway service. This
+    /// transport is a no-op and all state comes from the Lyrion Server service. This
     /// class exists only to satisfy the RAD framework and to surface the
     /// configured MAC address (delivered via <see cref="SetUserAttribute"/>)
     /// back to the driver.

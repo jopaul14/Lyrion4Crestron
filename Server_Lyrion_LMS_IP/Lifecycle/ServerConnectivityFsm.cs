@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
 using System.Threading;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Transport;
+using LyrionCommunity.Crestron.Lyrion.Server.Transport;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
+namespace LyrionCommunity.Crestron.Lyrion.Server.Lifecycle
 {
     /// <summary>
     /// Smooths raw <see cref="LmsConnectionState"/> transitions into the
@@ -38,7 +38,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
         private LogicalConnectivityState _committed = LogicalConnectivityState.Disconnected;
         private LogicalConnectivityState _pending = LogicalConnectivityState.Disconnected;
         private DateTime _pendingSinceUtc = DateTime.UtcNow;
-        private DateTime _lastCommittedUtc = DateTime.UtcNow;
+        // MinValue, not UtcNow: the fast-flap test measures against the LAST
+        // COMMIT, and there has been none yet. Initialising to "now" made the
+        // very first Connecting transition — which always arrives within
+        // milliseconds of construction — look like a flap, so every boot and
+        // every rebuild logged "connectivity unstable" for a single clean
+        // Disconnected→Connecting→Connected sequence.
+        private DateTime _lastCommittedUtc = DateTime.MinValue;
         private bool _oscillationLogged;
         private bool _disposed;
 
@@ -55,6 +61,31 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
         public LogicalConnectivityState Current
         {
             get { lock (_gate) return _committed; }
+        }
+
+        /// <summary>
+        /// Returns the FSM to its freshly-constructed state: committed and
+        /// pending both Disconnected, no pending commit, oscillation notice
+        /// re-armed. Called by the Lyrion Server driver when it tears down or
+        /// rebuilds the transport, because those paths force the driver and
+        /// registry to "disconnected" directly and the FSM must agree —
+        /// otherwise the replacement socket's Connected equals the stale
+        /// committed state and is never published. Publishes nothing itself:
+        /// the caller has already applied the disconnected consequences, and
+        /// the new client's transitions drive the next commit.
+        /// </summary>
+        public void Reset()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _committed = LogicalConnectivityState.Disconnected;
+                _pending = LogicalConnectivityState.Disconnected;
+                _pendingSinceUtc = DateTime.UtcNow;
+                _lastCommittedUtc = DateTime.MinValue;
+                _oscillationLogged = false;
+                try { _commitTimer?.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+            }
         }
 
         public void OnRawTransition(LmsConnectionState raw)
@@ -78,7 +109,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
                 if (fastFlap && !_oscillationLogged)
                 {
                     _oscillationLogged = true;
-                    try { _infoLog("Gateway: Server connectivity unstable - suppressing transition logs"); }
+                    try { _infoLog("Lyrion Server: LMS connectivity unstable - suppressing transition logs"); }
                     catch { }
                 }
 
@@ -129,7 +160,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle
 
             if (!publish) return;
 
-            try { _infoLog("Gateway: Server " + committed.ToString().ToUpperInvariant()); }
+            try { _infoLog("Lyrion Server: LMS " + committed.ToString().ToUpperInvariant()); }
             catch { }
 
             try { SmoothedTransition?.Invoke(committed); }

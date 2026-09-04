@@ -6,10 +6,10 @@
       "DeviceType": "Media Player",
       "Manufacturer": "Lyrion Community",
       "BaseModel": "Lyrion Helper",
-      "VersionDate": "2026-06-04 00:00:00.000",
-      "DriverVersion": "1.0.0",
+      "VersionDate": "2026-09-04 00:00:00.000",
+      "DriverVersion": "1.0.17",
       "SdkVersion": "4.00.000",
-      "Description": "Lyrion Helper. Per-room extension device hosting the rich Crestron Home media-player UI (now-playing metadata, transport, shuffle, repeat, power) for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server gateway service. Companion to the Lyrion Source and Lyrion Receiver drivers.",
+      "Description": "Lyrion Helper. Per-room extension device hosting the rich Crestron Home media-player UI (now-playing metadata, transport, shuffle, repeat, power) for a single Lyrion player. Bound by MAC address; consumes the Lyrion Server service. Companion to the Lyrion Source and Lyrion Receiver drivers.",
       "Guid": "33cfac86-eef4-4bf9-b06d-8521e807f220",
       "DependencyGroup": "LyrionLMS",
       "Developer": {
@@ -59,6 +59,42 @@
         "Description": "MAC address of the Lyrion player for this room (form aa:bb:cc:dd:ee:ff). Must match the Lyrion Source and Lyrion Receiver drivers for the same room.",
         "Persistent": true,
         "RequiredForConnection": "Before",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
+      },
+      {
+        "TypeName": "Custom",
+        "ParameterId": "Preset1",
+        "Label": "Preset 1",
+        "Description": "Optional playlist/favourite shortcut, as Name|Icon|Command — e.g. KCRW|icBroadcastRegular|favorites playlist play item_id:2. The command is the LMS CLI text that follows the player MAC; do not include the MAC or a line feed. Leave the icon empty for the default. Leave the whole field empty to hide this preset.",
+        "Persistent": true,
+        "RequiredForConnection": "None",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
+      },
+      {
+        "TypeName": "Custom",
+        "ParameterId": "Preset2",
+        "Label": "Preset 2",
+        "Description": "Optional playlist/favourite shortcut, as Name|Icon|Command. See Preset 1.",
+        "Persistent": true,
+        "RequiredForConnection": "None",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
+      },
+      {
+        "TypeName": "Custom",
+        "ParameterId": "Preset3",
+        "Label": "Preset 3",
+        "Description": "Optional playlist/favourite shortcut, as Name|Icon|Command. See Preset 1.",
+        "Persistent": true,
+        "RequiredForConnection": "None",
+        "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
+      },
+      {
+        "TypeName": "Custom",
+        "ParameterId": "Preset4",
+        "Label": "Preset 4",
+        "Description": "Optional playlist/favourite shortcut, as Name|Icon|Command. See Preset 1.",
+        "Persistent": true,
+        "RequiredForConnection": "None",
         "Data": { "DataType": "String", "Mask": "", "DefaultValue": "" }
       }
     ],

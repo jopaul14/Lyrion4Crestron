@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
 using System.Globalization;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
+namespace LyrionCommunity.Crestron.Lyrion.Server.Protocol
 {
     /// <summary>
     /// Builders for the LMS CLI command strings this driver sends. The
@@ -122,9 +122,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
             return Player(mac) + " status - 1" + subscribe + " tags:galdtoNryu";
         }
 
-        public static string ActivatePreset(string mac, string presetId)
+        /// <summary>
+        /// Prefixes an installer-configured command fragment with the player's
+        /// MAC, e.g. <c>favorites playlist play item_id:2</c> becomes
+        /// <c>aa:bb:cc:dd:ee:ff favorites playlist play item_id:2</c>.
+        /// </summary>
+        /// <remarks>
+        /// The fragment is passed through verbatim — its spaces are the CLI's
+        /// own token separators, so it must NOT be run through
+        /// <see cref="LmsTokenCodec.Encode"/> as a single token. Sanitizing it
+        /// (stripping the control characters that would let one configured
+        /// value smuggle in a second CLI line) is the caller's job; see
+        /// <c>LyrionServerServiceImpl.SendPlayerCommand</c>.
+        /// </remarks>
+        public static string PlayerCommand(string mac, string command)
         {
-            return Player(mac) + " button preset_" + LmsTokenCodec.Encode(presetId) + ".single";
+            return Player(mac) + " " + command;
         }
 
         // --- Internals --------------------------------------------------------

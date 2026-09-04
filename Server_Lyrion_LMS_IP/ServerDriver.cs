@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -13,25 +13,54 @@ using Crestron.DeviceDrivers.EntityModel.Data;
 using Crestron.DeviceDrivers.SDK;
 using Crestron.DeviceDrivers.SDK.EntityModel;
 using Crestron.DeviceDrivers.SDK.EntityModel.Attributes;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Lifecycle;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Registry;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Services;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Transport;
+using LyrionCommunity.Crestron.Lyrion.Server.Lifecycle;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Server.Registry;
+using LyrionCommunity.Crestron.Lyrion.Server.Services;
+using LyrionCommunity.Crestron.Lyrion.Server.Transport;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway
+namespace LyrionCommunity.Crestron.Lyrion.Server
 {
     /// <summary>
     /// Root V2 entity for Driver 1. Owns the LMS transport clients, the
-    /// player registry, the connectivity FSM, and the gateway service
+    /// player registry, the connectivity FSM, and the Lyrion Server service
     /// implementation. Has no Crestron Home room assignment — its only
     /// public surface is the service exposed via
-    /// <see cref="LyrionGatewayServiceRegistry"/>.
+    /// <see cref="LyrionServerServiceRegistry"/>.
     /// </summary>
-    public sealed class GatewayDriver : ReflectedAttributeDriverEntity, IDisposable
+    /// <remarks>
+    /// <para><b>Naming history — read this before grepping.</b> Through
+    /// 1.0.9 this driver, its project, its assembly, and its package were all
+    /// called <c>Gateway_Lyrion_LMS_IP</c>, the class was <c>GatewayDriver</c>,
+    /// the namespace was <c>…Lyrion.Gateway</c>, and the shared contract was
+    /// <c>ILyrionGatewayService</c>. "Gateway" described its role — the one
+    /// process that fronts LMS for the other three drivers. But the name an
+    /// installer actually sees in the Crestron Home Setup app and Configure
+    /// Pro is the <c>BaseModel</c> in <c>Driver.json</c>: <b>Lyrion Server</b>.
+    /// Having the package called Gateway and the device called Server sent
+    /// people looking for a driver that did not exist, so in 1.0.10 the code
+    /// was renamed to match the user-facing name. The rename is purely
+    /// lexical: no behaviour changed, the driver GUID and
+    /// <c>DependencyGroup</c> are the same, and the only runtime by-name lookup
+    /// (<c>Lyrion_Common.dll</c>, in <c>EntryPoint</c>) was never affected.</para>
+    /// <para><b>Two meanings of "Server".</b> That rename introduced an
+    /// ambiguity the old name avoided. In this codebase <i>the Lyrion
+    /// Server</i> means this driver; <i>LMS</i> or <i>the server</i> means the
+    /// Lyrion Media Server it connects to. So <see cref="ServerConnectivityFsm"/>,
+    /// <c>_serverConnected</c>, <c>ServerConnectivityChanged</c>, and the
+    /// CONNECTED / DISCONNECTED log lines are all about <b>LMS</b>, not about
+    /// this driver. Log prefixes were changed to "Lyrion Server:" and the
+    /// connectivity messages to say "LMS" for the same reason. When adding
+    /// code, keep that convention: qualify the driver as "Lyrion Server" and
+    /// the media server as "LMS".</para>
+    /// </remarks>
+    public sealed class ServerDriver : ReflectedAttributeDriverEntity, IDisposable
     {
         private static readonly TimeSpan MetadataFreezeTtl = TimeSpan.FromSeconds(30);
+
+        // 1 = a pump tick is in progress. See SweepFrozenMetadata.
+        private int _pumpBusy;
 
         private readonly Action<string> _log;
         private readonly object _gate = new object();
@@ -48,7 +77,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         /// </summary>
         private const int StatusSubscribeSeconds = 30;
 
-        private readonly LyrionGatewayServiceImpl _service;
+        private readonly LyrionServerServiceImpl _service;
         private readonly ServerConnectivityFsm _fsm;
 
         // volatile: written under _gate but read locklessly from the SDK
@@ -69,6 +98,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         private volatile CancellationTokenSource _lifetime = new CancellationTokenSource();
         private Timer _freezePump;
         private Timer _reconcileTimer;
+        private Timer _resubscribeTimer;
 
         private string _host;
         private int _httpPort = 9000;
@@ -86,12 +116,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         [EntityProperty(Id = "lyrion:serverVersion")]
         public string ServerVersion { get; private set; } = string.Empty;
 
-        public GatewayDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
+        public ServerDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
             _log = BuildLogger();
             _registry = new PlayerRegistry();
-            _service = new LyrionGatewayServiceImpl(
+            _service = new LyrionServerServiceImpl(
                 _registry,
                 SendCliLineSync,
                 () => _serverConnected,
@@ -107,7 +137,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 null,
                 null);
 
-            LyrionGatewayServiceRegistry.Register(_service);
+            LyrionServerServiceRegistry.Register(_service);
         }
 
         internal DataDrivenConfigurationController ConfigurationController { get; }
@@ -192,12 +222,39 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 if (_disposed) return;
                 DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
 
+                // A rebuild is a hard connectivity boundary: this method
+                // forces _serverConnected=false and the registry disconnected
+                // below, so the FSM must agree, or the new socket's Connected
+                // can never be committed. Before 1.0.12 it did not: the old
+                // client's handler was detached above before it could report
+                // Disconnected, the FSM stayed committed=Connected, the new
+                // client's Connected matched it, TryCommit published nothing,
+                // and the driver sat "disconnected" with a live socket —
+                // every command dropped, every player unavailable, no log —
+                // after any installer re-save of the LMS settings, until LMS
+                // itself dropped for >5 s.
+                _fsm.Reset();
+
                 var lifetime = new CancellationTokenSource();
                 _lifetime = lifetime;
 
                 var cli = new LmsCliClient(_host, _cliPort, _username, _password, _log);
-                _cliStateHandler = s => _fsm.OnRawTransition(s);
-                _cliAuthHandler = msg => _log("Gateway ERROR auth: " + msg);
+                _cliStateHandler = s =>
+                {
+                    // The per-player "status ... subscribe:N" subscriptions live
+                    // on the CLI socket and die with it, while "listen 1" is
+                    // re-sent per connection by LmsCliClient. The FSM smooths
+                    // away flaps shorter than its stability window, so a fast
+                    // drop/reconnect never re-commits CONNECTED and never runs
+                    // ReconcileBoundPlayers — leaving the status subscriptions
+                    // silently dead until the next committed reconnect. Re-arm
+                    // them off the RAW transition so they always follow the
+                    // socket. Change-gating in the registry keeps the resulting
+                    // status responses silent when nothing actually moved.
+                    if (s == LmsConnectionState.Connected) ResubscribeBoundPlayers();
+                    _fsm.OnRawTransition(s);
+                };
+                _cliAuthHandler = msg => _log("Lyrion Server ERROR auth: " + msg);
 
                 cli.MessageReceived += OnCliMessage;
                 cli.ConnectionStateChanged += _cliStateHandler;
@@ -221,7 +278,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
         {
             LmsCliClient oldCli;
             CancellationTokenSource oldLifetime;
-            lock (_gate) { DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime); }
+            lock (_gate)
+            {
+                DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
+                _fsm.Reset(); // same boundary as RebuildTransport
+            }
             DisposeOldTransport(oldCli, oldLifetime);
             _registry.SetServerConnected(false);
         }
@@ -292,13 +353,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // Timer.Dispose does not block in-flight callbacks. Guard against
             // the freeze pump firing after Dispose() began nulling fields.
             if (_disposed) return;
-            try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
-            catch { }
 
-            // Same 1s pump advances the elapsed position for playing players so
-            // the Helper's time display counts up between status snapshots.
-            try { _registry.TickPlayingPositions(); }
-            catch { }
+            // System.Threading.Timer will fire the next tick on another pool
+            // thread if this one is still running (a slow consumer Commit()
+            // inside the fan-out is enough). Two overlapping ticks would
+            // advance the same record twice and race their payloads into the
+            // consumers out of order. Skip the tick instead — one missed
+            // second of elapsed time is corrected by the next status push.
+            if (Interlocked.Exchange(ref _pumpBusy, 1) != 0) return;
+            try
+            {
+                try { _registry.SweepFrozenMetadata(MetadataFreezeTtl); }
+                catch { }
+
+                // Same 1s pump advances the elapsed position for playing players so
+                // the Helper's time display counts up between status snapshots.
+                try { _registry.TickPlayingPositions(); }
+                catch { }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _pumpBusy, 0);
+            }
         }
 
         // ===== CLI events =====
@@ -389,7 +465,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                         {
                             case "new":
                             case "reconnect":
-                                _registry.NoteLifecycle(message.Mac, PlayerLifecycleState.Online);
+                                // Do NOT mark Online here. A client notification
+                                // carries no state; marking the record available
+                                // now would publish whatever raw power/playback it
+                                // held before the player went away as fresh edges.
+                                // Query status instead — its reply notes lifecycle
+                                // LAST, after every field, so "available" always
+                                // means "freshly observed".
                                 _ = SendCliForPlayer(message.Mac, LmsCliCommands.QueryStatus(message.Mac));
                                 break;
 
@@ -448,7 +530,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 var disconnects = cliSnap?.DisconnectCount ?? 0;
                 try
                 {
-                    _log("Gateway: reconcile players=" + _registry.Count
+                    _log("Lyrion Server: reconcile players=" + _registry.Count
                         + " connects=" + connects + " disconnects=" + disconnects);
                 }
                 catch { }
@@ -463,6 +545,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             else
             {
                 _registry.SetServerConnected(false);
+            }
+        }
+
+        /// <summary>
+        /// Re-open the per-player subscribing status queries after a raw CLI
+        /// reconnect. Deferred onto a timer rather than run inline: the state
+        /// event fires on the CLI worker thread immediately after the socket
+        /// comes up, before <c>login</c> / <c>listen 1</c> have been written,
+        /// and <see cref="SendCliForPlayer"/> takes <c>_gate</c> — which the
+        /// attaching thread may still hold. A short delay puts the queries
+        /// safely after the connection preamble and off the CLI thread.
+        /// </summary>
+        private void ResubscribeBoundPlayers()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                try { _resubscribeTimer?.Dispose(); } catch { }
+                _resubscribeTimer = new Timer(_ =>
+                {
+                    if (_disposed) return;
+                    try
+                    {
+                        foreach (var mac in _registry.BoundMacs())
+                        {
+                            _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+                        }
+                    }
+                    catch { }
+                }, null, TimeSpan.FromMilliseconds(750), Timeout.InfiniteTimeSpan);
             }
         }
 
@@ -572,8 +684,53 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // start scanning from index 2 to skip the MAC and "status" tokens.
             var kv = LmsCliParser.ExtractKeyValues(tokens, 2);
 
-            // Lifecycle: if we got a status response the player is reachable.
-            _registry.NoteLifecycle(mac, PlayerLifecycleState.Online);
+            // A MAC the server does not know is not an error to LMS: it echoes
+            // the query back carrying no fields at all —
+            // "<mac> status - 1 tags:" — which arrives here as a status
+            // response whose only key is the "tags" of the echoed argument
+            // (verified against LMS 9.1; "tags:" parses as an empty-valued
+            // key, so a count-based test would not catch it). Through 1.0.15
+            // that echo was accepted: the bottom of this method marked the
+            // record OBSERVED and Online, i.e. AVAILABLE. Consumers reported a
+            // player that does not exist as connected, `CanCommand` opened,
+            // and — the CLI echoing every command back on the same socket with
+            // no request/response correlation — the driver's own `power 1` and
+            // `play` came back and were applied as server pushes. A room could
+            // be switched on, and a position timer advanced, for a player that
+            // was not on the network at all (found on the 1.0.15 hardware pass:
+            // an LMS restart the player never rejoined, so LMS no longer listed
+            // it). Require positive evidence instead; a real reply always
+            // carries all four of these.
+            if (!kv.ContainsKey("player_connected") && !kv.ContainsKey("player_name")
+                && !kv.ContainsKey("power") && !kv.ContainsKey("mode"))
+            {
+                return;
+            }
+
+            // Lifecycle is decided here but NOTED LAST (see the end of this
+            // method). A status reply with fields proves the server knows the
+            // player, not that the player is reachable: the subscription keeps
+            // pushing keep-alives for a client that has disconnected, and those
+            // carry player_connected:0. Honour it when present; treat absence
+            // as Online (older/odd replies) so a missing key can never strand a
+            // player as unavailable — safe only because the guard above has
+            // already established that this reply carries real status fields.
+            var online = !kv.TryGetValue("player_connected", out var connectedStr) || connectedStr != "0";
+
+            // Power BEFORE mode. NotePlaybackState's playback-derived power
+            // raise is a fallback for players with no explicit power state; if
+            // it ran first, a reply carrying mode:play together with power:0
+            // (LMS pauses ~1 ms after "power 0", and a push can land between;
+            // synced slaves; a player started server-side while off) raised
+            // PowerStateChanged(true) and then NoteExplicitPower flipped it
+            // straight back — an ON/OFF pair from one message, the 1.0.5
+            // bounce-back class, repeated on every keep-alive while it held.
+            // With the explicit value noted first, the derivation sees the
+            // authoritative state when it runs.
+            if (kv.TryGetValue("power", out var powerStr))
+            {
+                _registry.NoteExplicitPower(mac, powerStr == "1");
+            }
 
             // Playback mode
             if (kv.TryGetValue("mode", out var mode))
@@ -592,12 +749,6 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 }
             }
 
-            // Power
-            if (kv.TryGetValue("power", out var powerStr))
-            {
-                _registry.NoteExplicitPower(mac, powerStr == "1");
-            }
-
             // Volume — the status response uses "mixer volume" as two tokens
             // that get merged by the CLI into a single "mixer volume:NN" token,
             // but ExtractKeyValues sees the key as "mixer volume". LMS also
@@ -611,12 +762,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (volStr != null && int.TryParse(volStr, System.Globalization.NumberStyles.Integer,
                 System.Globalization.CultureInfo.InvariantCulture, out var vol))
             {
-                _registry.NoteVolume(mac, vol);
+                // Mute rides on the SIGN: LMS stores a muted player's volume
+                // pref as -volume, and the status reply reports that raw
+                // value, so "mixer volume:-25" means muted at 25. There is no
+                // separate mute field in a status reply and nothing here ever
+                // queried one, which through 1.0.14 left mute the one field
+                // IsObserved could not vouch for: a Server reload while muted
+                // rebuilt the record with Muted=false, and RepublishAll then
+                // pushed "unmuted" to every consumer two seconds after the
+                // reconnect (and NoteVolume clamped the negative to 0, so a
+                // muted player also showed volume 0). Note mute first so a
+                // consumer's first sight of the record carries both.
+                _registry.NoteMute(mac, vol < 0);
+                _registry.NoteVolume(mac, vol < 0 ? -vol : vol);
             }
-
-            // Mute — not always present in every status response
-            // Not a standard tag in "status - 1 tags:..." but may appear via
-            // "mixer muting" prefset. We handle it if present.
 
             // Shuffle
             if (kv.TryGetValue("playlist shuffle", out var shuffleStr)
@@ -644,9 +803,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // t=tracknum, o=type, N=remote_title, r=bitrate, y=year, u=url. Cover
             // art is not displayable in Crestron Home for a third-party source,
             // so artwork tags are neither requested nor parsed.
-            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title");
-            var artist = TryGet(kv, "artist");
-            var album = TryGet(kv, "album");
+            // Absent means EMPTY here, never "unchanged". NoteMetadata reads a
+            // null field as "keep what you had", which is right for the
+            // NewSong notification — a genuine partial update carrying only a
+            // title — but wrong for this reply, which is the authoritative
+            // full picture. Passing null for an absent key left the previous
+            // track's artist and album on screen when a radio favourite
+            // supplied neither: "FROM IT STILL MOVES" stayed under a stream
+            // that has no album, forever, because no later reply ever
+            // contradicted it. Material Skin renders the same reply with the
+            // field simply missing. Coerce here rather than changing
+            // NoteMetadata, so the partial NewSong path keeps its sentinels.
+            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title") ?? string.Empty;
+            var artist = TryGet(kv, "artist") ?? string.Empty;
+            var album = TryGet(kv, "album") ?? string.Empty;
 
             // Track number is authoritative from a full status reply: absent
             // (e.g. radio streams) means "no track number", so default to 0.
@@ -658,7 +828,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 trackNumber = tnVal;
             }
 
-            int duration = -1;
+            // Same rule, same reason: 0 (no duration, so the Helper shows
+            // elapsed alone) rather than the -1 "unchanged" sentinel, which
+            // would leave a finished track's total hanging off a stream's
+            // elapsed time as "03:14 / 04:52".
+            int duration = 0;
             if (kv.TryGetValue("duration", out var durStr) &&
                 double.TryParse(durStr, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var durVal))
@@ -666,6 +840,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 duration = (int)durVal;
             }
 
+            // Position keeps the "unchanged" sentinel, unlike its neighbours
+            // above: the 1 s pump advances this between replies, and a reply
+            // that happens to omit "time" should let the pump's value stand
+            // rather than snap the display back to zero.
             int position = -1;
             if (kv.TryGetValue("time", out var timeStr) &&
                 double.TryParse(timeStr, System.Globalization.NumberStyles.Float,
@@ -691,6 +869,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             {
                 _registry.SetCapabilities(mac, cpStr == "1", null);
             }
+
+            // Last, by design: only now has every field of this reply been
+            // noted, so only now is it honest to say the player has been
+            // observed — and only now may it become AVAILABLE. Availability is
+            // what makes the registry publish a record's effective power and
+            // playback; noting it before the fields (as this method did through
+            // 1.0.13) published the PREVIOUS values as fresh edges. With
+            // lifecycle last, "available" is a postcondition of "this reply's
+            // fields are in the record", and a consumer binding at any point
+            // in between sees observed-but-unavailable and touches nothing.
+            _registry.NoteStatusApplied(mac);
+            _registry.NoteLifecycle(mac, online ? PlayerLifecycleState.Online : PlayerLifecycleState.Offline);
         }
 
         private void ApplyPlayersResponse(string[] tokens)
@@ -705,10 +895,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
 
             var seen = new HashSet<string>(StringComparer.Ordinal);
             const string Prefix = "playerid:";
+            const string CountPrefix = "count:";
+            var reportedCount = -1;
             for (var i = 0; i < tokens.Length; i++)
             {
                 var t = tokens[i];
                 if (string.IsNullOrEmpty(t)) continue;
+
+                if (reportedCount < 0 && t.StartsWith(CountPrefix, StringComparison.Ordinal))
+                {
+                    if (int.TryParse(t.Substring(CountPrefix.Length),
+                            System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var parsedCount))
+                    {
+                        reportedCount = parsedCount;
+                    }
+                    continue;
+                }
+
                 if (!t.StartsWith(Prefix, StringComparison.Ordinal)) continue;
 
                 var value = t.Substring(Prefix.Length);
@@ -723,16 +927,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
                 }
             }
 
-            // Warn about any bound MAC the server did not report. The most
-            // likely cause is a typo in the Source/Helper/Receiver driver's
-            // configured MAC; without this log the installer sees the driver's
-            // "Bound to MAC" success message and assumes everything is fine.
+            // This list is only authoritative about ABSENCE if we received all
+            // of it. The query asks for 999 players and the reply states how
+            // many exist; if that count does not match what we parsed (a
+            // truncated reply, or a playerid that is not a MAC), fall back to
+            // warning alone rather than reporting a live player offline.
+            var listIsComplete = reportedCount >= 0 && reportedCount == seen.Count;
+
+            // Any bound MAC the server did not report is either a typo in a
+            // consumer's configured MAC or a player LMS has not seen since it
+            // started — after an LMS restart, a player that never rejoins is
+            // simply absent from this list.
             var bound = _registry.BoundMacs();
             foreach (var mac in bound)
             {
-                if (!seen.Contains(mac))
+                if (seen.Contains(mac)) continue;
+
+                _log("Lyrion Server WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
+
+                // ...and act on it. Through 1.0.15 this only logged, so the
+                // driver held the authoritative answer — the server's own
+                // player list — and discarded it, leaving the record at
+                // whatever lifecycle it had. Marking it Offline makes it
+                // unavailable, which closes the command gate and stops the
+                // consumers reporting a player that does not exist as
+                // connected. A player that later joins LMS sends
+                // client new/reconnect, which triggers a status query and
+                // restores it through the normal path.
+                if (listIsComplete)
                 {
-                    _log("Gateway WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
+                    _registry.NoteLifecycle(mac, PlayerLifecycleState.Offline);
                 }
             }
         }
@@ -759,7 +983,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             // and would leave installers with no log output at all.
             return message =>
             {
-                try { Trace.WriteLine("[Lyrion.Gateway " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
+                try { Trace.WriteLine("[Lyrion.Server " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
                 catch { }
             };
         }
@@ -769,18 +993,33 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
 
-            try { LyrionGatewayServiceRegistry.Unregister(_service); } catch { }
+            // Tell consumers the server is gone BEFORE the service disappears:
+            // this publishes the effective off/stopped edges and
+            // AvailabilityChanged(false) for every player, so a Source that
+            // was reporting ON is lowered now rather than left asserting a
+            // dead server's last state — and so a replacement Lyrion Server's
+            // blank record finds consumers already at off, where a bind-time
+            // UpdatePower(false) is a no-op instead of a fabricated edge.
+            // RebuildTransport and TeardownTransport already did this;
+            // Dispose did not.
+            try { _registry.SetServerConnected(false); } catch { }
+
+            try { LyrionServerServiceRegistry.Unregister(_service); } catch { }
 
             try { _freezePump?.Dispose(); } catch { }
             _freezePump = null;
 
             Timer reconcile;
+            Timer resubscribe;
             lock (_gate)
             {
                 reconcile = _reconcileTimer;
                 _reconcileTimer = null;
+                resubscribe = _resubscribeTimer;
+                _resubscribeTimer = null;
             }
             try { reconcile?.Dispose(); } catch { }
+            try { resubscribe?.Dispose(); } catch { }
 
             try { _fsm.Dispose(); } catch { }
 

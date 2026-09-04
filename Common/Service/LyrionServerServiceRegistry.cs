@@ -9,7 +9,7 @@ using System.Collections.Generic;
 namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
-    /// Process-wide rendezvous for the Lyrion gateway service. The Gateway
+    /// Process-wide rendezvous for the Lyrion Server service. The Lyrion Server
     /// driver registers itself on startup; Source, Helper, and Receiver
     /// drivers wait for registration via <see cref="Subscribe"/>.
     /// </summary>
@@ -20,24 +20,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// Lyrion_Common.dll once, so the static fields below are truly
     /// process-wide shared state.
     /// </remarks>
-    public static class LyrionGatewayServiceRegistry
+    public static class LyrionServerServiceRegistry
     {
         private static readonly object Gate = new object();
-        private static ILyrionGatewayService _current;
+        private static ILyrionServerService _current;
 
         // Tracks every consumer that has subscribed. Subscribers remain in
-        // this list across Register/Unregister cycles so that a Gateway reload
+        // this list across Register/Unregister cycles so that a Lyrion Server reload
         // can re-notify all surviving consumers with the new service instance.
         // Consumers MUST call Unsubscribe from Dispose to avoid the list
         // holding references to disposed drivers.
-        private static readonly List<Action<ILyrionGatewayService>> Subscribers =
-            new List<Action<ILyrionGatewayService>>();
+        private static readonly List<Action<ILyrionServerService>> Subscribers =
+            new List<Action<ILyrionServerService>>();
 
-        /// <summary>Called by the Gateway driver during driver startup.</summary>
+        /// <summary>Called by the Lyrion Server driver during driver startup.</summary>
         /// <remarks>
         /// <para>Notifies every current subscriber, not just the ones that
-        /// subscribed before this Register call. This means a Gateway reload
-        /// (where the Gateway driver is disposed and re-created without the
+        /// subscribed before this Register call. This means a Lyrion Server reload
+        /// (where the Lyrion Server driver is disposed and re-created without the
         /// Source/Helper/Receiver drivers being reloaded) correctly hands the
         /// new service instance to all surviving consumers.</para>
         /// <para>Idempotent: calling Register twice with the same instance is
@@ -50,16 +50,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// AppDomain is treated as a single trust zone; do NOT remove this
         /// note without also revisiting that platform assumption.</para>
         /// </remarks>
-        public static void Register(ILyrionGatewayService service)
+        public static void Register(ILyrionServerService service)
         {
             if (service == null) throw new ArgumentNullException(nameof(service));
 
-            List<Action<ILyrionGatewayService>> toNotify;
+            List<Action<ILyrionServerService>> toNotify;
             lock (Gate)
             {
                 if (ReferenceEquals(_current, service)) return;
                 _current = service;
-                toNotify = new List<Action<ILyrionGatewayService>>(Subscribers);
+                toNotify = new List<Action<ILyrionServerService>>(Subscribers);
             }
 
             foreach (var cb in toNotify)
@@ -69,14 +69,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             }
         }
 
-        /// <summary>Called by the Gateway driver during Dispose.</summary>
+        /// <summary>Called by the Lyrion Server driver during Dispose.</summary>
         /// <remarks>
         /// Subscribers are NOT removed. Consumers retain a reference to the
         /// outgoing service (which has been disposed and will no longer fire
-        /// events). When a new Gateway registers, <see cref="Register"/>
+        /// events). When a new Lyrion Server registers, <see cref="Register"/>
         /// re-notifies all subscribers so they can swap to the new instance.
         /// </remarks>
-        public static void Unregister(ILyrionGatewayService service)
+        public static void Unregister(ILyrionServerService service)
         {
             lock (Gate)
             {
@@ -87,7 +87,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
             }
         }
 
-        public static bool TryGet(out ILyrionGatewayService service)
+        public static bool TryGet(out ILyrionServerService service)
         {
             lock (Gate)
             {
@@ -98,10 +98,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 
         /// <summary>
         /// Registers <paramref name="onAvailable"/> to be invoked whenever a
-        /// Gateway service is registered. If one is already registered, the
+        /// Lyrion Server service is registered. If one is already registered, the
         /// callback fires once before this method returns. The callback will
-        /// also fire again each time a new Gateway service replaces the
-        /// current one (e.g. after a Gateway driver reload), so handlers MUST
+        /// also fire again each time a new Lyrion Server service replaces the
+        /// current one (e.g. after a Lyrion Server driver reload), so handlers MUST
         /// be safe to invoke multiple times — typically by detaching from
         /// any prior service reference before attaching to the new one.
         /// </summary>
@@ -109,11 +109,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// Duplicate subscriptions (the same delegate added twice) are
         /// silently ignored so a buggy reload cycle cannot cause double-fire.
         /// </remarks>
-        public static void Subscribe(Action<ILyrionGatewayService> onAvailable)
+        public static void Subscribe(Action<ILyrionServerService> onAvailable)
         {
             if (onAvailable == null) throw new ArgumentNullException(nameof(onAvailable));
 
-            ILyrionGatewayService now;
+            ILyrionServerService now;
             lock (Gate)
             {
                 if (!Subscribers.Contains(onAvailable))
@@ -135,7 +135,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// MUST call this from Dispose() to prevent the subscriber list from
         /// holding references to disposed drivers.
         /// </summary>
-        public static void Unsubscribe(Action<ILyrionGatewayService> onAvailable)
+        public static void Unsubscribe(Action<ILyrionServerService> onAvailable)
         {
             if (onAvailable == null) return;
             lock (Gate)
