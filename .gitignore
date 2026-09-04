@@ -27,6 +27,7 @@ Thumbs.db
 
 # Crestron SDK
 crestron_drivers_sdk_*/
+Crestron_SDK*/
 
 # Local test harness. Compiles the real Lyrion Server sources (parser/transport/
 # registry/FSM) into a console app and drives them against a live LMS server.
