@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.15).
+four-driver refactor is **complete** (all drivers ship together at 1.0.16).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -60,6 +60,19 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   values from the reply that made the player available — never cached
   pre-outage state (1.0.13 did, and a player switched off during an LMS
   restart produced a PoweredOn edge followed by the real OFF: fixed 1.0.14).
+- **A status reply is only evidence if it carries status fields, and the
+  server's player list is authoritative about absence.** LMS answers a query
+  for a MAC it does not know by echoing the query back with no fields at all,
+  so `ApplyStatusResponse` returns before noting anything unless the reply
+  carries `player_connected`, `player_name`, `power` or `mode`; and
+  `ApplyPlayersResponse` marks any bound MAC missing from a COMPLETE
+  `players` reply (its `count:` matches the ids parsed) as Offline rather
+  than only warning. Through 1.0.15 the echo made a nonexistent player
+  observed, Online and available: consumers showed it connected, the command
+  gate opened, and — the CLI echoes every command back with no
+  request/response correlation — the driver's own `power 1`/`play` returned
+  as pushes and drove a real room (fixed 1.0.16). Corollary: **never treat an
+  inbound line as evidence of anything the line does not actually assert.**
 - **Every player command is gated on the player being available**, not just
   on the server being connected (`LyrionServerServiceImpl.CanCommand`). A
   command for an unreachable player is dropped silently; it is never handed

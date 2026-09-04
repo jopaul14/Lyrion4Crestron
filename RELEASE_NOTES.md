@@ -1,5 +1,75 @@
 # Release Notes
 
+## 1.0.16 — A player LMS does not know is no longer a live player (2026-09-04)
+
+All four drivers ship at 1.0.16. This fixes one bug, found on the 1.0.15
+hardware pass. **All four packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **A room could be switched on, and its position timer advanced, for a
+  player that was not on the network at all.** With a player switched off and
+  unplugged across an LMS restart, LMS came back without that player in its
+  list — and Crestron Home showed it *online*. Power, Play and Pause on the
+  Helper and the Receiver all appeared to work: the room turned on, the
+  elapsed timer ran, paused, and resumed where it left off. Nothing was there.
+
+  Three things had to line up. LMS does not reject a query for a MAC it does
+  not know — it echoes the query back carrying no fields at all
+  (`<mac> status - 1 tags:`, verified against LMS 9.1), which reaches
+  `ApplyStatusResponse` as a status response whose only key is the `tags` of
+  the echoed argument. That method treated an absent `player_connected` as
+  Online, so the echo ran to the bottom and marked the record OBSERVED and
+  Online — that is, AVAILABLE. Consumers were told the player was connected,
+  `CanCommand` opened, and because LMS echoes every command back on the same
+  socket and this driver keeps no request/response correlation, the driver's
+  own `power 1` and `play` came back and were applied as if the server had
+  pushed them.
+
+  Two changes, and the existing effective-state model contains the rest (a
+  mutation on an unavailable record stores the raw value and publishes
+  nothing):
+
+  - `ApplyStatusResponse` returns before noting anything unless the reply
+    carries at least one of `player_connected`, `player_name`, `power` or
+    `mode`. A real reply always carries all four. (The test cannot be "no
+    keys": `tags:` parses as an empty-valued key, so the echo yields one.)
+  - `ApplyPlayersResponse` marks a bound MAC that is missing from the
+    server's player list as OFFLINE, instead of only logging the
+    bound-MAC-missing warning — the driver already had the authoritative
+    answer and discarded it. Only a *complete* reply counts (its `count:`
+    must match the number of ids parsed), so a truncated list can never
+    report a live player offline. A player that later joins LMS sends
+    `client new`/`reconnect`, which restores it through the normal path.
+
+  Not a regression from 1.0.10–1.0.15: through 1.0.11 a status reply marked
+  a player Online unconditionally, so this behaved the same way or worse. It
+  had simply never been tested with a MAC the server did not know.
+
+  **This also covered up a mistyped MAC.** A well-formed MAC for a player
+  that does not exist passed validation, bound, and then presented as a
+  working player — right down to a room that turned on. It now shows offline,
+  with the warning that was always logged.
+
+### Retest
+
+1. **Player absent from LMS entirely.** Switch a player off and unplug it.
+   Restart LMS and confirm on the CLI (`players 0 50`) that the player is not
+   listed. **In Crestron Home the room's devices must show offline**; the
+   Helper and Receiver power buttons must do nothing; the position timer must
+   not run. The log carries one
+   `Lyrion Server WARNING: bound player <mac> not present on LMS`.
+   Reconnect the player: it returns, powered off, and controls normally.
+2. **Well-formed wrong MAC.** Set a Helper's MAC to a valid-format address no
+   player uses (e.g. `aa:bb:cc:dd:ee:ff`). **The device shows offline and its
+   buttons do nothing**, with the same one warning. Restore the MAC.
+3. **Known-but-disconnected player still behaves.** The 1.0.14 case: two
+   players playing, stop LMS, switch one off at the device, start LMS. That
+   player's room stays off with no flicker; the other returns. (Distinct from
+   test 1 — here LMS still lists the player.)
+4. **Nothing else moved.** The 1.0.15 retest list unchanged, in particular the
+   mute-survives-a-Server-reload and volume-ramp checks.
+
 ## 1.0.15 — Mute is observed; Receiver volume ramp; consumer lock scope (2026-09-02)
 
 All four drivers ship at 1.0.15. This closes the nine findings of a full-file

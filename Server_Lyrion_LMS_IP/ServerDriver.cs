@@ -684,13 +684,37 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // start scanning from index 2 to skip the MAC and "status" tokens.
             var kv = LmsCliParser.ExtractKeyValues(tokens, 2);
 
+            // A MAC the server does not know is not an error to LMS: it echoes
+            // the query back carrying no fields at all —
+            // "<mac> status - 1 tags:" — which arrives here as a status
+            // response whose only key is the "tags" of the echoed argument
+            // (verified against LMS 9.1; "tags:" parses as an empty-valued
+            // key, so a count-based test would not catch it). Through 1.0.15
+            // that echo was accepted: the bottom of this method marked the
+            // record OBSERVED and Online, i.e. AVAILABLE. Consumers reported a
+            // player that does not exist as connected, `CanCommand` opened,
+            // and — the CLI echoing every command back on the same socket with
+            // no request/response correlation — the driver's own `power 1` and
+            // `play` came back and were applied as server pushes. A room could
+            // be switched on, and a position timer advanced, for a player that
+            // was not on the network at all (found on the 1.0.15 hardware pass:
+            // an LMS restart the player never rejoined, so LMS no longer listed
+            // it). Require positive evidence instead; a real reply always
+            // carries all four of these.
+            if (!kv.ContainsKey("player_connected") && !kv.ContainsKey("player_name")
+                && !kv.ContainsKey("power") && !kv.ContainsKey("mode"))
+            {
+                return;
+            }
+
             // Lifecycle is decided here but NOTED LAST (see the end of this
-            // method). A status reply proves the server knows the player, not
-            // that the player is reachable: the subscription keeps pushing
-            // keep-alives for a client that has disconnected, and those carry
-            // player_connected:0. Honour it when present; treat absence as
-            // Online (older/odd replies) so a missing key can never strand a
-            // player as unavailable.
+            // method). A status reply with fields proves the server knows the
+            // player, not that the player is reachable: the subscription keeps
+            // pushing keep-alives for a client that has disconnected, and those
+            // carry player_connected:0. Honour it when present; treat absence
+            // as Online (older/odd replies) so a missing key can never strand a
+            // player as unavailable — safe only because the guard above has
+            // already established that this reply carries real status fields.
             var online = !kv.TryGetValue("player_connected", out var connectedStr) || connectedStr != "0";
 
             // Power BEFORE mode. NotePlaybackState's playback-derived power
@@ -852,10 +876,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
 
             var seen = new HashSet<string>(StringComparer.Ordinal);
             const string Prefix = "playerid:";
+            const string CountPrefix = "count:";
+            var reportedCount = -1;
             for (var i = 0; i < tokens.Length; i++)
             {
                 var t = tokens[i];
                 if (string.IsNullOrEmpty(t)) continue;
+
+                if (reportedCount < 0 && t.StartsWith(CountPrefix, StringComparison.Ordinal))
+                {
+                    if (int.TryParse(t.Substring(CountPrefix.Length),
+                            System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var parsedCount))
+                    {
+                        reportedCount = parsedCount;
+                    }
+                    continue;
+                }
+
                 if (!t.StartsWith(Prefix, StringComparison.Ordinal)) continue;
 
                 var value = t.Substring(Prefix.Length);
@@ -870,16 +908,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 }
             }
 
-            // Warn about any bound MAC the server did not report. The most
-            // likely cause is a typo in the Source/Helper/Receiver driver's
-            // configured MAC; without this log the installer sees the driver's
-            // "Bound to MAC" success message and assumes everything is fine.
+            // This list is only authoritative about ABSENCE if we received all
+            // of it. The query asks for 999 players and the reply states how
+            // many exist; if that count does not match what we parsed (a
+            // truncated reply, or a playerid that is not a MAC), fall back to
+            // warning alone rather than reporting a live player offline.
+            var listIsComplete = reportedCount >= 0 && reportedCount == seen.Count;
+
+            // Any bound MAC the server did not report is either a typo in a
+            // consumer's configured MAC or a player LMS has not seen since it
+            // started — after an LMS restart, a player that never rejoins is
+            // simply absent from this list.
             var bound = _registry.BoundMacs();
             foreach (var mac in bound)
             {
-                if (!seen.Contains(mac))
+                if (seen.Contains(mac)) continue;
+
+                _log("Lyrion Server WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
+
+                // ...and act on it. Through 1.0.15 this only logged, so the
+                // driver held the authoritative answer — the server's own
+                // player list — and discarded it, leaving the record at
+                // whatever lifecycle it had. Marking it Offline makes it
+                // unavailable, which closes the command gate and stops the
+                // consumers reporting a player that does not exist as
+                // connected. A player that later joins LMS sends
+                // client new/reconnect, which triggers a status query and
+                // restores it through the normal path.
+                if (listIsComplete)
                 {
-                    _log("Lyrion Server WARNING: bound player " + mac + " not present on LMS (check MAC for typos)");
+                    _registry.NoteLifecycle(mac, PlayerLifecycleState.Offline);
                 }
             }
         }
