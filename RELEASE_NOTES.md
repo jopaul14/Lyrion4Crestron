@@ -1,5 +1,84 @@
 # Release Notes
 
+## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
+
+All four drivers ship at 1.0.17. Two bugs, both found on the 1.0.16 hardware
+pass. **All four packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **A radio stream inherited the previous track's artist and album.** Playing
+  a local song and then selecting a radio favourite left "FROM IT STILL
+  MOVES" under a stream that has no album — permanently, since no later reply
+  ever contradicted it. Whichever field the station omits is the one that
+  stays: no artist tag, the old artist stands; no album tag, the old album.
+  The track title always updated, because streams do send one.
+
+  `NoteMetadata` reads a null field as "keep what you had", which is correct
+  for the `NewSong` notification — a genuine partial update carrying only a
+  title, whose whole job is to survive until the full status query returns.
+  But `ApplyStatusResponse` also passed null for a key that was simply
+  absent, and that reply is the authoritative full picture: absent means the
+  field is empty. Material Skin renders the same reply with the field
+  missing, which is the behaviour to match.
+
+  Title, artist and album now coerce an absent key to empty, and duration to
+  0 (so a stream shows elapsed alone rather than hanging a finished track's
+  total off it as `03:14 / 04:52`). The coercion is in `ApplyStatusResponse`
+  rather than in `NoteMetadata`, so the partial `NewSong` path keeps its
+  sentinels. Position deliberately keeps the "unchanged" sentinel: the 1 s
+  pump advances it between replies.
+
+### Fixed — Helper
+
+- **A button could render `S...` or `Tex...` instead of its icon or label.**
+  After a processor reboot, one room's Helper showed the literal text `S...`
+  where the shuffle icon belongs and `Tex...` where the Mute label belongs,
+  and kept showing them through every other button press and through leaving
+  and re-entering the page. Pressing the affected button fixed it for good.
+
+  Nothing had ever written those two properties, so Crestron Home rendered a
+  placeholder: an unset icon makes a button fall back to its literal label
+  (`S...` is "Shuffle" truncated at five across), and MuteBtn has no literal
+  label to fall back to. They go unwritten when a player's first observed
+  value happens to *equal* the record's default, because the registry
+  change-gates and publishes nothing — and the Helper had bound before the
+  player was observed, which touches nothing but `Connected` (1.0.14). The
+  player in question reported `power:1 mode:play repeat:2 shuffle:0` and was
+  unmuted: the three fields that differed from their defaults rendered
+  correctly, and the exact two that matched did not. A player merely switched
+  off at boot loses its power icon and tile status the same way.
+
+  `HelperDriver.Initialize` now gives every bound label, icon and text line
+  its idle value once, before any bind or event can arrive — the same
+  baseline the Source sets with `PlayBackStatus = Stop`. It asserts nothing
+  about a player: the values written are the labels for the state the
+  properties already hold by default, so the two cannot disagree, and the
+  first real observation overwrites them.
+
+  Not fixed here, and worth doing deliberately later: the underlying rule
+  that a first observation equal to the default publishes nothing. Power has
+  an explicit exception (`HasExplicitPower` false→true); shuffle, repeat,
+  mute, volume and name do not.
+
+### Retest
+
+1. **Cold boot with a default-valued field.** Set a player's shuffle off and
+   leave it unmuted. Reboot the processor. **Every button on that room's
+   Helper renders its icon or label** — no `S...`, no `Tex...` — before
+   anything is pressed.
+2. **Cold boot with the player switched off.** **The power button shows its
+   glyph and the room tile reads `Off`**, rather than rendering blank.
+3. **Real state still wins.** With shuffle on and the player muted, reboot.
+   **The page shows shuffle on and "Unmute"**, not the idle defaults.
+4. **Song to stream.** Play a local track with artist and album, then select
+   a radio favourite that supplies neither. **Both lines clear**; the track
+   title follows the stream. Then one that supplies an album but no artist:
+   **the album line shows, the artist line is blank.** Go back to a local
+   track: both return.
+5. **Stream timing.** On that stream, **the time line shows elapsed alone** —
+   no `/ total` left over from the song before it.
+
 ## 1.0.16 — A player LMS does not know is no longer a live player (2026-09-04)
 
 All four drivers ship at 1.0.16. This fixes one bug, found on the 1.0.15
