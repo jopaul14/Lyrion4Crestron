@@ -814,9 +814,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // contradicted it. Material Skin renders the same reply with the
             // field simply missing. Coerce here rather than changing
             // NoteMetadata, so the partial NewSong path keeps its sentinels.
-            var title = TryGet(kv, "title") ?? TryGet(kv, "remote_title") ?? string.Empty;
+            // remote_title is the station name on an internet stream ("KCSN"),
+            // and it is the third line Material Skin shows beneath the track and
+            // the artist. It has always been requested (tag N) and, until now,
+            // was only ever read as a stand-in for a MISSING title — so it was
+            // discarded for every stream that names its current track, which is
+            // most of them. Such a stream sends no album key at all, so after
+            // 1.0.17 correctly stopped inheriting the previous track's album
+            // that line simply went blank where Material Skin shows the station.
+            //
+            // A real album wins: remote_title fills the album line only when the
+            // reply carries no album, and only when it is not already serving as
+            // the title, so a stream with no track title shows the station once
+            // rather than on both lines.
+            var remoteTitle = TryGet(kv, "remote_title");
+            var title = TryGet(kv, "title") ?? remoteTitle ?? string.Empty;
             var artist = TryGet(kv, "artist") ?? string.Empty;
-            var album = TryGet(kv, "album") ?? string.Empty;
+            var album = TryGet(kv, "album")
+                ?? (remoteTitle != null && remoteTitle != title ? remoteTitle : string.Empty);
 
             // Track number is authoritative from a full status reply: absent
             // (e.g. radio streams) means "no track number", so default to 0.
