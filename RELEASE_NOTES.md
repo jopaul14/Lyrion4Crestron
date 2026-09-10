@@ -4,6 +4,22 @@
 
 In progress. Drivers are still at 1.0.17; the version is bumped at release.
 
+### Fixed — Lyrion Server
+
+- **A radio stream showed two now-playing lines where Material Skin shows
+  three (#42).** The missing line is the station name. LMS reports it as
+  `remote_title` (tag `N`), which the driver has always requested but read
+  only as a stand-in for a missing title. Most streams do name their current
+  track, so `remote_title` was discarded. Such a stream sends no `album` key
+  at all, so the album line was blank (in 1.0.16 and earlier it kept the
+  previous track's album).
+
+  `ApplyStatusResponse` now fills the album line from `remote_title` when the
+  reply carries no album, so KCSN reads `from KCSN`. A real album still wins,
+  and `remote_title` is skipped when it is already serving as the title, so a
+  stream with no track title shows the station once rather than on both
+  lines.
+
 ### Fixed — Helper
 
 - **`errlog` filled with `'translations' folder does not exist` errors
@@ -39,6 +55,17 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
    no cultures are supported`. That would mean the empty `{}` was rejected;
    give `en-US.json` one real entry. And **the Helper page still reads
    normally**: every label and icon is unchanged, with no `^` text anywhere.
+2. **Radio station on the album line (#42).**
+   - **Stream that names its track.** Play a radio favourite such as KCSN.
+     **The Helper shows the track title, the artist, and `from <station>`**,
+     matching Material Skin's three lines.
+   - **Local track.** Play a local track with a real album. **The album line
+     shows the album, not a station.**
+   - **Stream with no track title.** **The station appears once**, on the
+     title line, and the album line stays blank.
+   - **Switching back and forth.** Go from the stream to a local track and
+     back again. **Each line follows**, with nothing carried over from the
+     previous item (the 1.0.17 fix still holding).
 
 ## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
 
