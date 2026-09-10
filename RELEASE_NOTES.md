@@ -1,5 +1,45 @@
 # Release Notes
 
+## 1.0.18 — Unreleased
+
+In progress. Drivers are still at 1.0.17; the version is bumped at release.
+
+### Fixed — Helper
+
+- **`errlog` filled with `'translations' folder does not exist` errors
+  (#45).** Every load or UI request of the Helper wrote `Error` lines from
+  `AExtensionDevice.GetSupportedCultures` and `GetLanguageTranslations`, once
+  for the installed driver directory and once for its `_swap1` copy. The
+  Helper is the one extension device of the four, and an extension device
+  looks for a `translations` folder in its package; the Helper never shipped
+  one. Nothing was drawn wrong (the UI uses literal labels), it was log noise.
+
+  The package now carries `IncludeInPkg/Translations/en-US.json`, an empty
+  `{}` (ManifestUtil lowercases the folder to `translations` in the `.pkg`,
+  as it does `uidefinitions`). The labels stay literal on purpose.
+
+### Retest
+
+1. **No `translations` errors from the Helper (#45).** What produced the
+   original errors is not known (they appeared at 09:59, hours after a
+   reboot), so try each plausible trigger, then run `errlog` on the processor
+   and confirm **no line mentions `'translations' folder does not exist` for
+   `lyrioncommunity.lyrionhelper`**:
+   - **Install the new package** over 1.0.17. The original errors hit the
+     `_swap1` directory too, which only exists during a driver update.
+   - **Open the room and its Now Playing page** in the Crestron Home app.
+   - **Diagnostics:** in the Crestron Home setup app, go into Diagnostics and
+     bring up the devices, including opening the Lyrion Helper device.
+   - **Pair Devices:** open the Pair Devices page and bring up the devices
+     there too, including the Lyrion Helper in the driver list.
+   - **Reboot the processor** and check once more.
+
+   Also confirm **no new translations error replaced it**, such as
+   `No supported cultures were found.` or `GetLanguageTranslations called but
+   no cultures are supported`. That would mean the empty `{}` was rejected;
+   give `en-US.json` one real entry. And **the Helper page still reads
+   normally**: every label and icon is unchanged, with no `^` text anywhere.
+
 ## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
 
 All four drivers ship at 1.0.17. Two bugs, both found on the 1.0.16 hardware
