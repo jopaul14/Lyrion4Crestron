@@ -89,7 +89,12 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   but `Connected`; do not "call it un-forced", an un-forced value still
   passes the change-gate when the consumer holds the opposite. `Connect()`
   applies `_lastAvailability` alone (initialised true; driven false by a
-  loss or an invalid-MAC unbind) — never `!bound || available`.
+  loss or by any NON-BLANK invalid MAC, bound or not) — never
+  `!bound || available`. A MAC edit reaches a FRESH instance with nothing
+  bound (Crestron Home re-creates the driver; 1.0.17 test H2), so the
+  nothing-bound branch of `UnbindInvalidMac` must mark the device offline —
+  offline only, never a power edge, which would fire a Power Is Off → Room
+  Off mapping on every reboot with a bad MAC saved.
 - **Every bound label, icon and text line gets its idle value in
   `Initialize`** (`HelperDriver.InitialiseView`, and the Source's
   `PlayBackStatus = Stop`). A property nothing ever writes keeps the RAD

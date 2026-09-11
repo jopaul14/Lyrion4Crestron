@@ -84,8 +84,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 
         public override void Connect()
         {
-            // The framework calls this at load and again after any change to
-            // a RequiredForConnection attribute (the MAC). An unconditional
+            // The framework calls this at load. After an edit to a
+            // RequiredForConnection attribute (the MAC) Crestron Home
+            // re-creates the driver (seen on the 1.0.17 pass, test H2), so it
+            // runs again on a FRESH instance rather than this one; the code
+            // must be right either way. An unconditional
             // Connected=true here overrode the availability already learned
             // from the Lyrion Server, and the registry — change-gated on its
             // own unchanged copy — never sent AvailabilityChanged(false) again.
@@ -126,11 +129,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         /// to — and kept driving — the previous player. Treat it as an unbind:
         /// release the registry record, report off/stopped then disconnected
         /// (the registry's loss order), and log the one misconfiguration
-        /// warning the PRD sanctions. With nothing bound there is no state to
-        /// lower, but a NON-BLANK value still gets the warning: a typo at
-        /// first setup is the one moment the installer is looking at the log,
-        /// and through 1.0.14 it produced no line at all. An empty attribute
-        /// at boot stays silent.
+        /// warning the PRD sanctions.
+        ///
+        /// In practice it is the nothing-bound branch that runs. Crestron Home
+        /// re-creates the driver when the MAC is edited, so the new value
+        /// arrives at a fresh instance with nothing bound. Seen on hardware
+        /// (1.0.17 pass, test H2): a Source set to "xyz" let go of its player
+        /// but still showed Online, because this branch only logged and left
+        /// _lastAvailability at its initial true. A NON-BLANK invalid value
+        /// now marks the device offline here too, and still gets the warning
+        /// (a typo at first setup is the one moment the installer is looking
+        /// at the log). Offline only: a fresh instance has observed nothing,
+        /// and a forced power-off would fire a Power Is Off → Room Off
+        /// mapping on every reboot with a bad MAC saved — the 1.0.11 harm.
+        /// An empty attribute stays silent and untouched: nothing is
+        /// configured yet. The bound branch stays for an edit that does
+        /// reach a live instance.
         /// </summary>
         private void UnbindInvalidMac(string rawMac)
         {
@@ -149,6 +163,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 {
                     if (!string.IsNullOrWhiteSpace(rawMac))
                     {
+                        UpdateAvailability(false);
                         _log("Source WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
                     }
                     return;

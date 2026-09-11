@@ -93,8 +93,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
 
         public override void Connect()
         {
-            // The framework calls this at load and again after any change to
-            // a RequiredForConnection attribute (the MAC). It must re-apply
+            // The framework calls this at load. After a MAC edit Crestron Home
+            // re-creates the driver (1.0.17 pass, test H2), so it runs again on
+            // a fresh instance; the code must be right either way. It must re-apply
             // the availability already learned from the Lyrion Server, not
             // force Connected=true over it — the registry is change-gated on
             // its own copy and would never send the loss again. Not
@@ -130,10 +131,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
         /// an unbind, not a no-op: release the registry record, blank the
         /// whole view (fields first, then Connected — the registry's loss
         /// order) and log the one misconfiguration warning the PRD sanctions.
-        /// With nothing bound there is no state to lower, but a NON-BLANK
-        /// value still gets the warning: a typo at first setup is the one
-        /// moment the installer is looking at the log, and through 1.0.14 it
-        /// produced no line at all. An empty attribute at boot stays silent.
+        /// A MAC edit reaches a fresh instance with nothing bound (see
+        /// SourceDriver.UnbindInvalidMac, 1.0.17 test H2), so a NON-BLANK
+        /// invalid value there marks the device offline — no volume, mute or
+        /// power publish, a fresh instance has observed nothing — and still
+        /// gets the warning. An empty attribute stays silent and untouched.
         /// </summary>
         private void UnbindInvalidMac(string rawMac)
         {
@@ -152,6 +154,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
                 {
                     if (!string.IsNullOrWhiteSpace(rawMac))
                     {
+                        UpdateAvailability(false);
                         _log("Receiver WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
                     }
                     return;

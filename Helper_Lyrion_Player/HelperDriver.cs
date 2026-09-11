@@ -234,7 +234,9 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         public override void Connect()
         {
-            // Re-run by the framework after any MAC edit; must not override
+            // Run at load. After a MAC edit Crestron Home re-creates the driver
+            // (1.0.17 pass, test H2), so it runs again on a fresh instance; the
+            // code must be right either way. Must not override
             // the availability already learned. 1.0.13 used
             // `!bound || available`, which read an UNBOUND driver as connected
             // and so undid UnbindInvalidMac's "offline" the moment the
@@ -433,10 +435,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
 
         // A cleared or unparseable MAC is an unbind, not a no-op — see
         // SourceDriver.UnbindInvalidMac. The tile goes to off/stopped, then
-        // offline. With nothing bound there is no state to lower, but a
-        // NON-BLANK value still gets the warning (a typo at first setup is
-        // the one moment the installer is looking at the log); an empty
-        // attribute at boot stays silent.
+        // offline. A MAC edit reaches a fresh instance with nothing bound
+        // (1.0.17 test H2), so a NON-BLANK invalid value there marks the
+        // device offline and still gets the warning; the view is already
+        // idle from InitialiseView, so there is nothing to blank. An empty
+        // attribute stays silent and untouched.
         private void UnbindInvalidMac(string rawMac)
         {
             lock (_applyGate)
@@ -454,6 +457,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
                 {
                     if (!string.IsNullOrWhiteSpace(rawMac))
                     {
+                        UpdateAvailability(false);
+                        Commit();
                         _log("Helper WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
                     }
                     return;
