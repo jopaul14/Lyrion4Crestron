@@ -19,6 +19,8 @@ using LyrionCommunity.Crestron.Lyrion.Server.Registry;
 using LyrionCommunity.Crestron.Lyrion.Server.Services;
 using LyrionCommunity.Crestron.Lyrion.Server.Transport;
 using LyrionCommunity.Crestron.Lyrion.Service;
+using CrestronControllerLogger = Crestron.DeviceDrivers.EntityModel.Logging.DriverControllerLogger;
+using CrestronLogEntryLevel = Crestron.DeviceDrivers.EntityModel.Logging.LogEntryLevel;
 
 namespace LyrionCommunity.Crestron.Lyrion.Server
 {
@@ -119,7 +121,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
         public ServerDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
-            _log = BuildLogger();
+            _log = BuildLogger(args?.Logger);
             _registry = new PlayerRegistry();
             _service = new LyrionServerServiceImpl(
                 _registry,
@@ -990,17 +992,50 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             catch { }
         }
 
-        private static Action<string> BuildLogger()
+        private static Action<string> BuildLogger(CrestronControllerLogger crestronLog)
         {
             // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
             // defined in both Debug and Release builds, so these calls are
             // compiled into production. Debug.WriteLine is stripped in Release
             // and would leave installers with no log output at all.
+            //
+            // Trace reaches only a Toolbox console. The warnings, errors and
+            // smoothed LMS CONNECTED/DISCONNECTED transitions also go to the
+            // logger Crestron Home hands this driver at construction, which
+            // writes "to the hosting app/program's log" — the one the Setup
+            // app shows under Diagnostics → Logs (#49; LyrionLogLine decides
+            // which lines). A failure there never costs the Trace line.
             return message =>
             {
                 try { Trace.WriteLine("[Lyrion.Server " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + message); }
                 catch { }
+
+                if (crestronLog == null) return;
+                try
+                {
+                    switch (LyrionLogLine.Classify(message))
+                    {
+                        case LyrionLogLevel.Error:
+                            crestronLog.Log(DriverController.RootControllerId, CrestronLogEntryLevel.Error, ForCrestronLog(message));
+                            break;
+                        case LyrionLogLevel.Warning:
+                            crestronLog.Log(DriverController.RootControllerId, CrestronLogEntryLevel.Warning, ForCrestronLog(message));
+                            break;
+                        case LyrionLogLevel.Info:
+                            crestronLog.Log(DriverController.RootControllerId, CrestronLogEntryLevel.Info, ForCrestronLog(message));
+                            break;
+                    }
+                }
+                catch { }
             };
+        }
+
+        // Crestron's loggers take a format string; a brace in an installer's
+        // typed value would make it throw and the line would be lost. The
+        // Trace copy stays verbatim.
+        private static string ForCrestronLog(string message)
+        {
+            return message.Replace('{', '(').Replace('}', ')');
         }
 
         public override void Dispose()

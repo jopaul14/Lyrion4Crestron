@@ -31,6 +31,11 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   reconnect, bound-MAC-missing warning, real errors, one startup line per
   consumer driver. Not allowed: per-player power-change logs, retry-attempt
   logs, auth-success logs, or anything that fires during normal playback.
+  Every line goes to Trace (a Toolbox console only); WARNING/ERROR lines and
+  the Server's smoothed LMS CONNECTED/DISCONNECTED ALSO go to Crestron Home's
+  own log (Diagnostics → Logs) via `LyrionLogLine.Classify` (#49). So the
+  severity word in a line is load-bearing: a new misconfiguration message
+  must say `WARNING`, and a routine one must not.
 - **All registry mutations are change-gated** — no change, no event, no log.
   "Change" means a change in the EFFECTIVE value (see the next rule). Exactly
   three sanctioned publishes without one, each of which IS a change in

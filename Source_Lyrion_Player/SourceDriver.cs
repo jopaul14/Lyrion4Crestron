@@ -418,16 +418,41 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             try { action(svc, mac); } catch { }
         }
 
-        private static Action<string> BuildLogger()
+        private Action<string> BuildLogger()
         {
             // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
             // defined in both Debug and Release builds, so these calls survive
             // Release compilation.
+            //
+            // Trace reaches only a Toolbox console, so a WARNING or ERROR line
+            // also goes to the RAD base Logger, which hands it to Crestron
+            // Home's runtime logger — the log the Setup app shows under
+            // Diagnostics → Logs (#49; LyrionLogLine decides which lines).
+            // Logger is read at call time, and a failure there never costs
+            // the Trace line.
             return msg =>
             {
                 try { Trace.WriteLine("[Lyrion.Source " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + msg); }
                 catch { }
+                ForwardToCrestronLog(msg);
             };
+        }
+
+        private void ForwardToCrestronLog(string msg)
+        {
+            try
+            {
+                var logger = Logger;
+                if (logger == null) return;
+                // Crestron's logger takes a format string; a brace in an
+                // installer's typed MAC would make it throw.
+                switch (LyrionLogLine.Classify(msg))
+                {
+                    case LyrionLogLevel.Error: logger.Error(msg.Replace('{', '(').Replace('}', ')')); break;
+                    case LyrionLogLevel.Warning: logger.Warning(msg.Replace('{', '(').Replace('}', ')')); break;
+                }
+            }
+            catch { }
         }
 
         public override void Dispose()

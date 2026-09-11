@@ -964,13 +964,31 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
             try { action(svc, mac); } catch { }
         }
 
-        private static Action<string> BuildLogger()
+        private Action<string> BuildLogger()
         {
+            // Trace, plus Crestron Home's own log for WARNING/ERROR lines
+            // (#49) — see SourceDriver.BuildLogger.
             return msg =>
             {
                 try { Trace.WriteLine("[Lyrion.Helper " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + msg); }
                 catch { }
+                ForwardToCrestronLog(msg);
             };
+        }
+
+        private void ForwardToCrestronLog(string msg)
+        {
+            try
+            {
+                var logger = Logger;
+                if (logger == null) return;
+                switch (LyrionLogLine.Classify(msg))
+                {
+                    case LyrionLogLevel.Error: logger.Error(msg.Replace('{', '(').Replace('}', ')')); break;
+                    case LyrionLogLevel.Warning: logger.Warning(msg.Replace('{', '(').Replace('}', ')')); break;
+                }
+            }
+            catch { }
         }
 
         public override void Dispose()
