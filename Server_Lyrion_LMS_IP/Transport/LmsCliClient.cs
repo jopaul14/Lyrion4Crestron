@@ -54,6 +54,41 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
         /// </summary>
         private static readonly TimeSpan EstablishedSession = TimeSpan.FromSeconds(10);
 
+        // ----- Recovery from a dead or wedged connection (#46) -----
+        //
+        // On the 1.0.17 bench pass a 3½-minute network outage left the Lyrion
+        // Server with no connection to LMS for over an hour: the processor
+        // could ping LMS, LMS held no socket from it, and LMS had announced
+        // every player's return, yet nothing reconnected until the Server was
+        // removed and re-added. The loop body is guarded throughout, so the
+        // likely cause was an await that never completed — and every await on
+        // this path ran with no bound: the connect, the read, and the worker
+        // task itself. Which one wedged is not known, so all three are bounded
+        // here rather than betting on one.
+
+        /// <summary>
+        /// Bound on one connect attempt. <c>TcpClient.ConnectAsync</c> has no
+        /// timeout of its own and completes only when the OS and the runtime
+        /// deliver a result. A timed-out attempt is an ordinary failed attempt:
+        /// same backoff, same one-line announcement rule.
+        /// </summary>
+        private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// Liveness. With <c>listen 1</c>, LMS speaks only when something
+        /// happens, so a quiet house and a dead socket look the same to a
+        /// blocked read, and the only other detector is TCP keepalive — whose
+        /// 30 s tuning goes through a Windows-style IOControl that may not take
+        /// effect on the processor's runtime, leaving the ~2 h default. After
+        /// this long with no bytes at all, send <c>version ?</c>; if another
+        /// full interval passes with still nothing, the connection is declared
+        /// dead and the ordinary reconnect path takes over.
+        /// </summary>
+        private static readonly TimeSpan IdleProbeInterval = TimeSpan.FromSeconds(30);
+
+        /// <summary>Pause before a worker that ended unexpectedly is restarted.</summary>
+        private static readonly TimeSpan WorkerRestartDelay = TimeSpan.FromSeconds(5);
+
         // Set when a "login failed" line has been surfaced for the current
         // outage; cleared when a session is established. Touched only on the
         // worker task (EmitLine runs inside ReceiveLoopAsync).
@@ -147,8 +182,48 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
 
                 var cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
                 _cts = cts;
-                _workerTask = Task.Run(() => RunAsync(cts.Token));
+                _workerTask = Task.Run(() => SuperviseAsync(cts.Token));
                 return Task.CompletedTask;
+            }
+        }
+
+        /// <summary>
+        /// Keeps <see cref="RunAsync"/> running until a deliberate stop (#46).
+        /// RunAsync only returns on cancellation, but nothing observed its task:
+        /// had it ever ended some other way, the driver would never have tried
+        /// to reconnect and nothing would have said so. Announced once per
+        /// client, then silent, so a fault that repeats cannot flood the log.
+        /// </summary>
+        private async Task SuperviseAsync(CancellationToken ct)
+        {
+            var announced = false;
+            while (!ct.IsCancellationRequested)
+            {
+                string why;
+                try
+                {
+                    await RunAsync(ct).ConfigureAwait(false);
+                    why = "it returned";
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    why = ex.GetType().Name + ": " + ex.Message;
+                }
+
+                if (ct.IsCancellationRequested) break;
+
+                if (!announced)
+                {
+                    announced = true;
+                    _log("Lyrion Server ERROR: LMS connection worker stopped unexpectedly (" + why + "); restarting");
+                }
+
+                try { await Task.Delay(WorkerRestartDelay, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
             }
         }
 
@@ -415,11 +490,83 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                 try { client.Close(); }
                 catch { }
             }))
+            using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
+                var winner = await Task.WhenAny(connectTask, Task.Delay(ConnectTimeout, timer.Token)).ConfigureAwait(false);
+                timer.Cancel();
+                if (winner != connectTask)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // Timed out (#46). Closing the client abandons the attempt;
+                    // observe its eventual fault so it cannot surface later as
+                    // an unobserved task exception.
+                    try { client.Close(); }
+                    catch { }
+                    ObserveFault(connectTask);
+                    throw new TimeoutException("connect to " + host + ":" + port + " timed out after "
+                        + (int)ConnectTimeout.TotalSeconds + " s");
+                }
+
                 await connectTask.ConfigureAwait(false);
             }
 
             ct.ThrowIfCancellationRequested();
+        }
+
+        /// <summary>
+        /// One read, bounded by the liveness rule (#46): after
+        /// <see cref="IdleProbeInterval"/> of silence, send <c>version ?</c>;
+        /// if a second interval passes with still nothing, throw. RunAsync
+        /// then logs the drop (once, as for any established session) and the
+        /// ordinary reconnect path runs. Any byte at all, a reply or a push,
+        /// counts as proof of life.
+        /// </summary>
+        private async Task<int> ReadWithLivenessAsync(NetworkStream stream, byte[] buffer, CancellationToken ct)
+        {
+            var read = stream.ReadAsync(buffer, 0, buffer.Length, ct);
+            var probed = false;
+            while (true)
+            {
+                using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    var winner = await Task.WhenAny(read, Task.Delay(IdleProbeInterval, timer.Token)).ConfigureAwait(false);
+                    timer.Cancel();
+                    if (winner == read) return await read.ConfigureAwait(false);
+                }
+
+                if (ct.IsCancellationRequested)
+                {
+                    // Stopping: StopAsync disposes the stream, which ends the
+                    // abandoned read.
+                    ObserveFault(read);
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (!probed)
+                {
+                    probed = true;
+                    // Not awaited: on a dead socket the write can block, and
+                    // this loop is what has to notice. Its result is
+                    // irrelevant; only a reply proves anything.
+                    _ = SendLineAsync(LmsCliCommands.QueryServerVersion(), ct);
+                    continue;
+                }
+
+                // The teardown that follows disposes the stream, which ends
+                // the abandoned read; observe its fault.
+                ObserveFault(read);
+                throw new TimeoutException("no data from LMS for "
+                    + (int)(2 * IdleProbeInterval.TotalSeconds) + " s, including no reply to a probe");
+            }
+        }
+
+        private static void ObserveFault(Task task)
+        {
+            task.ContinueWith(t => { var ignored = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
@@ -432,7 +579,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                     int bytesRead;
                     try
                     {
-                        bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
+                        bytesRead = await ReadWithLivenessAsync(stream, readBuffer, ct).ConfigureAwait(false);
                     }
                     catch (IOException)
                     {
