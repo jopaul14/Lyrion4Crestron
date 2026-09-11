@@ -123,6 +123,8 @@ Inter-driver communication uses a process-wide service registry (`LyrionServerSe
 - PowerOn / PowerOff / TogglePower
 - Declares one digital audio input (Coaxial Digital) and one analog audio input (RCA Analog) plus speaker outputs.
 
+**Don't use a Lyrion Receiver for a player whose volume is fixed.** In LMS, each player's settings include *Volume Control*. If it's set to **Output level is fixed at 100%**, the player ignores volume changes. LMS still keeps and reports a volume number, so a Lyrion Receiver in that room shows a working slider: it moves LMS's number and changes nothing you can hear. In that room, use an uncontrolled amplifier, or whichever device actually sets the level, as the audio endpoint. The Lyrion Receiver is for players set to **Volume controls adjust outputs**.
+
 ### Presets
 
 > **A note on wording.** Crestron and Lyrion use different words for the same

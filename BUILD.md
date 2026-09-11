@@ -43,6 +43,26 @@ If `ManifestUtil.exe` is missing, the `.dll` will still build but no `.pkg` is p
 
 ## 2. Building
 
+### 2.0 Start every deployment build from empty output folders
+
+**A build never deletes files it no longer produces, and ManifestUtil packages
+what it finds in the output folder.** So an old file in `bin` can ride into a
+new `.pkg`. This is not hypothetical: a pre-rename `Gateway_Lyrion_LMS_IP.dll`
+and `.pkg` from 31 Aug 2026 were still sitting in the Server's
+`bin\Release\net472` on 10 Sep, nine versions after the rename. Before any
+build you intend to deploy, delete `bin` and `obj` in all five projects,
+including `Common`, whose DLL the Server embeds. From the repository root in
+PowerShell:
+
+```powershell
+foreach ($p in 'Common','Server_Lyrion_LMS_IP','Source_Lyrion_Player','Helper_Lyrion_Player','Receiver_Lyrion_Player') { Remove-Item -Recurse -Force "$p\bin","$p\obj" -ErrorAction SilentlyContinue }
+```
+
+This is a build step, not a test: it has to be done every time, because a
+folder does not stay clean. The check that you are running the new code is
+on the processor. After import, every device must report the new
+`DriverVersion`.
+
 ### 2.1 Visual Studio
 
 1. Microsoft Word must be installed on the computer where you're building, to generate the required DAT file inside the .pkg files.
