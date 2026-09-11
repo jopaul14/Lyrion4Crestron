@@ -1,10 +1,36 @@
 # Release Notes
 
-## 1.0.18 — Unreleased
+## 1.0.18 — Unreleased (bench build)
 
-In progress. Drivers are still at 1.0.17; the version is bumped at release.
+All four drivers are at 1.0.18 for the bench pass. **All four packages must be
+updated together**: `Lyrion_Common.dll` changed (#49). Anything the pass finds
+is fixed in this section until release. Before building, delete the output
+folders (BUILD.md §2.0).
 
 ### Fixed — Lyrion Server
+
+- **After a network outage the Server never reconnected to LMS, and every room
+  stayed offline (#46).** On the 1.0.17 pass the processor lost its link and
+  its IP address for 3½ minutes. More than an hour later both bound rooms were
+  still offline, although the processor could ping LMS, LMS held no socket
+  from it, and LMS had announced both players' return. Only removing the
+  Server from the room and adding it back recovered it. The connection loop
+  is guarded throughout, so the likely cause was a wait that never finished,
+  and every wait on that path was unbounded. Which one wedged is not known,
+  so all three are now bounded:
+
+  - A **connect attempt gives up after 10 s** and is retried on the normal
+    backoff.
+  - **After 30 s of silence the Server sends LMS a cheap query**, and after a
+    second 30 s with no reply at all it declares the connection dead and
+    reconnects. A quiet house and a dead socket used to look the same, and
+    the only other detector was TCP keepalive at roughly two hours.
+  - **The connection worker is restarted** if it ever stops outside a
+    deliberate shutdown, with one ERROR line.
+
+  Worst case from a dead connection to a reconnect attempt is about a minute.
+  A healthy connection in a quiet house answers the query every 30 s and
+  logs nothing.
 
 - **A radio stream showed two now-playing lines where Material Skin shows
   three (#42).** The missing line is the station name. LMS reports it as
@@ -19,6 +45,23 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
   and `remote_title` is skipped when it is already serving as the title, so a
   stream with no track title shows the station once rather than on both
   lines.
+
+### Fixed — all four drivers
+
+- **The drivers' warnings and errors never reached Diagnostics → Logs
+  (#49).** Every driver line went only to `System.Diagnostics.Trace`, which
+  only a Toolbox Text Console shows. On the 1.0.17 pass the log was read in
+  the Setup app, where none of them appear. So the mistyped-MAC warning (H3),
+  which exists so that a first-setup typo isn't silent, was still silent to
+  an installer, and no "exactly one WARNING" expectation could be checked.
+
+  Every line still goes to Trace. In addition, each `… WARNING …` and
+  `… ERROR …` line, plus the Server's `LMS DISCONNECTED` (as a warning) and
+  `LMS CONNECTED` (as information), now also goes to Crestron Home's own log.
+  That covers a bad MAC or volume step, a bound player missing from LMS, an
+  authentication failure, and an LMS outage. Nothing new is logged. **Not yet
+  known:** whether Crestron Home shows *warnings* there by default, or only
+  errors. The retest settles it.
 
 ### Fixed — Source, Receiver and Helper
 
@@ -51,6 +94,19 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
   The package now carries `IncludeInPkg/Translations/en-US.json`, an empty
   `{}` (ManifestUtil lowercases the folder to `translations` in the `.pkg`,
   as it does `uidefinitions`). The labels stay literal on purpose.
+
+### Documentation
+
+- **Fixed-output players (#44, documentation part).** The README now says not
+  to give a Lyrion Receiver to a player whose LMS Volume Control is "Output
+  level is fixed at 100%", and to use an uncontrolled amplifier as that
+  room's endpoint. LMS still reports a volume number for such a player, so a
+  Receiver shows a working slider that changes nothing audible.
+- **Build from empty output folders (BUILD.md §2.0).** A build never deletes
+  files it no longer produces, and ManifestUtil packages the whole folder. A
+  pre-rename `Gateway_Lyrion_LMS_IP.dll` was still in the Server's output
+  folder nine versions later. Deleting `bin` and `obj` is now a build step;
+  it replaces bench-pass tests A1 and A2.
 
 ### Retest
 
@@ -86,8 +142,9 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
      previous item (the 1.0.17 fix still holding).
 3. **An invalid MAC shows the device Offline (#48).**
    - **Source.** Set a Source's MAC to `xyz`. **It goes Online → Offline**,
-     the Text Console shows one `Source WARNING: player MAC 'xyz' is not
-     valid` line, and **none of its controls reach the player**. This room's
+     one `Source WARNING: player MAC 'xyz' is not valid` line is logged (see
+     item 5 for where it should appear), and **none of its controls reach the
+     player**. This room's
      Helper and Receiver are unaffected, since each has its own MAC. The room
      itself may stay on; that is Crestron Home's decision.
    - **Receiver, then Helper.** The same, one device at a time.
@@ -95,13 +152,53 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
    - **Reboot with a bad MAC saved.** Leave one device at `xyz` and reboot the
      processor. **It comes up Offline, and its room is not turned off.**
    - **Typo at first setup.** Pair a fresh Receiver and give it a MAC one
-     character short. **It shows Offline**, and the Text Console shows exactly
-     one `Receiver WARNING: player MAC '…' is not valid; nothing bound` and no
-     `Bound to MAC`. Correct the MAC: **`Receiver: Bound to MAC …` appears, the
-     device goes Online**, and it controls the player. The warning is in the
-     Text Console only; it never reaches `errlog` or the Setup app.
+     character short. **It shows Offline**, and exactly one `Receiver WARNING:
+     player MAC '…' is not valid; nothing bound` is logged, with no
+     `Bound to MAC`. Correct the MAC: **the device goes Online** and controls
+     the player. `Bound to MAC` is routine, so it is in the Text Console only;
+     the warning should *also* be in Diagnostics → Logs (item 5).
    - **Blank MAC at boot.** Leave a device's MAC blank and reboot. **It logs
      nothing.** It still shows Online: a blank MAC is deliberately unchanged.
+4. **Reconnect after a network outage (#46).** This is the test that was
+   deferred from the 1.0.17 pass, now verifying the fix. Have a Toolbox Text
+   Console attached and **capturing to file**, and Diagnostics → Logs open.
+   - **Cable pull.** With a room playing, unplug the processor's Ethernet for
+     about **4 minutes**, then plug it back in. **Within about 2 minutes of
+     link-up every bound room is back Online, with no Server re-save and no
+     re-adding.** In the console: `Lyrion Server: LMS DISCONNECTED` during the
+     outage, then `LMS CONNECTED` and one `reconcile players=…` after.
+   - **If it doesn't recover,** capture before touching anything: the last
+     `[Lyrion.Server …]` lines in the console, and `netstat -an` on the LMS
+     host (is there a socket from 10.0.2.7?). Then recover by changing the
+     Server's HTTP Port and saving (§ Recovery on #46).
+   - **Short outage.** Repeat with a 20 s pull. Rooms return, with at most one
+     `connectivity unstable` notice.
+   - **Quiet house.** With nothing playing anywhere, leave it for 10 minutes
+     with the console attached. **No log lines appear and nothing goes
+     offline.** The Server's 30 s idle query is answered and logs nothing.
+   - **Regressions:** the E-section tests (LMS restart with both rooms playing;
+     a player switched off during an LMS outage; a player absent from LMS),
+     H6 (save the Server settings five times: the Setup app has no unchanged
+     re-save, so alternate the unused HTTP Port between 9000 and 9001; rooms
+     keep working after each) and H7 (bad credentials back
+     off quietly: one ERROR line, then 2 → 5 → 10 → 30 → 60 s with no more
+     lines).
+5. **Warnings and errors reach Diagnostics → Logs (#49).** Watch the Setup
+   app's Diagnostics → Logs, not the Toolbox console.
+   - **Warnings:** a Source MAC set to `xyz` (item 3), a Receiver VolumeStep
+     set to `x`, and a Helper MAC set to a valid-looking but unused
+     `aa:bb:cc:dd:ee:ff` (the Server's `bound player … not present on LMS`).
+     **Each appears once.**
+   - **Errors:** a wrong LMS password on the Server. **One `Lyrion Server
+     ERROR auth: …` line.**
+   - **Connectivity:** the cable pull in item 4. **`LMS DISCONNECTED` appears
+     as a warning** and `LMS CONNECTED` as information.
+   - **Record which levels showed up.** If errors appear but warnings don't,
+     Crestron Home's log is set above Warning by default. Note it; don't
+     count it as a fail. The follow-up is deciding whether misconfiguration
+     lines should be logged as errors.
+   - **Nothing else appears.** During ordinary playback no Lyrion line reaches
+     Diagnostics → Logs at all.
 
 ## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
 
