@@ -20,6 +20,24 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
   stream with no track title shows the station once rather than on both
   lines.
 
+### Fixed — Source, Receiver and Helper
+
+- **A device given an invalid MAC stayed Online with nothing bound (#48).**
+  On the 1.0.17 pass (test H2), a Guest Room Source set to `xyz` let go of its
+  player (none of its controls reached it), but the Setup app still showed it
+  Online, and its Power Is Off → Room Off mapping never fired. A MAC edit in
+  Crestron Home reaches a *fresh* driver instance with nothing bound. That
+  instance took the "nothing bound" branch of `UnbindInvalidMac`, which only
+  logged, and the device kept its start-up "assumed connected" state. The
+  same branch runs on a reboot or Server reload with a bad MAC saved, and on
+  a first-setup typo. It is identical in all three consumers.
+
+  A non-blank invalid MAC now marks the device **Offline** there too, and it
+  still logs the one warning. Offline only: a fresh instance has observed
+  nothing, and a forced power-off would fire a Power Is Off → Room Off mapping
+  on every reboot with a bad MAC saved (the harm 1.0.11 fixed). A blank MAC is
+  unchanged: silent, and Online until bound.
+
 ### Fixed — Helper
 
 - **`errlog` filled with `'translations' folder does not exist` errors
@@ -66,6 +84,16 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
    - **Switching back and forth.** Go from the stream to a local track and
      back again. **Each line follows**, with nothing carried over from the
      previous item (the 1.0.17 fix still holding).
+3. **An invalid MAC shows the device Offline (#48).**
+   - **Source.** Set a Source's MAC to `xyz`. **It goes Online → Offline**,
+     the Text Console shows one `Source WARNING: player MAC 'xyz' is not
+     valid` line, and **none of its controls reach the player**. This room's
+     Helper and Receiver are unaffected, since each has its own MAC. The room
+     itself may stay on; that is Crestron Home's decision.
+   - **Receiver, then Helper.** The same, one device at a time.
+   - **Restore.** Put each MAC back: **the device returns Online** and works.
+   - **Reboot with a bad MAC saved.** Leave one device at `xyz` and reboot the
+     processor. **It comes up Offline, and its room is not turned off.**
 
 ## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
 
