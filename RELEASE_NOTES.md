@@ -94,6 +94,14 @@ In progress. Drivers are still at 1.0.17; the version is bumped at release.
    - **Restore.** Put each MAC back: **the device returns Online** and works.
    - **Reboot with a bad MAC saved.** Leave one device at `xyz` and reboot the
      processor. **It comes up Offline, and its room is not turned off.**
+   - **Typo at first setup.** Pair a fresh Receiver and give it a MAC one
+     character short. **It shows Offline**, and the Text Console shows exactly
+     one `Receiver WARNING: player MAC '…' is not valid; nothing bound` and no
+     `Bound to MAC`. Correct the MAC: **`Receiver: Bound to MAC …` appears, the
+     device goes Online**, and it controls the player. The warning is in the
+     Text Console only; it never reaches `errlog` or the Setup app.
+   - **Blank MAC at boot.** Leave a device's MAC blank and reboot. **It logs
+     nothing.** It still shows Online: a blank MAC is deliberately unchanged.
 
 ## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
 
