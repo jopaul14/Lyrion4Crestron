@@ -32,6 +32,19 @@ folders (BUILD.md §2.0).
   A healthy connection in a quiet house answers the query every 30 s and
   logs nothing.
 
+- **The Server device always showed Online, even with no LMS connection
+  (#47).** It had no online flag, so Crestron Home showed it Online whenever it
+  was loaded. During the #46 outage it read Online for over an hour, which
+  pointed diagnosis at the players first. The Server now reports Crestron
+  Home's standard online indicator (`onlineIndicator:isOnline`, the property
+  every Entity Model sample in the SDK uses). It's Online only while the
+  connection to LMS is established and has stayed up for the 5 s smoothing
+  window, so brief flaps don't show. It starts Offline at boot until LMS
+  answers, and a settings save shows it Offline until the rebuilt connection
+  is up. **Not yet known:** whether Crestron Home honors this property for a
+  device of type Platform. If it doesn't, the Server simply keeps showing
+  Online as before.
+
 - **A radio stream showed two now-playing lines where Material Skin shows
   three (#42).** The missing line is the station name. LMS reports it as
   `remote_title` (tag `N`), which the driver has always requested but read
@@ -199,6 +212,18 @@ folders (BUILD.md §2.0).
      lines should be logged as errors.
    - **Nothing else appears.** During ordinary playback no Lyrion line reaches
      Diagnostics → Logs at all.
+6. **The Server device shows Offline when LMS is unreachable (#47).** Watch
+   the Lyrion Server's status in the Setup app. (Not during the cable pull: the
+   app can't reach the processor then either.)
+   - **Stop LMS** for 30 s: within about 10 s **the Server shows Offline**.
+     Start LMS: it returns **Online** once reconnected.
+   - **Wrong LMS password** (H7): **Offline** for as long as it's wrong;
+     **Online** once it's corrected.
+   - **Settings save** (H6): briefly Offline, then Online.
+   - **At boot:** Online within a few seconds of the processor coming up.
+   - **If it stays Online throughout,** Crestron Home doesn't honor the
+     indicator for a Platform device. Record it; it isn't a regression, since
+     that was the old behavior.
 
 ## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
 

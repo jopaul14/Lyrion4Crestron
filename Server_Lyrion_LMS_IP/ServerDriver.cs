@@ -118,6 +118,36 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
         [EntityProperty(Id = "lyrion:serverVersion")]
         public string ServerVersion { get; private set; } = string.Empty;
 
+        /// <summary>
+        /// Crestron Home's standard online indicator for this device (#47):
+        /// true only while the COMMITTED connectivity state is CONNECTED.
+        /// </summary>
+        /// <remarks>
+        /// Through 1.0.17 the Server had no online flag at all, so
+        /// Crestron Home showed it Online whenever it was loaded. During the
+        /// #46 outage it read Online for over an hour with no LMS connection,
+        /// which sent diagnosis to the players first. This is the property
+        /// every Entity Model sample in the SDK uses. It follows the FSM's
+        /// committed state rather than the raw socket, so flaps shorter than
+        /// its 5 s window stay out of the UI, as they stay out of the log. It
+        /// starts false: the Server is not online until LMS has answered.
+        /// </remarks>
+        [EntityProperty(Id = "onlineIndicator:isOnline")]
+        public bool IsOnline { get; private set; }
+
+        private readonly object _onlineGate = new object();
+
+        private void SetOnline(bool online)
+        {
+            lock (_onlineGate)
+            {
+                if (IsOnline == online) return;
+                IsOnline = online;
+                try { NotifyPropertyChanged("onlineIndicator:isOnline", new DriverEntityValue(online)); }
+                catch { }
+            }
+        }
+
         public ServerDriver(DriverControllerCreationArgs args, DriverImplementationResources resources)
             : base(DriverController.RootControllerId)
         {
@@ -274,6 +304,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             DisposeOldTransport(oldCli, oldLifetime);
 
             _registry.SetServerConnected(false);
+
+            // The rebuild resets the FSM without publishing a transition, so
+            // drop the indicator here; the new socket's committed CONNECTED
+            // raises it again.
+            SetOnline(false);
         }
 
         private void TeardownTransport()
@@ -517,6 +552,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 NotifyPropertyChanged("lyrion:connectionState", new DriverEntityValue(ConnectionState));
             }
             catch { }
+
+            SetOnline(connected);
 
             _service.RaiseServerConnectivityChanged(connected);
 
