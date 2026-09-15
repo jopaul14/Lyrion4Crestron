@@ -41,38 +41,38 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 ## Architecture
 
 ```
-+--------------------------------------------------------------------------------+
-|  Server_Lyrion_LMS_IP                                         (one per home)   |
-|                                                                                |
-|   +--------------+                                                             |
-|   | LmsCliClient |----+      +------------------+                              |
-|   +--------------+    |      | PlayerRegistry   |                              |
-|   +--------------+    +----->| (PlayerRecord    |                              |
-|   | LmsJsonRpc   |    |      |  per bound MAC)  |                              |
-|   +--------------+----+      +------------------+                              |
-|                                        |                                       |
-|                         +--------------v-------------+                         |
-|                         | ILyrionServerService (API) |                         |
-|                         +----------------------------+                         |
-+--------------------------------------------------------------------------------+
-                                         |
-                                         |
-             +---------------------------+---------------------------+
-             |                           |                           |
-+------------v-----------+  +------------v-----------+  +------------v-----------+
-| Source_Lyrion_Player   |  | Helper_Lyrion_Player   |  | Receiver_Lyrion_Player |
-| (RAD: Bluray Player)   |  | (RAD ext: Media Plyr)  |  | (RAD: AV Receiver)     |
-|                        |  |                        |  |                        |
-| Play / Pause / Stop    |  | Title/Artist/Album     |  | Volume (0-100)         |
-| Next / Prev            |  | Elapsed / Duration     |  | Mute                   |
-| Power                  |  | Shuffle / Repeat       |  | Power                  |
-|                        |  | Power                  |  |                        |
-| Digital + analog       |  |                        |  | Digital + analog       |
-| audio out  --->        |  | (no audio routing)     |  | --->  audio in         |
-|                        |  |                        |  |                        |
-+------------+-----------+  +------------------------+  +------------+-----------+
-             |                                                       |
-             +--------------  routed by Crestron Home  --------------+
++----------------------------------------------------------------------------------------+
+|  Server_Lyrion_LMS_IP                                         (one per home)           |
+|                                                                                        |
+|   +--------------+                                                                     |
+|   | LmsCliClient |----+      +------------------+                                      |
+|   +--------------+    |      | PlayerRegistry   |                                      |
+|   +--------------+    +----->| (PlayerRecord    |                                      |
+|   | LmsJsonRpc   |    |      |  per bound MAC)  |                                      |
+|   +--------------+----+      +------------------+                                      |
+|                                        |  exposes                                      |
+|                         +--------------v-------------+                                 |
+|                         | ILyrionServerService (API) |                                 |
+|                         +----------------------------+                                 |
++----------------------------------------------------------------------------------------+
+                                             |
+                                             |  bind by MAC
+             +-------------------------------+-------------------------------+
+             |                               |                               |
++------------v-----------+      +------------v-----------+      +------------v-----------+
+| Source_Lyrion_Player   |      | Helper_Lyrion_Player   |      | Receiver_Lyrion_Player |
+| (RAD: Bluray Player)   |      | (RAD ext: Media Plyr)  |      | (RAD: AV Receiver)     |
+|                        |      |                        |      |                        |
+| Play / Pause / Stop    |      | Title/Artist/Album     |      | Volume (0-100)         |
+| Next / Prev            |      | Elapsed / Duration     |      | Mute                   |
+| Power                  |      | Shuffle / Repeat       |      | Power                  |
+|                        |      | Power                  |      |                        |
+| Digital + analog       |      |                        |      | Digital + analog       |
+| audio out  --->        |      | (no audio routing)     |      | --->  audio in         |
+|                        |      |                        |      |                        |
++------------+-----------+      +------------------------+      +------------+-----------+
+             |                                                               |
+             +------------------  routed by Crestron Home  ------------------+
 ```
 
 Inter-driver communication uses a process-wide service registry (`LyrionServerServiceRegistry`). The Lyrion Server registers an `ILyrionServerService` on startup; the Source, Helper, and Receiver drivers wait for it via `Subscribe(...)`. Commands flow from Source/Helper/Receiver to the Lyrion Server; events flow back the other way. **Only the Lyrion Server opens sockets to LMS.**
