@@ -42,7 +42,7 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 
 ```
 +--------------------------------------------------------------------------------+
-|  Server_Lyrion_LMS_IP                                         (one per home)  |
+|  Server_Lyrion_LMS_IP                                         (one per home)   |
 |                                                                                |
 |   +--------------+                                                             |
 |   | LmsCliClient |----+      +------------------+                              |
@@ -52,7 +52,7 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 |   +--------------+----+      +------------------+                              |
 |                                        |                                       |
 |                         +--------------v-------------+                         |
-|                         | ILyrionServerService (API)|                         |
+|                         | ILyrionServerService (API) |                         |
 |                         +----------------------------+                         |
 +--------------------------------------------------------------------------------+
                                          |
