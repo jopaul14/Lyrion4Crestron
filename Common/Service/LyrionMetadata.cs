@@ -7,7 +7,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
     /// Immutable snapshot of metadata for a single player. Instances are
-    /// produced by the Gateway driver and consumed read-only by Helper drivers.
+    /// produced by the Lyrion Server driver and consumed read-only by Helper drivers.
     /// </summary>
     public sealed class LyrionMetadata
     {
@@ -45,7 +45,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// <summary>
         /// True when this metadata was frozen at the moment the player became
         /// unavailable. Consumers should display frozen metadata unchanged.
-        /// After 30 seconds offline the gateway publishes an empty
+        /// After 30 seconds offline the Lyrion Server publishes an empty
         /// <see cref="LyrionMetadata"/> (with <see cref="IsFrozen"/> still
         /// true), at which point consumers should clear their UI.
         /// </summary>

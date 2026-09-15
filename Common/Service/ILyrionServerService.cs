@@ -4,17 +4,25 @@
 // ---------------------------------------------------------------------------
 
 using System;
-using System.Collections.Generic;
 
 namespace LyrionCommunity.Crestron.Lyrion.Service
 {
     /// <summary>
-    /// Cross-driver contract published by the Gateway driver (Driver 1) and
+    /// Cross-driver contract published by the Lyrion Server driver (Driver 1) and
     /// consumed by the Source (Driver 2), Helper (Driver 3), and Receiver
     /// (Driver 4) drivers. All state mutation goes through this interface;
     /// Drivers 2, 3, and 4 never open sockets to LMS.
     /// </summary>
     /// <remarks>
+    /// <para><b>Naming:</b> this interface was <c>ILyrionGatewayService</c>
+    /// through 1.0.9, and <see cref="LyrionServerServiceRegistry"/> was
+    /// <c>LyrionGatewayServiceRegistry</c>. They were renamed in 1.0.10 so the
+    /// code matches the driver's user-facing name ("Lyrion Server", the
+    /// <c>BaseModel</c> installers see in Crestron Home). Nothing about the
+    /// contract changed. The slightly awkward "ServerService" reads as "the
+    /// service published by the Lyrion Server driver" — the word <i>server</i>
+    /// on its own, elsewhere in this codebase, means LMS. See the class
+    /// remarks on <c>ServerDriver</c> for the full history.</para>
     /// <para><b>Threading contract:</b> Events are raised on the CLI receive
     /// thread. Handlers that perform long-running work will block subsequent
     /// event delivery. Consumers should return quickly from event handlers.</para>
@@ -22,7 +30,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// <list type="bullet">
     /// <item>Events MAY be raised on a background thread; consumers must not
     /// block.</item>
-    /// <item>Events are only published for MACs the gateway knows about. A
+    /// <item>Events are only published for MACs the Lyrion Server knows about. A
     /// consumer that subscribes before binding will simply not receive
     /// events until <see cref="BindPlayer"/> succeeds.</item>
     /// <item>The MAC string passed to each event is the lowercase
@@ -31,15 +39,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
     /// <para><b>Command semantics:</b></para>
     /// <list type="bullet">
     /// <item>Commands are best-effort and never throw on transport errors.</item>
-    /// <item>Commands are dropped silently if the gateway is not currently
+    /// <item>Commands are dropped silently if the Lyrion Server is not currently
     /// CONNECTED to LMS. The next state-change event will reflect reality.</item>
     /// <item>All command methods accept a <c>mac</c> parameter in any valid
-    /// format (colon- or dash-separated, any case). The gateway normalizes
+    /// format (colon- or dash-separated, any case). The Lyrion Server normalizes
     /// the MAC internally. Commands for unbound or malformed MACs are
     /// silently dropped.</item>
     /// </list>
     /// </remarks>
-    public interface ILyrionGatewayService
+    public interface ILyrionServerService
     {
         // ===== Service identity =====
 
@@ -68,7 +76,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         /// <summary>
         /// Removes a MAC from the bound set. Idempotent; calling with an
         /// already-unbound or malformed MAC is a no-op. After unbinding,
-        /// the gateway stops maintaining state for this MAC and no further
+        /// the Lyrion Server stops maintaining state for this MAC and no further
         /// events will be raised for it.
         /// </summary>
         void UnbindPlayer(string mac);
@@ -89,7 +97,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         // ===== Events (Driver 1 → Drivers 2/3) =====
 
         /// <summary>
-        /// Raised when the gateway's smoothed connectivity state to LMS
+        /// Raised when the Lyrion Server's smoothed connectivity state to LMS
         /// changes. <c>true</c> = CONNECTED, <c>false</c> = DISCONNECTED.
         /// Consumers can use this to show a server-offline indicator. Player-
         /// level availability events are raised separately.
@@ -113,12 +121,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         event Action<string, bool> MuteChanged;
 
         /// <summary>
-        /// Raised when the list of available presets for a player changes.
-        /// Presets are hardware preset buttons (e.g. radio station presets on
-        /// a Squeezebox Radio). The list may be empty if the player does not
-        /// support presets or if they have not been discovered yet.
+        /// Raised when the configured volume step for a player changes. The step
+        /// is published by the Receiver (from its <c>VolumeStep</c> user
+        /// attribute) so other consumers (e.g. the Helper's volume buttons) can
+        /// match it. Range 1–50; default 2 when no Receiver has published one.
         /// </summary>
-        event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
+        event Action<string, int> VolumeStepChanged;
 
         // ===== Commands from Driver 2 (Source) and Driver 3 (Helper) =====
 
@@ -141,15 +149,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         void PowerToggle(string mac);
 
         /// <summary>
-        /// Activates a hardware preset button on the player.
+        /// Sends an installer-configured LMS CLI command fragment to a player,
+        /// prefixed with its MAC. This is how the Helper's configurable presets
+        /// start a playlist, favourite, or anything else the CLI can express —
+        /// e.g. <c>favorites playlist play item_id:2</c>.
         /// </summary>
         /// <param name="mac">Player MAC address (any valid format).</param>
-        /// <param name="presetId">
-        /// Opaque preset identifier matching <see cref="LyrionPreset.Id"/>.
-        /// Typically a 1-based numeric string (e.g. "1", "2"). Silently
-        /// dropped if <c>null</c> or empty.
+        /// <param name="command">
+        /// CLI fragment WITHOUT the leading MAC and WITHOUT a trailing newline.
+        /// Control characters are stripped before sending (the CLI is
+        /// newline-delimited, so an embedded newline would otherwise let one
+        /// configured value issue a second command). Dropped if it is empty
+        /// once sanitized, if the MAC is not bound, or if the server is not
+        /// connected.
         /// </param>
-        void ActivatePreset(string mac, string presetId);
+        void SendPlayerCommand(string mac, string command);
 
         // ===== Commands from Driver 4 (Receiver) =====
 
@@ -169,5 +183,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Service
         void VolumeDown(string mac, int step);
 
         void SetMute(string mac, bool muted);
+
+        /// <summary>
+        /// Publishes the configured volume step (1–50) for a player so it is
+        /// shared across consumers. Called by the Receiver from its
+        /// <c>VolumeStep</c> user attribute; the Helper consumes it via
+        /// <see cref="VolumeStepChanged"/> / <see cref="LyrionPlayerSnapshot.VolumeStep"/>
+        /// so its Volume Up/Down buttons move by the same amount. Change-gated
+        /// in the registry; the value is clamped to 1–50.
+        /// </summary>
+        void SetVolumeStep(string mac, int step);
     }
 }

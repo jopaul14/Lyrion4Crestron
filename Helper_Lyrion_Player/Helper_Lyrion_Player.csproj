@@ -4,7 +4,7 @@
   Per-room rich UI extension device (RAD AExtensionDevice, DeviceType
   "Media Player", IsExtensionDevice=true). Hosts the Crestron Home
   now-playing UI for one Lyrion player: metadata, transport, shuffle,
-  repeat, power. Bound by MAC address; consumes the gateway service.
+  repeat, power. Bound by MAC address; consumes the Lyrion Server service.
   Never connects to LMS.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
@@ -96,9 +96,18 @@
   <!--
     UiDefinition.xml is copied to IncludeInPkg/UiDefinitions/ in the output
     directory so ManifestUtil bundles it into the .pkg package.
+
+    Translations/en-US.json is deliberately empty: the UI uses literal labels,
+    no ^keys. It exists because AExtensionDevice looks for the package's
+    translations folder on every load and UI request, and logs two errlog
+    Errors each time it is missing (through 1.0.17). ManifestUtil lowercases
+    both folder names in the .pkg.
   -->
   <ItemGroup>
     <Content Include="IncludeInPkg\UiDefinitions\UiDefinition.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="IncludeInPkg\Translations\en-US.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -9,9 +9,9 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
+namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
 {
     /// <summary>Connection state reported by <see cref="LmsCliClient"/>.</summary>
     public enum LmsConnectionState
@@ -42,6 +42,58 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         // CLAUDE.md mandates this exact sequence; values are in seconds.
         private static readonly int[] BackoffSecondsSchedule = new[] { 2, 5, 10, 30, 60 };
 
+        /// <summary>
+        /// How long a connected socket must live before it counts as a real
+        /// session — the threshold that resets the backoff schedule, re-arms
+        /// the one-line connect announcement, and re-arms the auth-failure
+        /// notice. A server that accepts the socket and closes it within this
+        /// window (rejected credentials, an IP block) is treated as a failed
+        /// attempt, so the schedule keeps escalating instead of restarting at
+        /// 2 s on every accept. Ten seconds is well past any login/listen
+        /// preamble and well short of anything a homeowner would notice.
+        /// </summary>
+        private static readonly TimeSpan EstablishedSession = TimeSpan.FromSeconds(10);
+
+        // ----- Recovery from a dead or wedged connection (#46) -----
+        //
+        // On the 1.0.17 bench pass a 3½-minute network outage left the Lyrion
+        // Server with no connection to LMS for over an hour: the processor
+        // could ping LMS, LMS held no socket from it, and LMS had announced
+        // every player's return, yet nothing reconnected until the Server was
+        // removed and re-added. The loop body is guarded throughout, so the
+        // likely cause was an await that never completed — and every await on
+        // this path ran with no bound: the connect, the read, and the worker
+        // task itself. Which one wedged is not known, so all three are bounded
+        // here rather than betting on one.
+
+        /// <summary>
+        /// Bound on one connect attempt. <c>TcpClient.ConnectAsync</c> has no
+        /// timeout of its own and completes only when the OS and the runtime
+        /// deliver a result. A timed-out attempt is an ordinary failed attempt:
+        /// same backoff, same one-line announcement rule.
+        /// </summary>
+        private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// Liveness. With <c>listen 1</c>, LMS speaks only when something
+        /// happens, so a quiet house and a dead socket look the same to a
+        /// blocked read, and the only other detector is TCP keepalive — whose
+        /// 30 s tuning goes through a Windows-style IOControl that may not take
+        /// effect on the processor's runtime, leaving the ~2 h default. After
+        /// this long with no bytes at all, send <c>version ?</c>; if another
+        /// full interval passes with still nothing, the connection is declared
+        /// dead and the ordinary reconnect path takes over.
+        /// </summary>
+        private static readonly TimeSpan IdleProbeInterval = TimeSpan.FromSeconds(30);
+
+        /// <summary>Pause before a worker that ended unexpectedly is restarted.</summary>
+        private static readonly TimeSpan WorkerRestartDelay = TimeSpan.FromSeconds(5);
+
+        // Set when a "login failed" line has been surfaced for the current
+        // outage; cleared when a session is established. Touched only on the
+        // worker task (EmitLine runs inside ReceiveLoopAsync).
+        private bool _authFailureAnnounced;
+
         private readonly string _host;
         private readonly int _port;
         private readonly string _username;
@@ -52,7 +104,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
         // Serializes Start/Stop transitions so the _cts and _workerTask
         // fields cannot be reassigned concurrently. Today only RebuildTransport
-        // calls Start, and it holds GatewayDriver._gate — but relying on that
+        // calls Start, and it holds ServerDriver._gate — but relying on that
         // invariant from outside is a foot-gun, so we guard locally too.
         private readonly object _startLock = new object();
 
@@ -130,8 +182,48 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
                 var cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
                 _cts = cts;
-                _workerTask = Task.Run(() => RunAsync(cts.Token));
+                _workerTask = Task.Run(() => SuperviseAsync(cts.Token));
                 return Task.CompletedTask;
+            }
+        }
+
+        /// <summary>
+        /// Keeps <see cref="RunAsync"/> running until a deliberate stop (#46).
+        /// RunAsync only returns on cancellation, but nothing observed its task:
+        /// had it ever ended some other way, the driver would never have tried
+        /// to reconnect and nothing would have said so. Announced once per
+        /// client, then silent, so a fault that repeats cannot flood the log.
+        /// </summary>
+        private async Task SuperviseAsync(CancellationToken ct)
+        {
+            var announced = false;
+            while (!ct.IsCancellationRequested)
+            {
+                string why;
+                try
+                {
+                    await RunAsync(ct).ConfigureAwait(false);
+                    why = "it returned";
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    why = ex.GetType().Name + ": " + ex.Message;
+                }
+
+                if (ct.IsCancellationRequested) break;
+
+                if (!announced)
+                {
+                    announced = true;
+                    _log("Lyrion Server ERROR: LMS connection worker stopped unexpectedly (" + why + "); restarting");
+                }
+
+                try { await Task.Delay(WorkerRestartDelay, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
             }
         }
 
@@ -231,8 +323,34 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
         {
             var attempt = 0;
 
+            // Announce the first connect attempt of a cycle, then stay silent
+            // while the backoff retries; a successful connection re-arms the
+            // announcement so a later drop is announced once more. Without this
+            // a server that is down overnight writes a line every backoff tick
+            // (60s at the top of the schedule) for as long as it stays down —
+            // exactly the retry-attempt logging the CLAUDE.md logging invariant
+            // rules out. Nothing is lost: ServerConnectivityFsm still logs each
+            // committed CONNECTED/DISCONNECTED transition once.
+            //
+            // This cannot be driven off `attempt`. That counter is reset to 0 on
+            // a successful connect and then incremented *before* the retry
+            // delay, so the first attempt following a dropped connection is
+            // attempt 1, not 0 — gating on `attempt == 0` would silence the one
+            // line worth keeping.
+            var announceNextAttempt = true;
+
             while (!ct.IsCancellationRequested)
             {
+                var announceThisAttempt = announceNextAttempt;
+                announceNextAttempt = false;
+
+                // Whether this iteration got as far as a connected socket, and
+                // when. Losing a live connection is a real error, so it is
+                // logged even mid-cycle when retries are otherwise silent —
+                // but only once the session has lasted EstablishedSession.
+                var wasConnected = false;
+                var connectedAtUtc = DateTime.MinValue;
+
                 SetState(LmsConnectionState.Connecting);
 
                 TcpClient tcp = null;
@@ -240,8 +358,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
                 try
                 {
-                    _log("LmsCliClient: connecting to " + _host + ":" + _port
-                        + (attempt > 0 ? " (attempt " + (attempt + 1) + ")" : string.Empty));
+                    if (announceThisAttempt)
+                    {
+                        _log("LmsCliClient: connecting to " + _host + ":" + _port);
+                    }
 
                     tcp = new TcpClient { NoDelay = true };
                     EnableKeepAliveFlag(tcp);
@@ -252,7 +372,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                     _stream = stream;
 
                     SetState(LmsConnectionState.Connected);
-                    attempt = 0;
+                    wasConnected = true;
+                    connectedAtUtc = DateTime.UtcNow;
+                    // NOT `attempt = 0` / `announceNextAttempt = true` here.
+                    // A TCP accept proves nothing: a server that takes the
+                    // socket and then closes it (rejected credentials, an IP
+                    // block) would reset the backoff to its first step and
+                    // re-arm the announcement on every cycle — a reconnect
+                    // every 2 s forever with a log line each time, which is
+                    // exactly the retry storm the 2/5/10/30/60 schedule and
+                    // the logging invariant exist to prevent. Both are
+                    // re-armed below, and only for a session that actually
+                    // lived (see EstablishedSession).
 
                     if (!string.IsNullOrEmpty(_username))
                     {
@@ -270,7 +401,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 }
                 catch (Exception ex)
                 {
-                    _log("LmsCliClient: connect/receive error: " + ex.Message);
+                    // Same rule as the connect announcement: the first failure
+                    // of a cycle is worth a line, the identical failure on every
+                    // subsequent backoff tick is not. A drop of an ESTABLISHED
+                    // connection always logs — established meaning it lived
+                    // long enough to have been a real session, not a socket
+                    // the server accepted and immediately closed.
+                    var established = wasConnected && DateTime.UtcNow - connectedAtUtc >= EstablishedSession;
+                    if (announceThisAttempt || established)
+                    {
+                        _log("LmsCliClient: connect/receive error: " + ex.Message);
+                    }
                 }
                 finally
                 {
@@ -278,6 +419,18 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 }
 
                 if (ct.IsCancellationRequested) break;
+
+                // A session that lived is what resets the schedule and
+                // re-arms the one-line announcement for the NEXT drop. A
+                // short-lived accept-then-close keeps escalating and stays
+                // silent, so a wrong password costs one line per backoff
+                // step and then one per minute, not one every two seconds.
+                if (wasConnected && DateTime.UtcNow - connectedAtUtc >= EstablishedSession)
+                {
+                    attempt = 0;
+                    announceNextAttempt = true;
+                    _authFailureAnnounced = false;
+                }
 
                 SetState(LmsConnectionState.Faulted);
 
@@ -337,11 +490,83 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                 try { client.Close(); }
                 catch { }
             }))
+            using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
+                var winner = await Task.WhenAny(connectTask, Task.Delay(ConnectTimeout, timer.Token)).ConfigureAwait(false);
+                timer.Cancel();
+                if (winner != connectTask)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // Timed out (#46). Closing the client abandons the attempt;
+                    // observe its eventual fault so it cannot surface later as
+                    // an unobserved task exception.
+                    try { client.Close(); }
+                    catch { }
+                    ObserveFault(connectTask);
+                    throw new TimeoutException("connect to " + host + ":" + port + " timed out after "
+                        + (int)ConnectTimeout.TotalSeconds + " s");
+                }
+
                 await connectTask.ConfigureAwait(false);
             }
 
             ct.ThrowIfCancellationRequested();
+        }
+
+        /// <summary>
+        /// One read, bounded by the liveness rule (#46): after
+        /// <see cref="IdleProbeInterval"/> of silence, send <c>version ?</c>;
+        /// if a second interval passes with still nothing, throw. RunAsync
+        /// then logs the drop (once, as for any established session) and the
+        /// ordinary reconnect path runs. Any byte at all, a reply or a push,
+        /// counts as proof of life.
+        /// </summary>
+        private async Task<int> ReadWithLivenessAsync(NetworkStream stream, byte[] buffer, CancellationToken ct)
+        {
+            var read = stream.ReadAsync(buffer, 0, buffer.Length, ct);
+            var probed = false;
+            while (true)
+            {
+                using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    var winner = await Task.WhenAny(read, Task.Delay(IdleProbeInterval, timer.Token)).ConfigureAwait(false);
+                    timer.Cancel();
+                    if (winner == read) return await read.ConfigureAwait(false);
+                }
+
+                if (ct.IsCancellationRequested)
+                {
+                    // Stopping: StopAsync disposes the stream, which ends the
+                    // abandoned read.
+                    ObserveFault(read);
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (!probed)
+                {
+                    probed = true;
+                    // Not awaited: on a dead socket the write can block, and
+                    // this loop is what has to notice. Its result is
+                    // irrelevant; only a reply proves anything.
+                    _ = SendLineAsync(LmsCliCommands.QueryServerVersion(), ct);
+                    continue;
+                }
+
+                // The teardown that follows disposes the stream, which ends
+                // the abandoned read; observe its fault.
+                ObserveFault(read);
+                throw new TimeoutException("no data from LMS for "
+                    + (int)(2 * IdleProbeInterval.TotalSeconds) + " s, including no reply to a probe");
+            }
+        }
+
+        private static void ObserveFault(Task task)
+        {
+            task.ContinueWith(t => { var ignored = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
@@ -354,7 +579,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
                     int bytesRead;
                     try
                     {
-                        bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length, ct).ConfigureAwait(false);
+                        bytesRead = await ReadWithLivenessAsync(stream, readBuffer, ct).ConfigureAwait(false);
                     }
                     catch (IOException)
                     {
@@ -421,16 +646,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Transport
 
             // LMS returns a single "login" line on auth failure too — but the
             // canonical signal is the connection drop that follows. We surface
-            // any explicit error line through AuthenticationFailed so the FSM
-            // can log it once and avoid retry-loop chatter.
-            if (message.Kind == LmsMessageKind.GlobalRaw
+            // the explicit error line through AuthenticationFailed so the
+            // driver can log it, once per outage: the flag is cleared only
+            // when a session is established, so the backoff retries that
+            // follow a rejection do not repeat the line.
+            //
+            // The parser classifies EVERY line whose first token is "login" as
+            // LoginAck (the success echo and the failure share it), so the
+            // check must accept that kind. Before 1.0.12 it required GlobalRaw,
+            // which the parser never produces for this line, and the event
+            // could not fire: a wrong password was an endless reconnect loop
+            // with no explanation.
+            if ((message.Kind == LmsMessageKind.LoginAck || message.Kind == LmsMessageKind.GlobalRaw)
                 && message.Tokens != null
                 && message.Tokens.Length >= 2
                 && string.Equals(message.Tokens[0], "login", StringComparison.OrdinalIgnoreCase)
                 && string.Equals(message.Tokens[1], "failed", StringComparison.OrdinalIgnoreCase))
             {
-                try { AuthenticationFailed?.Invoke("LMS rejected credentials."); }
-                catch { }
+                if (!_authFailureAnnounced)
+                {
+                    _authFailureAnnounced = true;
+                    try { AuthenticationFailed?.Invoke("LMS rejected credentials."); }
+                    catch { }
+                }
                 return;
             }
 

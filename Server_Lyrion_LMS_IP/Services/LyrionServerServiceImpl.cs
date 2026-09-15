@@ -1,31 +1,31 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
 using System;
 using System.Collections.Generic;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Protocol;
-using LyrionCommunity.Crestron.Lyrion.Gateway.Registry;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
+using LyrionCommunity.Crestron.Lyrion.Server.Registry;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
+namespace LyrionCommunity.Crestron.Lyrion.Server.Services
 {
     /// <summary>
-    /// Implementation of the cross-driver gateway service. Commands are
+    /// Implementation of the cross-driver Lyrion Server service. Commands are
     /// translated into LMS CLI lines and dispatched via the supplied sender;
     /// events are forwarded from the registry. Commands issued while the
-    /// gateway is not CONNECTED are dropped (per CLAUDE.md "Commands dropped
+    /// Lyrion Server is not CONNECTED are dropped (per CLAUDE.md "Commands dropped
     /// when server is not connected").
     /// </summary>
-    internal sealed class LyrionGatewayServiceImpl : ILyrionGatewayService
+    internal sealed class LyrionServerServiceImpl : ILyrionServerService
     {
         private readonly PlayerRegistry _registry;
         private readonly Func<string, bool> _sendCliLine;
         private readonly Func<bool> _isServerConnected;
         private readonly Action<string> _onPlayerBound;
 
-        public LyrionGatewayServiceImpl(
+        public LyrionServerServiceImpl(
             PlayerRegistry registry,
             Func<string, bool> sendCliLine,
             Func<bool> isServerConnected,
@@ -48,8 +48,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             registry.ShuffleChanged += (mac, b) => Fan2(ShuffleChanged, mac, b);
             registry.RepeatChanged += (mac, b) => Fan2(RepeatChanged, mac, b);
             registry.VolumeChanged += (mac, v) => Fan2(VolumeChanged, mac, v);
+            registry.VolumeStepChanged += (mac, v) => Fan2(VolumeStepChanged, mac, v);
             registry.MuteChanged += (mac, b) => Fan2(MuteChanged, mac, b);
-            registry.PresetsUpdated += (mac, p) => Fan2(PresetsUpdated, mac, p);
         }
 
         private static void Fan2<T1, T2>(Action<T1, T2> handler, T1 a, T2 b)
@@ -63,6 +63,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             }
         }
 
+        /// <summary>
+        /// The single gate every player command passes: bound, server
+        /// connected, AND the player itself available. Commands are dropped
+        /// silently otherwise — the PRD's rule for a disconnected server,
+        /// extended to an unreachable player. Without the last test,
+        /// PowerToggle read an offline player's EFFECTIVE power (always false)
+        /// and sent `power 1` to a player LMS reported disconnected; LMS
+        /// stored it as a preference and switched the player (and its room)
+        /// on when it next reconnected. Configuration publishes
+        /// (SetVolumeStep) are not commands and are not gated.
+        /// </summary>
+        private bool CanCommand(string canon)
+        {
+            return canon != null && _isServerConnected() && _registry.IsAvailable(canon);
+        }
+
         // ===== Service identity =====
 
         public string ServiceVersion => "1.0";
@@ -71,9 +87,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
 
         public bool BindPlayer(string mac)
         {
-            if (!_registry.Bind(mac)) return false;
-            try { _onPlayerBound(MacAddress.Normalize(mac)); }
-            catch { }
+            if (!_registry.Bind(mac, out var created)) return false;
+
+            // First-bind work (the initial status subscribe) runs once per
+            // player, not once per consumer: the contract says repeat binds
+            // are no-ops, and three consumers binding the same MAC at boot
+            // used to open three subscriptions for one player.
+            if (created)
+            {
+                try { _onPlayerBound(MacAddress.Normalize(mac)); }
+                catch { }
+            }
             return true;
         }
 
@@ -93,8 +117,8 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public event Action<string, bool> ShuffleChanged;
         public event Action<string, bool> RepeatChanged;
         public event Action<string, int> VolumeChanged;
+        public event Action<string, int> VolumeStepChanged;
         public event Action<string, bool> MuteChanged;
-        public event Action<string, IReadOnlyList<LyrionPreset>> PresetsUpdated;
 
         internal void RaiseServerConnectivityChanged(bool connected)
         {
@@ -119,28 +143,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public void Seek(string mac, int positionSeconds)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SeekTo(canon, positionSeconds));
         }
 
         public void SetShuffle(string mac, bool enabled)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetShuffle(canon, enabled));
         }
 
         public void SetRepeat(string mac, bool enabled)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetRepeat(canon, enabled));
         }
 
         public void PowerOn(string mac)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
 
             _registry.TryGetCapabilities(canon, out var canPowerOff, out _);
             if (canPowerOff)
@@ -156,7 +180,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public void PowerOff(string mac)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
 
             _registry.TryGetCapabilities(canon, out var canPowerOff, out _);
             if (canPowerOff)
@@ -176,12 +200,40 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
             else PowerOn(mac);
         }
 
-        public void ActivatePreset(string mac, string presetId)
+        public void SendPlayerCommand(string mac, string command)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || string.IsNullOrEmpty(presetId)) return;
-            if (!_registry.IsBound(canon) || !_isServerConnected()) return;
-            _sendCliLine(LmsCliCommands.ActivatePreset(canon, presetId));
+            if (canon == null) return;
+
+            var safe = SanitizeCommand(command);
+            if (safe.Length == 0) return;
+            if (!CanCommand(canon)) return;
+
+            _sendCliLine(LmsCliCommands.PlayerCommand(canon, safe));
+        }
+
+        /// <summary>
+        /// Strips control characters from an installer-configured command
+        /// fragment and collapses the surrounding whitespace.
+        /// </summary>
+        /// <remarks>
+        /// The LMS CLI is newline-delimited, so a fragment containing CR or LF
+        /// would be read by the server as two commands — one configured preset
+        /// could then issue an arbitrary second command. Dropping every control
+        /// character (rather than splitting on the newline and keeping the
+        /// first half) means a malformed value fails visibly as one odd command
+        /// instead of silently executing something the installer didn't intend.
+        /// </remarks>
+        private static string SanitizeCommand(string command)
+        {
+            if (string.IsNullOrEmpty(command)) return string.Empty;
+
+            var sb = new System.Text.StringBuilder(command.Length);
+            foreach (var c in command)
+            {
+                if (!char.IsControl(c)) sb.Append(c);
+            }
+            return sb.ToString().Trim();
         }
 
         // ===== Commands: Receiver (Driver 4) =====
@@ -189,37 +241,43 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Services
         public void SetVolume(string mac, int level)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetVolume(canon, level));
         }
 
         public void VolumeUp(string mac, int step)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.VolumeUp(canon, step));
         }
 
         public void VolumeDown(string mac, int step)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.VolumeDown(canon, step));
         }
 
         public void SetMute(string mac, bool muted)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(LmsCliCommands.SetMute(canon, muted));
         }
+
+        // A configuration publish (not an LMS command): stores the Receiver's
+        // configured step in the registry so other consumers can match it. No
+        // connectivity gate — it updates local state only. NoteVolumeStep is a
+        // no-op for an unbound MAC.
+        public void SetVolumeStep(string mac, int step) => _registry.NoteVolumeStep(mac, step);
 
         // ===== Internals =====
 
         private void SendForPlayer(string mac, Func<string, string> commandBuilder)
         {
             var canon = MacAddress.Normalize(mac);
-            if (canon == null || !_registry.IsBound(canon) || !_isServerConnected()) return;
+            if (canon == null || !CanCommand(canon)) return;
             _sendCliLine(commandBuilder(canon));
         }
     }
