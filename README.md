@@ -42,18 +42,18 @@ Prefer to build from source instead? See [BUILD.md](BUILD.md).
 
 ```
 +----------------------------------------------------------------------------------------+
-|  Server_Lyrion_LMS_IP                                         (one per home)           |
+|  Server_Lyrion_LMS_IP                                                  (one per home)  |
 |                                                                                        |
 |   +--------------+                                                                     |
-|   | LmsCliClient |----+      +------------------+                                      |
-|   +--------------+    |      | PlayerRegistry   |                                      |
-|   +--------------+    +----->| (PlayerRecord    |                                      |
-|   | LmsJsonRpc   |    |      |  per bound MAC)  |                                      |
-|   +--------------+----+      +------------------+                                      |
-|                                        |  exposes                                      |
-|                         +--------------v-------------+                                 |
-|                         | ILyrionServerService (API) |                                 |
-|                         +----------------------------+                                 |
+|   | LmsCliClient |----+          +------------------+                                  |
+|   +--------------+    |          | PlayerRegistry   |                                  |
+|                       +--------->| (PlayerRecord    |                                  |
+|   | LmsJsonRpc   |    |          |  per bound MAC)  |                                  |
+|   +--------------+----+          +------------------+                                  |
+|                                            |  exposes                                  |
+|                             +--------------v-------------+                             |
+|                             | ILyrionServerService (API) |                             |
+|                             +----------------------------+                             |
 +----------------------------------------------------------------------------------------+
                                              |
                                              |  bind by MAC
