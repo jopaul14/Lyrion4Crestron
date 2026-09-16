@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.18).
+four-driver refactor is **complete** (all drivers ship together at 1.0.19).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -129,8 +129,13 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   previous value. A held volume button ramps (one step on press, one per
   300 ms until release) with a Receiver-owned timer — the RAD base ramp is
   bypassed because it fabricates volume feedback. Shuffle/repeat are booleans
-  exposed only by the Helper. Seek is contract-only (Crestron Home has no
-  draggable seek bar).
+  exposed only by the Helper. Seek has no user gesture (Crestron Home has no
+  draggable seek bar) but is not dead: `Previous` calls it to restart the
+  current track when playback is past `PreviousRestartThresholdSeconds`, and
+  steps back a track only near the start — what the Player and Material Skin
+  do. LMS has no "smart previous" (`playlist jump -1` is an unconditional
+  index decrement), so that check is client-side here, and the threshold is a
+  Squeezebox convention the server never reports.
 - **Presets are installer-declared, never discovered.** Four `Name|Icon|Command`
   user attributes on the Helper; the command is the LMS CLI text that follows the
   MAC. The driver never scans the server for playlists — browsing the library is

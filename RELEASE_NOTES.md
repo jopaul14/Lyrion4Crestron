@@ -1,5 +1,43 @@
 # Release Notes
 
+## 1.0.19 — Unreleased (bench build)
+
+Opened for the fixes coming out of the 1.0.18 bench pass (2026-09-15). All four
+drivers are at 1.0.19 so the processor will reload them — Crestron Home reloads
+a driver only when its `DriverVersion` changes, so the bump is what makes this
+build testable at all, and **B2 is the check that proves it took**. **All four
+packages must be updated together.** Before building, delete the output folders
+(BUILD.md §2.0). Anything the pass finds is fixed in this section until release.
+
+### Changed — Lyrion Server
+
+- **Previous now restarts the current track when you are past the first few
+  seconds, and steps back a track only near the start (#50).** The Player's own
+  control and Material Skin both behave this way; the Helper and the Source
+  always jumped back a track, whatever the elapsed position. LMS has no "smart
+  previous" to ask for — `playlist jump -1` is an unconditional playlist-index
+  decrement, and the restart-versus-step-back decision is made client-side by
+  every other LMS client. `LyrionServerServiceImpl.Previous` now reads the
+  player's elapsed position from the registry snapshot and sends `time 0`
+  instead of `playlist jump -1` once it is past the threshold. Both the
+  Source's `ReverseSkip()` and the Helper's Previous button route through that
+  one method, so they cannot diverge, and the existing `CanCommand` gate still
+  sits ahead of the branch — a command for an unreachable player is dropped as
+  before, on either path.
+
+  The threshold is five seconds, held as
+  `LyrionServerServiceImpl.PreviousRestartThresholdSeconds`. **It is an
+  observation, not a documented value** — LMS neither specifies nor reports
+  it — so it is a named constant with a comment saying so, and check C2 on the
+  next bench pass is what confirms or corrects it. One case to watch there:
+  on a radio stream the elapsed position still advances, so a Previous press
+  well into a stream now sends `time 0`; what LMS does with a seek on a live
+  stream has not been observed, and nothing here guesses at it.
+
+  Side effect worth noting: `Seek` is no longer dead code. It has never had a
+  user gesture (Crestron Home has no draggable seek bar) and still does not,
+  but it is now driven internally. The PRD and CLAUDE.md both say so.
+
 ## 1.0.18 — Unreleased (bench build)
 
 All four drivers are at 1.0.18 for the bench pass. **All four packages must be

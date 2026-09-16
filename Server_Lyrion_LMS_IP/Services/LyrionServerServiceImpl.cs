@@ -79,6 +79,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
             return canon != null && _isServerConnected() && _registry.IsAvailable(canon);
         }
 
+        // Elapsed seconds past which Previous restarts the current track
+        // instead of stepping back one. This is the Squeezebox/Material Skin
+        // convention, which LMS neither documents nor reports — it is not a
+        // value we can read from the server. Confirm it against the real
+        // Player on the bench before treating it as settled.
+        private const int PreviousRestartThresholdSeconds = 5;
+
         // ===== Service identity =====
 
         public string ServiceVersion => "1.0";
@@ -138,7 +145,31 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Services
         public void Pause(string mac) => SendForPlayer(mac, LmsCliCommands.Pause);
         public void Stop(string mac) => SendForPlayer(mac, LmsCliCommands.Stop);
         public void Next(string mac) => SendForPlayer(mac, LmsCliCommands.NextTrack);
-        public void Previous(string mac) => SendForPlayer(mac, LmsCliCommands.PreviousTrack);
+
+        /// <summary>
+        /// Restarts the current track once playback is past
+        /// <see cref="PreviousRestartThresholdSeconds"/>, and steps back a
+        /// track only near the start — what the Player's own control and
+        /// Material Skin both do. LMS has no "smart previous":
+        /// <c>playlist jump -1</c> is an unconditional playlist-index
+        /// decrement, so the elapsed check belongs on the client side, which
+        /// is where every other LMS client puts it.
+        /// </summary>
+        public void Previous(string mac)
+        {
+            var canon = MacAddress.Normalize(mac);
+            if (canon == null || !CanCommand(canon)) return;
+
+            var position = 0;
+            if (_registry.TryGetSnapshot(canon, out var snap) && snap != null && snap.Metadata != null)
+            {
+                position = snap.Metadata.PositionSeconds;
+            }
+
+            _sendCliLine(position > PreviousRestartThresholdSeconds
+                ? LmsCliCommands.SeekTo(canon, 0)
+                : LmsCliCommands.PreviousTrack(canon));
+        }
 
         public void Seek(string mac, int positionSeconds)
         {
