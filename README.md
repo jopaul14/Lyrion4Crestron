@@ -17,6 +17,23 @@ Four-driver suite (Crestron Drivers SDK V2 / Entity Model + RAD, .NET Framework 
 
 All drivers require Crestron driver runtime **25.0000.0033** or later.
 
+## What it looks like
+
+<table>
+  <tr>
+    <td width="25%" valign="top"><img src="docs/images/room.jpg" alt="Crestron Home room page showing the Music tile and the Lyrion Helper tile with the current track"></td>
+    <td width="25%" valign="top"><img src="docs/images/now-playing.jpg" alt="Lyrion Helper now-playing screen with track details, transport, volume and presets"></td>
+    <td width="25%" valign="top"><img src="docs/images/source-device.jpg" alt="Lyrion Source device page with play, pause, stop, next and previous"></td>
+    <td width="25%" valign="top"><img src="docs/images/where-to-play.jpg" alt="Crestron Home Select Where to Play screen with the Lyrion Source playing in the Guest Room"></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Room page.</b> The <b>Music</b> tile is the Lyrion Source, which drives the room's on/off state. The Helper tile shows the current track.</td>
+    <td valign="top"><b>Now playing (Helper).</b> Track details, transport, repeat and shuffle, power, volume and presets.</td>
+    <td valign="top"><b>Source device page.</b> The Lyrion Source's standard Crestron Home transport controls.</td>
+    <td valign="top"><b>Where to play.</b> The Lyrion Source routes like any other Crestron Home source.</td>
+  </tr>
+</table>
+
 ## Download and install
 
 Pre-built driver packages are attached to each [GitHub Release](https://github.com/jopaul14/Lyrion4Crestron/releases/latest). Download the `.pkg` files from the latest release:
