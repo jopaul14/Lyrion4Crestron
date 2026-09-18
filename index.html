@@ -64,6 +64,12 @@ pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-
 pre code { padding: 0; background: none; }
 dt { font-weight: 600; margin-top: 16px; }
 dd { margin: 4px 0 0; color: var(--muted); }
+.shots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 0; }
+@media (max-width: 700px) { .shots { grid-template-columns: repeat(2, 1fr); } }
+.shots figure { margin: 0; }
+.shots img { width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid var(--line); }
+.shots figcaption { margin-top: 8px; font-size: 0.85rem; color: var(--muted); line-height: 1.45; }
+.shots figcaption b { color: var(--text); }
 footer { padding-top: 48px; padding-bottom: 48px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line); margin-top: 56px; }
 </style>
 </head>
@@ -81,6 +87,18 @@ footer { padding-top: 48px; padding-bottom: 48px; color: var(--muted); font-size
 </header>
 
 <main>
+  <h2>What it looks like</h2>
+  <div class="shots">
+    <figure><img src="images/room.jpg" width="600" height="1223" loading="lazy" alt="Crestron Home room page showing the Music tile and the Lyrion Helper tile with the current track">
+      <figcaption><b>Room page.</b> The Music tile is the Lyrion Source, which drives the room's on/off state. The Helper tile shows the current track.</figcaption></figure>
+    <figure><img src="images/now-playing.jpg" width="600" height="1223" loading="lazy" alt="Lyrion Helper now-playing screen with track details, transport, volume and presets">
+      <figcaption><b>Now playing.</b> Track details, transport, repeat and shuffle, power, volume and presets.</figcaption></figure>
+    <figure><img src="images/source-device.jpg" width="600" height="1223" loading="lazy" alt="Lyrion Source device page with play, pause, stop, next and previous">
+      <figcaption><b>Source device page.</b> Standard Crestron Home transport controls.</figcaption></figure>
+    <figure><img src="images/where-to-play.jpg" width="600" height="1223" loading="lazy" alt="Crestron Home Select Where to Play screen with the Lyrion Source playing in the Guest Room">
+      <figcaption><b>Where to play.</b> The Lyrion Source routes like any other Crestron Home source.</figcaption></figure>
+  </div>
+
   <h2>What you get</h2>
   <p>The suite has four drivers. One connects to your Lyrion server, and the other three
     give each room its controls. Only the server driver talks to LMS. The room drivers
