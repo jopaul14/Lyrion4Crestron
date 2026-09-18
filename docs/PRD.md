@@ -8,7 +8,7 @@
 
 ## Problem Statement
 
-Lyrion Media Server (LMS, formerly Logitech Media Server / Squeezebox Server) owners who also run Crestron Home have no supported way to use their Squeezebox players as first-class audio sources in their home. Crestron Home does not allow third-party "Media Player" devices to act as routable sources, so a naive single-driver integration can offer controls but can never appear in the Source Routes graph, never be selected as a room's audio source, and never participate in whole-home audio routing.
+Lyrion Music Server (LMS, formerly Logitech Media Server / Squeezebox Server) owners who also run Crestron Home have no supported way to use their Squeezebox players as first-class audio sources in their home. Crestron Home does not allow third-party "Media Player" devices to act as routable sources, so a naive single-driver integration can offer controls but can never appear in the Source Routes graph, never be selected as a room's audio source, and never participate in whole-home audio routing.
 
 Users want to walk up to a Crestron touchpanel or open the Crestron Home app, pick their Squeezebox player as the room's source, see what is playing, and control playback and volume — with the same reliability they expect from natively supported sources, and without the integration degrading the processor (log spam, flash wear) or misbehaving when the LMS server or a player goes offline.
 

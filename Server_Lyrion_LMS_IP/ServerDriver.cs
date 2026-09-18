@@ -49,7 +49,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
     /// <para><b>Two meanings of "Server".</b> That rename introduced an
     /// ambiguity the old name avoided. In this codebase <i>the Lyrion
     /// Server</i> means this driver; <i>LMS</i> or <i>the server</i> means the
-    /// Lyrion Media Server it connects to. So <see cref="ServerConnectivityFsm"/>,
+    /// Lyrion Music Server it connects to. So <see cref="ServerConnectivityFsm"/>,
     /// <c>_serverConnected</c>, <c>ServerConnectivityChanged</c>, and the
     /// CONNECTED / DISCONNECTED log lines are all about <b>LMS</b>, not about
     /// this driver. Log prefixes were changed to "Lyrion Server:" and the

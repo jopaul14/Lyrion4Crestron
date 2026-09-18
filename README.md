@@ -1,12 +1,12 @@
-# Lyrion Media Server - Crestron Home Drivers
+# Lyrion Music Server - Crestron Home Drivers
 
 ## Disclaimer
 This software is provided as-is and is not an official Crestron product.  This project is an independent, open-source driver for use with Crestron systems.
 Crestron® and Crestron Home are trademarks or registered trademarks of Crestron Electronics, Inc.  This project is not affiliated with, endorsed by, or sponsored by Crestron Electronics, Inc.
-Lyrion Media Server is an open-source project and is also not affiliated with this repository.
+Lyrion Music Server is an open-source project and is also not affiliated with this repository.
 
 ## Description
-Four-driver suite (Crestron Drivers SDK V2 / Entity Model + RAD, .NET Framework 4.7.2) that integrates [Lyrion Media Server](https://lyrion.org/) (formerly Logitech Media Server / Squeezebox Server) with Crestron Home. The four drivers split responsibilities for a clean, room-based control surface that fits Crestron Home's source-routing graph.
+Four-driver suite (Crestron Drivers SDK V2 / Entity Model + RAD, .NET Framework 4.7.2) that integrates [Lyrion Music Server](https://lyrion.org/) (formerly Logitech Media Server / Squeezebox Server) with Crestron Home. The four drivers split responsibilities for a clean, room-based control surface that fits Crestron Home's source-routing graph.
 
 | Driver | Role | Instances | Connects to LMS? |
 |---|---|---|---|
@@ -88,9 +88,9 @@ Inter-driver communication uses a process-wide service registry (`LyrionServerSe
 
 ## Features
 
-### Lyrion Server (Driver 1) — the bridge to Lyrion Media Server
+### Lyrion Server (Driver 1) — the bridge to Lyrion Music Server
 
-- The only driver that talks to Lyrion Media Server. It owns the single CLI connection (port 9090) to LMS for the whole home — the JSON-RPC client (port 9000) is reserved and unused in 1.0.x — and the other three drivers reach LMS only through it.
+- The only driver that talks to Lyrion Music Server. It owns the single CLI connection (port 9090) to LMS for the whole home — the JSON-RPC client (port 9000) is reserved and unused in 1.0.x — and the other three drivers reach LMS only through it.
 - Publishes a shared `ILyrionServerService` that the Source, Helper, and Receiver drivers in every room subscribe to: their commands flow in, LMS state and now-playing events flow back out.
 - Tracks each bound player MAC in a registry, so availability, power, playback, volume, mute, shuffle, and repeat are resolved in one place and every room driver sees the same state.
 - Owns the connection lifecycle — bounded reconnect backoff and a full re-query of every bound MAC after a reconnect. See [Behavioral guarantees](#behavioral-guarantees).
@@ -130,7 +130,7 @@ Inter-driver communication uses a process-wide service registry (`LyrionServerSe
 > **A note on wording.** Crestron and Lyrion use different words for the same
 > idea. Crestron's vocabulary for a named, recallable shortcut on a device is a
 > **preset** — the same word it uses for tuner presets, pool presets, and camera
-> presets. In Lyrion Media Server the things you are recalling are **playlists**
+> presets. In Lyrion Music Server the things you are recalling are **playlists**
 > and **favourites**. This driver follows Crestron's word, because that is what
 > installers will look for in the Crestron Home setup app: a *preset* here
 > starts a Lyrion *playlist* or *favourite*.

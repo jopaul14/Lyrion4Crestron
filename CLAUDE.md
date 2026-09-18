@@ -1,6 +1,6 @@
 # Lyrion4Crestron — Working Instructions
 
-Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
+Four-driver Crestron Home suite integrating Lyrion Music Server (LMS). The
 four-driver refactor is **complete** (all drivers ship together at 1.0.20).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**

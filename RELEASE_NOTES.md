@@ -1169,8 +1169,8 @@ All four drivers ship at 1.0.5.
 
 ## 1.0.0 — Initial release (2026-06-04)
 
-First public release of the **Lyrion Media Server – Crestron Certified Drivers**: a
-four-driver suite that integrates [Lyrion Media Server](https://lyrion.org/)
+First public release of the **Lyrion Music Server – Crestron Certified Drivers**: a
+four-driver suite that integrates [Lyrion Music Server](https://lyrion.org/)
 (formerly Logitech Media Server / Squeezebox Server) with Crestron Home.
 
 The suite splits responsibilities across four cooperating drivers so a Lyrion
@@ -1247,7 +1247,7 @@ room/player and bound by the player's MAC address.
 ### Requirements
 
 - Crestron Home with driver runtime **25.0000.0033** or later
-- One reachable Lyrion Media Server instance (HTTP port, default 9000; CLI port,
+- One reachable Lyrion Music Server instance (HTTP port, default 9000; CLI port,
   default 9090)
 - Building from source requires Visual Studio 2019/2022 (.NET Framework 4.7.2)
   and the Crestron Certified Drivers SDK 27.0000.0024 or later — see
