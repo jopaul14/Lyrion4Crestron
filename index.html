@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyrion4Crestron: Lyrion Media Server (LMS / Squeezebox) drivers for Crestron Home</title>
+<meta name="description" content="Free, open-source Crestron Home drivers for Lyrion Media Server (formerly Logitech Media Server / Squeezebox Server). Per-room source, now-playing UI, volume and presets.">
+<link rel="canonical" href="https://jopaul14.github.io/Lyrion4Crestron/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Lyrion4Crestron: Lyrion Media Server drivers for Crestron Home">
+<meta property="og:description" content="Open-source Crestron Home drivers for Lyrion Media Server (Logitech Media Server / Squeezebox).">
+<meta property="og:url" content="https://jopaul14.github.io/Lyrion4Crestron/">
+<!-- google-site-verification meta tag goes here -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Lyrion4Crestron",
+  "alternateName": ["Lyrion Crestron driver", "Logitech Media Server Crestron driver", "Squeezebox Crestron Home driver"],
+  "description": "Open-source Crestron Home drivers that integrate Lyrion Media Server (formerly Logitech Media Server / Squeezebox Server).",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Crestron Home",
+  "url": "https://jopaul14.github.io/Lyrion4Crestron/",
+  "downloadUrl": "https://github.com/jopaul14/Lyrion4Crestron/releases/latest",
+  "codeRepository": "https://github.com/jopaul14/Lyrion4Crestron",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --text: #1d1f23; --muted: #5b616b;
+  --line: #e3e1dc; --accent: #1f6f5c; --accent-ink: #ffffff; --code: #f1efea;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #15171a; --surface: #1d2024; --text: #e8e6e1; --muted: #a2a8b1;
+    --line: #2f3338; --accent: #5cc3a6; --accent-ink: #0f1a17; --code: #25292e; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main, header, footer { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+header { padding-top: 56px; padding-bottom: 24px; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; margin: 48px 0 12px; }
+h3 { font-size: 1.05rem; margin: 24px 0 6px; }
+p.lede { font-size: 1.15rem; color: var(--muted); margin: 0 0 24px; }
+a { color: var(--accent); }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: 600;
+  border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); }
+.btn.secondary { color: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.card h3 { margin-top: 0; }
+.card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+.tag { font-size: 0.75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+ul, ol { padding-left: 1.3em; }
+li { margin: 4px 0; }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 0.9rem; }
+pre code { padding: 0; background: none; }
+dt { font-weight: 600; margin-top: 16px; }
+dd { margin: 4px 0 0; color: var(--muted); }
+footer { padding-top: 48px; padding-bottom: 48px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line); margin-top: 56px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lyrion Media Server drivers for Crestron Home</h1>
+  <p class="lede">Lyrion4Crestron is a free, open-source set of Crestron Home drivers for
+    <a href="https://lyrion.org/">Lyrion Media Server</a>, formerly Logitech Media Server
+    (LMS) and Squeezebox Server. Each room gets its own routable audio source, a
+    now-playing screen, volume control and one-touch presets.</p>
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/jopaul14/Lyrion4Crestron/releases/latest">Download the latest release</a>
+    <a class="btn secondary" href="https://github.com/jopaul14/Lyrion4Crestron">View on GitHub</a>
+  </div>
+</header>
+
+<main>
+  <h2>What you get</h2>
+  <p>The suite has four drivers. One connects to your Lyrion server, and the other three
+    give each room its controls. Only the server driver talks to LMS. The room drivers
+    link to a player by its MAC address.</p>
+  <div class="grid">
+    <div class="card"><span class="tag">1 per home</span><h3>Lyrion Server</h3>
+      <p>Holds the single connection to LMS and keeps the state of every player
+      (power, playback, volume, shuffle, repeat) in one place.</p></div>
+    <div class="card"><span class="tag">1 per room</span><h3>Lyrion Source</h3>
+      <p>A routable audio source with play, pause, stop, next, previous and power,
+      plus digital and analog audio outputs.</p></div>
+    <div class="card"><span class="tag">1 per room</span><h3>Lyrion Helper</h3>
+      <p>The now-playing screen: title, artist, album, elapsed time, transport,
+      shuffle, repeat, volume and up to four presets.</p></div>
+    <div class="card"><span class="tag">Optional, 1 per room</span><h3>Lyrion Receiver</h3>
+      <p>A volume endpoint (0–100, step up/down, mute) for players whose
+      volume LMS actually controls.</p></div>
+  </div>
+
+  <h2>Features</h2>
+  <ul>
+    <li>Works with Crestron Home's normal room routing: <em>Room On</em>, default sources and preferred routes.</li>
+    <li>Now-playing metadata and elapsed/total time for local music and internet radio.</li>
+    <li>Up to four presets per room that start a Lyrion playlist or favourite. They also appear in
+      Crestron Home's scene editor as <em>Play Preset 1–4</em>.</li>
+    <li>Recovers on its own when the connection drops: backoff up to 60 seconds, then a full refresh of every player on reconnect.</li>
+    <li>Logs only what matters (state changes and real errors), so it doesn't wear out the processor's flash.</li>
+    <li>MIT licensed, source included.</li>
+  </ul>
+
+  <h2>Install</h2>
+  <p>Requires Crestron driver runtime <strong>25.0000.0033</strong> or later.</p>
+  <ol>
+    <li>Download the <code>.pkg</code> files from the
+      <a href="https://github.com/jopaul14/Lyrion4Crestron/releases/latest">latest release</a>.</li>
+    <li>Copy them to <code>Internal Flash/user/ThirdPartyDrivers/Import</code> on the control system with Crestron Toolbox.</li>
+    <li>In the Crestron Home Setup app, add the <strong>Lyrion Server</strong> first. Enter the LMS hostname or IP,
+      HTTP port (default 9000), CLI port (default 9090) and an optional username and password.</li>
+    <li>For each room, add a <strong>Source</strong> and a <strong>Helper</strong>, and optionally a
+      <strong>Receiver</strong>, all with the <strong>same player MAC address</strong>.</li>
+    <li>Route the Source's output to the Receiver (or your own amplifier or AVR) and on to the speakers. Then set the room's
+      <strong>Default Source</strong> and <strong>Preferred Routing</strong>. Without a default route, <em>Room On</em> does nothing.</li>
+  </ol>
+  <p>The full walk-through is in
+    <a href="https://github.com/jopaul14/Lyrion4Crestron/blob/main/BUILD.md">BUILD.md</a>.</p>
+
+  <h2>Presets</h2>
+  <p>Each preset is one field in the Helper's settings, in the form <code>Name|Icon|Command</code>. The command is the
+    LMS CLI text that goes after the player's MAC address:</p>
+  <pre><code>KCRW|icBroadcastRegular|favorites playlist play item_id:2</code></pre>
+  <p>The <a href="https://github.com/jopaul14/Lyrion4Crestron#presets">README</a> explains how to find
+    a favourite's <code>item_id</code> and a saved playlist's id.</p>
+
+  <h2>FAQ</h2>
+  <dl>
+    <dt>Does this work with Logitech Media Server or Squeezebox Server?</dt>
+    <dd>Yes. Lyrion Media Server is the current name of Logitech Media Server, which was previously Squeezebox Server.
+      The drivers use its standard CLI (port 9090).</dd>
+    <dt>Which players are supported?</dt>
+    <dd>Any player LMS can see, such as Squeezebox hardware, piCorePlayer, squeezelite, and other devices through LMS plugins.</dd>
+    <dt>Do I need the Receiver driver?</dt>
+    <dd>Only if LMS should control the room's volume. If the room uses an external amplifier or AVR, or the player is set
+      to fixed volume in LMS, use that device as the audio endpoint instead.</dd>
+    <dt>Does it support browsing the library or the queue?</dt>
+    <dd>No. Presets cover the common case of naming the playlists and stations that belong in a room.
+      Browsing, queue management and player sync groups are out of scope.</dd>
+    <dt>Is it free?</dt>
+    <dd>Yes. It is open source under the MIT license.</dd>
+  </dl>
+</main>
+
+<footer>
+  <p>Lyrion4Crestron is an independent, open-source project provided as-is. It is not an official Crestron product and is not affiliated with,
+    endorsed by, or sponsored by Crestron Electronics, Inc. or the Lyrion Media Server project. Crestron® and Crestron Home are trademarks or
+    registered trademarks of Crestron Electronics, Inc.</p>
+  <p><a href="https://github.com/jopaul14/Lyrion4Crestron">Source on GitHub</a> ·
+    <a href="https://github.com/jopaul14/Lyrion4Crestron/issues">Report an issue</a></p>
+</footer>
+</body>
+</html>

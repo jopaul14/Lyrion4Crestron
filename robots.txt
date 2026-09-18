@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://jopaul14.github.io/Lyrion4Crestron/sitemap.xml
