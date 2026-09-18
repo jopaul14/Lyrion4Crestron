@@ -609,7 +609,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                     {
                         foreach (var mac in _registry.BoundMacs())
                         {
-                            _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+                            SubscribePlayer(mac);
                         }
                     }
                     catch { }
@@ -631,7 +631,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 // Open a subscribing status query: the prior subscription died
                 // with the old CLI connection, so this both re-syncs now and
                 // keeps pushing full status on every subsequent change.
-                _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+                SubscribePlayer(mac);
             }
 
             // Defer republish until status responses have had time to arrive.
@@ -666,8 +666,21 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             {
                 // Open a subscribing status query so this player keeps pushing
                 // full status (power/mode/metadata) on every change from now on.
-                _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+                SubscribePlayer(mac);
             }
+        }
+
+        /// <summary>
+        /// Opens the subscribing status query for a player and asks for its
+        /// mute state. A status reply carries mute only as the sign of the
+        /// volume, which a player muted at volume 0 cannot show, so without
+        /// the query a Lyrion Server reload would leave such a player unmuted
+        /// in the registry. Later changes arrive as "prefset server mute".
+        /// </summary>
+        private void SubscribePlayer(string mac)
+        {
+            _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+            _ = SendCliForPlayer(mac, LmsCliCommands.QueryMute(mac));
         }
 
         // ===== CLI send helpers =====
@@ -812,7 +825,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                 // reconnect (and NoteVolume clamped the negative to 0, so a
                 // muted player also showed volume 0). Note mute first so a
                 // consumer's first sight of the record carries both.
-                _registry.NoteMute(mac, vol < 0);
+                //
+                // Zero has no sign, so "mixer volume:0" says nothing about
+                // mute (verified on LMS 9.1: a player muted at 0 reports 0).
+                // Noting it as unmuted overwrote the "prefset server mute 1"
+                // that arrives just before the status push, so a player muted
+                // at 0 always showed unmuted. Its mute comes from that prefset
+                // line and from the "mixer muting ?" sent with every subscribe.
+                if (vol != 0) _registry.NoteMute(mac, vol < 0);
                 _registry.NoteVolume(mac, vol < 0 ? -vol : vol);
             }
 

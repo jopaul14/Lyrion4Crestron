@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Media Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.0.19).
+four-driver refactor is **complete** (all drivers ship together at 1.0.20).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral
@@ -121,6 +121,12 @@ before making behavioral changes; where any other document disagrees, the PRD wi
   player's `mixer volume` as a negative number, and `ApplyStatusResponse`
   notes the sign as mute and the magnitude as volume. Through 1.0.14 the sign
   was dropped and mute was the one field `IsObserved` could not vouch for.
+  Zero has no sign, so `mixer volume:0` says nothing about mute and is never
+  noted as unmuted; a player muted at 0 gets its mute from
+  `prefset server mute 0|1` and from the `mixer muting ?` sent with every
+  subscribe (`SubscribePlayer`, 1.0.20). A SIGNED `mixer volume +N/-N` is a
+  relative step echoed verbatim, not a level, and is ignored — the
+  `prefset server volume` line that follows carries the level.
 - Volume (0–100, no rescaling) is owned by the Receiver but also surfaced on the
   Helper page (Vol±/Mute buttons); both route to the same
   Lyrion Server `SetVolume`/`VolumeUp`/`VolumeDown`/`SetMute`. The Helper's step follows

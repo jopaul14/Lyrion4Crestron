@@ -1,5 +1,63 @@
 # Release Notes
 
+## 1.0.20 — Unreleased (bench build)
+
+Two volume/mute parser fixes from a code review on 2026-09-18, both confirmed
+against LMS 9.1. All four drivers are at 1.0.20 so the processor will reload
+them. **All four packages must be updated together**, and B2 is the check that
+the reload happened. Before building, delete the output folders (BUILD.md §2.0).
+Only the Lyrion Server's code changed.
+
+### Fixed — Lyrion Server
+
+- **Each Vol+/Vol− step briefly published the step size as the volume.**
+  The Receiver's ramp and the Helper's buttons send `<mac> mixer volume +2`,
+  and LMS echoes that line back verbatim. The parser read `+2` as a level of
+  2; it also stripped the sign, so `-2` became 2 as well. Pressing Vol+ at 50
+  published 50 → 2 → 52: the correction came from the
+  `prefset server volume 52` line LMS sends next. The same happened when
+  another client, such as Material Skin, changed the volume by a step. A signed
+  `mixer volume` value is now treated as a relative step: it asserts no level,
+  and the parser ignores it. The `prefset` line still sets the volume.
+- **A player muted at volume 0 always showed as unmuted.** A status reply
+  carries mute only as the sign of the volume, and 0 has no sign. So
+  `mixer volume:0` was noted as "unmuted", overwriting the mute. LMS's direct
+  signal, `prefset server mute 1`, was never parsed. On the Helper the Mute
+  button kept reading "Mute" for a muted player, and pressing it only sent
+  mute again, so the player couldn't be unmuted from Crestron Home. Now:
+  - `prefset server mute 0|1` is parsed as the mute state.
+  - A volume of 0 in a status reply no longer says anything about mute.
+  - Every status subscribe also sends `mixer muting ?`. This covers a Lyrion
+    Server reload while a player sits muted at 0, when no prefset line arrives.
+  - `mixer muting` counts only for an explicit `0`/`1`. Before, a `toggle`
+    from another client, or the echoed `?` for a MAC LMS doesn't know, read
+    as "unmuted".
+
+### Bench checks for this build
+
+1. **Volume ramp.** Hold Vol+ on the Receiver for a couple of seconds, then
+   Vol− the same way. The Crestron Home slider moves steadily in the right
+   direction and never dips to the step size.
+2. **Helper Vol±.** Tap Vol+ and Vol− on the Helper page. The volume moves by
+   one step each tap, with no flicker.
+3. **Muted at 0.** In Material Skin, set a player's volume to 0, then mute it.
+   The Helper's button changes to "Unmute" within a second. Unmute it from the
+   Helper: the player unmutes and the button reads "Mute".
+4. **Reload while muted at 0.** With that player muted at 0, reload the Lyrion
+   Server package (re-import, or toggle an unrelated Server setting; note #55).
+   After the reconnect the Helper still reads "Unmute".
+5. **Muted above 0 (regression).** Mute a player at volume 25 from Material
+   Skin: the Helper reads "Unmute" and the Receiver shows muted at 25. Unmute
+   it: both follow.
+
+### Filed, not fixed in this build
+
+The same review found four more issues, filed with a full mechanism and a
+candidate fix each: #54 (registry events from different threads can publish
+out of order), #55 (any Server settings save cycles every playing room off and
+on), #56 (the tail of an oversize CLI line is parsed as its own line), and #57
+(a consumer can end up bound to a stale Server service).
+
 ## 1.0.19 — Unreleased (bench build)
 
 Opened for the fixes coming out of the 1.0.18 bench pass (2026-09-15). All four

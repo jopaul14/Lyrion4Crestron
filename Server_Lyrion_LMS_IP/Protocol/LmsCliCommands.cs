@@ -80,6 +80,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Protocol
             return Player(mac) + " mixer muting " + (muted ? "1" : "0");
         }
 
+        /// <summary>
+        /// Mute query. The reply is "&lt;mac&gt; mixer muting 0|1" (blank for a
+        /// player never muted, which the parser ignores). Needed because a
+        /// status reply carries mute only as the sign of the volume, and a
+        /// player muted at volume 0 has no sign to carry.
+        /// </summary>
+        public static string QueryMute(string mac) => Player(mac) + " mixer muting ?";
+
         // --- Per-player: power -------------------------------------------------
 
         public static string SetPower(string mac, bool on)
