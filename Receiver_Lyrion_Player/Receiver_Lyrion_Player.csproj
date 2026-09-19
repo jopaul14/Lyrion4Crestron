@@ -3,7 +3,7 @@
   Receiver_Lyrion_Player - Driver 4 of the four-driver Lyrion architecture.
   Per-room routable AV receiver (RAD AV Receiver) exposing volume, mute, and
   power for a single Lyrion player. Bound by MAC address; consumes the
-  gateway service.
+  Lyrion Server service.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
 

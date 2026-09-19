@@ -7,7 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 [assembly: AssemblyTitle("Source_Lyrion_Player")]
-[assembly: AssemblyDescription("Lyrion Source. Per-room routable audio source (RAD Bluray Player); consumes the Lyrion gateway service.")]
+[assembly: AssemblyDescription("Lyrion Source. Per-room routable audio source (RAD Bluray Player); consumes the Lyrion Server service.")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Lyrion Community")]
 [assembly: AssemblyProduct("Source_Lyrion_Player")]

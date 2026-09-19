@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Gateway_Lyrion_LMS_IP - Driver 1 of the four-driver Lyrion architecture.
+  Server_Lyrion_LMS_IP - Driver 1 of the four-driver Lyrion architecture.
   This is the only assembly that opens sockets to LMS. It registers an
-  ILyrionGatewayService at startup; the Source, Helper, and Receiver drivers
+  ILyrionServerService at startup; the Source, Helper, and Receiver drivers
   consume it.
 
   Build requirements:
@@ -15,8 +15,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Gateway</RootNamespace>
-    <AssemblyName>Gateway_Lyrion_LMS_IP</AssemblyName>
+    <RootNamespace>LyrionCommunity.Crestron.Lyrion.Server</RootNamespace>
+    <AssemblyName>Server_Lyrion_LMS_IP</AssemblyName>
     <TargetFramework>net472</TargetFramework>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>

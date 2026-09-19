@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -7,11 +7,11 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
+namespace LyrionCommunity.Crestron.Lyrion.Server.Protocol
 {
     /// <summary>
     /// Builders for LMS JSON-RPC request bodies. Only the subset used by the
-    /// gateway driver is exposed; browse/favorites/playlist builders were
+    /// Lyrion Server driver is exposed; browse/favorites/playlist builders were
     /// removed per CLAUDE.md "EXPLICITLY REMOVED FEATURES".
     /// </summary>
     /// <remarks>

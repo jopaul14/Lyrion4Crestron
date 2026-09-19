@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -7,7 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
+namespace LyrionCommunity.Crestron.Lyrion.Server.Protocol
 {
     /// <summary>
     /// Parses raw LMS CLI lines into strongly-typed messages. Stateless;
@@ -126,17 +126,28 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                 return new LmsMessage(LmsMessageKind.PlayerRaw, mac, tokens, null);
             }
 
+            // A signed value is a RELATIVE change ("mixer volume +2" is a step,
+            // not a level), and LMS echoes the command back verbatim — verified
+            // on LMS 9.1. Reading "+2" as a level published volume 2 on every
+            // Vol+ press until the "prefset server volume <level>" that follows
+            // corrected it. That prefset line carries the real level, so a
+            // relative line asserts nothing and is dropped.
             if (tokens[2] == "volume")
             {
-                if (int.TryParse(tokens[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var vol))
+                var raw = tokens[3];
+                if (raw.Length > 0 && raw[0] != '+' && raw[0] != '-'
+                    && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var vol))
                 {
-                    if (vol < 0) vol = -vol;
                     if (vol > 100) vol = 100;
                     return new LmsMessage(LmsMessageKind.Volume, mac, tokens, vol);
                 }
             }
 
-            if (tokens[2] == "muting")
+            // Only an explicit 0/1 is a mute state. "mixer muting toggle" (the
+            // form other LMS clients send) and the "?" of an echoed query for a
+            // MAC LMS does not know say nothing about the result; the
+            // "prefset server mute 0|1" that follows a real change does.
+            if (tokens[2] == "muting" && (tokens[3] == "0" || tokens[3] == "1"))
             {
                 return new LmsMessage(LmsMessageKind.Mute, mac, tokens, tokens[3] == "1");
             }
@@ -152,6 +163,15 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                 if (tokens[3] == "power")
                 {
                     return new LmsMessage(LmsMessageKind.Power, mac, tokens, tokens[4] == "1");
+                }
+
+                // The authoritative mute signal (verified on LMS 9.1: a mute
+                // change is followed by "prefset server mute 1"). The status
+                // reply carries mute only as the sign of the volume, which a
+                // player muted at volume 0 cannot show.
+                if (tokens[3] == "mute" && (tokens[4] == "0" || tokens[4] == "1"))
+                {
+                    return new LmsMessage(LmsMessageKind.Mute, mac, tokens, tokens[4] == "1");
                 }
 
                 if (tokens[3] == "volume"

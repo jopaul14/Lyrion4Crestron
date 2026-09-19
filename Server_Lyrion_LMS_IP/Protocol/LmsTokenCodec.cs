@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Gateway_Lyrion_LMS_IP - Lyrion Server gateway driver (Driver 1 of 4)
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
 //  Licensed under the MIT License. See LICENSE at the repository root.
 // ---------------------------------------------------------------------------
 
@@ -7,7 +7,7 @@ using System;
 using System.Net;
 using System.Text;
 
-namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
+namespace LyrionCommunity.Crestron.Lyrion.Server.Protocol
 {
     /// <summary>
     /// URL-encoding helpers for the LMS CLI (Telnet) protocol. LMS percent-

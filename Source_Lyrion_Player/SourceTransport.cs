@@ -9,7 +9,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
 {
     /// <summary>
     /// No-op transport. The Source driver never talks to LMS directly — all
-    /// control flows through the Lyrion Server gateway service. The RAD
+    /// control flows through the Lyrion Server service. The RAD
     /// framework still requires a transport, so this one reports itself as
     /// permanently connected and discards everything written to it.
     /// </summary>
