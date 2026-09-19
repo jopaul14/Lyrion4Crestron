@@ -52,6 +52,7 @@ Quick install — see [BUILD.md](BUILD.md) for the full walk-through:
 3. For each room/player, add **Source** and **Helper** (and optionally **Receiver**) using the **same player MAC address** on all three.
 4. Route the Source's digital or analog output to the Receiver input (or a 3rd-party AVR), then on to the room speakers. Then set the room's **Default Source** (Source Routes → Available Sources) to the Lyrion Source, and on **Preferred Routing** set the Source to the Lyrion Source and the Audio Endpoint to the Lyrion Receiver (or your AVR). Without a default route, `Room On` silently does nothing. See [BUILD.md](BUILD.md) step 6.
 5. Optionally, in **Source Routes → Available Sources**, deselect "Lyrion Source" for the room to hide its tile. Most setups should leave it visible — the room's media on/off indication in the Crestron Home app comes from that tile. See [BUILD.md](BUILD.md) step 7.
+6. **Using an uncontrolled amplifier instead of the Lyrion Receiver?** Turning the room off won't switch the Lyrion player off until you add two hidden Quick Actions, `Music On` and `Music Off`, to the room's Media Zone events. See [BUILD.md](BUILD.md) step 8.
 
 Prefer to build from source instead? See [BUILD.md](BUILD.md).
 

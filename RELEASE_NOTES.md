@@ -50,6 +50,17 @@ Only the Lyrion Server's code changed.
    Skin: the Helper reads "Unmute" and the Receiver shows muted at 25. Unmute
    it: both follow.
 
+### Documentation
+
+- **Rooms with an uncontrolled amplifier: Room Off didn't switch the player
+  off.** Without a Lyrion Receiver in the route, turning the room off in the
+  Crestron Home app removes the route but sends nothing to the player, which
+  stays on. This is a configuration gap, not a driver fault. BUILD.md step 8
+  now describes two hidden Quick Actions, `Music On` (power on the Lyrion
+  Source, optionally then Play) and `Music Off` (power it off), attached to the
+  room's Media Zone On and Media Zone Off events. The README's quick install
+  points to it.
+
 ### Filed, not fixed in this build
 
 The same review found four more issues, filed with a full mechanism and a

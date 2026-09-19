@@ -255,6 +255,15 @@ Deploy in this order:
 
    Room C's trade-off: if Lyrion is the active source and it powers off, the room stays on and silent until someone turns it off. That is usually preferable to the room going dark unexpectedly, but it is a real difference from Room A.
 
+   **Rooms with an uncontrolled amplifier instead of the Lyrion Receiver.** The mappings above carry the player's power *to* the room. The other direction needs its own setup when the room has no Lyrion Receiver. Turning the room off in the Crestron Home app removes the route; with a Lyrion Receiver in that route, the Receiver's power-off switches the player off. An uncontrolled amplifier has no power command, so nothing reaches the player: **the room shows off while the Lyrion player stays on**, and keeps playing if it was. Two hidden Quick Actions, run from the room's Media Zone events, close that gap.
+
+   1. **Create a Quick Action named `Music On`.** Make it a sequence that powers on the Lyrion Source. If the room should start playing as well as power on, add a second step that sends Play to the Lyrion Source.
+   2. **Create a Quick Action named `Music Off`.** Make it a sequence with one step that powers off the Lyrion Source.
+   3. **Turn off the visibility of both Quick Actions.** They only exist to be triggered by the events in the next step, so hiding them keeps them out of the user interface.
+   4. **Attach them to the room's Media Zone events.** In **Actions & Events**, open the room's **Media Zone Events**. Add the Quick Action `Music Off` to **Media Zone Off**, and `Music On` to **Media Zone On**.
+
+   Turning the room off now also switches the player off, and turning it on powers the player up, and starts it playing if you added the Play step. Create the pair for each room that uses an uncontrolled amplifier; a room with a Lyrion Receiver doesn't need them.
+
    > **If "Power Is Off → Room Off" works but "Power Is On → Room On" does nothing, check step 6 before anything else.** `Room On` routes the room's default source; with no default source (or no preferred route) set, it silently does nothing while `Room Off` keeps working — which looks exactly like a driver that reports off but never on. The Helper tile showing the player as on is not evidence either way: it shows the player's power level, not whether the room can route. A driver-free check settles it in a minute: create a Quick Action that does only `Room On` for that room and press it with the room off. If the room doesn't come on, no driver change can help, and the fix is step 6. (1.0.8 chased this as a driver bug and regressed; see RELEASE_NOTES.)
 
    > **Requires driver version 1.0.5 or later.** On 1.0.4 and earlier, LMS's own power-off sequence briefly reported the player as ON again about a millisecond after reporting it OFF. With Room A or C configured, Crestron Home acted on that spurious edge and turned the room straight back on — the room would appear to power off and then bounce back on with the music playing, one to two seconds later. If you see that symptom, you are running a cached older driver; confirm the version and re-import.
