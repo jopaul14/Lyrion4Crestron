@@ -11,6 +11,7 @@ using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.Common.Interfaces.ExtensionDevice;
 using Crestron.RAD.DeviceTypes.ExtensionDevice;
+using Crestron.SimplSharp;
 using LyrionCommunity.Crestron.Lyrion.Service;
 
 namespace LyrionCommunity.Crestron.Lyrion.Helper
@@ -305,6 +306,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Helper
         }
 
         // ===== AExtensionDevice overrides =====
+
+        /// <summary>
+        /// Crestron Home sometimes asks for translations with a blank culture
+        /// (#51). The base class then falls back to en-US anyway, but logs an
+        /// errlog Warning each time. Asking for en-US up front returns the same
+        /// translations without the warning. A real culture passes through.
+        /// </summary>
+        protected override ReadOnlyDictionary<string, string> GetLanguageTranslations(string translationsFolderPath, string culture)
+        {
+            return base.GetLanguageTranslations(translationsFolderPath, string.IsNullOrEmpty(culture) ? "en-US" : culture);
+        }
 
         protected override IOperationResult DoCommand(string command, string[] parameters)
         {

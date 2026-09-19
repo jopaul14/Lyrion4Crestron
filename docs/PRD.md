@@ -1,6 +1,6 @@
 # Lyrion4Crestron — Product Requirements Document
 
-**Status:** Authoritative. This document supersedes the original refactor specification (formerly in `CLAUDE.md`) and describes the system **as built** at driver version 1.0.20. Where this document and older documents disagree, this document wins.
+**Status:** Authoritative. This document supersedes the original refactor specification (formerly in `CLAUDE.md`) and describes the system **as built** at driver version 1.0.21. Where this document and older documents disagree, this document wins.
 
 **Audience:** Developers and contributors maintaining or extending the driver suite.
 

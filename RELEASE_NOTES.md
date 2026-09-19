@@ -1,5 +1,62 @@
 # Release Notes
 
+## Known issues
+
+- **Crestron Home iOS app: the Helper's track card flashes every second
+  while a track plays.** The top card on the Lyrion Helper page shows the
+  track number, title, artist, album and elapsed / total time. The elapsed
+  time updates once a second. The iOS app redraws the whole card on each
+  update, so the card flashes. The Crestron Home app on Android and Crestron
+  touchscreens update the same card without flashing. The driver sends only
+  the changed time text, so the redraw is the iOS app's behavior, and there
+  is no driver fix. Tracked as #59 (closed as a known issue).
+
+## 1.0.21 — Unreleased (bench build)
+
+Fixes #51. All four drivers are at 1.0.21 so the processor will reload them.
+**All four packages must be updated together.** Before building, delete the
+output folders (BUILD.md §2.0). Only the Lyrion Helper's code changed.
+
+### Fixed — Lyrion Helper
+
+- **errlog Warning: `GetLanguageTranslations … Provided Culture = ''`.**
+  Crestron Home sometimes asks an extension device for its translations with
+  a blank culture: at page load, and again around network reconnects. The SDK's
+  default `AExtensionDevice.GetLanguageTranslations` only accepts a culture it
+  has a file for. For any other culture it writes this Warning to errlog, then
+  returns the `en-US` translations anyway. The Helper now overrides the method
+  and asks for `en-US` directly when the culture is blank. The translations
+  returned are the same, without the warning. A real culture code is passed
+  through unchanged.
+
+  Only the Helper could log this. It is the only one of the four drivers built
+  on `AExtensionDevice`. The Source (`ABasicBlurayPlayer`), Receiver
+  (`ABasicAVReceiver`) and Server (`ReflectedAttributeDriverEntity`) never go
+  through that code. The SDK decides which cultures a driver supports from its
+  translation file names, and only `xx-YY` names count. That's why no change
+  to `Translations/` could have fixed it.
+
+- **Build:** the override's return type, `Crestron.SimplSharp.ReadOnlyDictionary`,
+  is in `SimplSharpHelperInterface.dll`. The Certified Drivers SDK doesn't ship
+  that file. The Helper project now references Crestron's
+  `Crestron.SimplSharp.SDK.Library` NuGet package, for compiling only. Nothing
+  from the package is copied to the output or packed into the `.pkg`. The
+  processor already has this assembly, with the same identity that RADCommon
+  references (1.0.0.0, token `1099c178b3b54c3b`).
+
+### Bench checks for this build
+
+1. **Helper page load.** Clear errlog, then open a room's Lyrion Helper page in
+   the Crestron Home app. errlog shows no
+   `AExtensionDevice.GetLanguageTranslations` lines. The page shows real text,
+   with no `^Key` placeholders.
+2. **Network blip.** Unplug the processor's network for about a minute, then
+   plug it back in. Once the Helper reconnects, errlog still has no
+   `GetLanguageTranslations` lines.
+3. **Driver loads (regression).** After the update, Diagnostics lists every
+   Helper as 1.0.21 and online. errlog has no assembly-load errors for the
+   Helper, such as `SimplSharpHelperInterface` not found.
+
 ## 1.0.20 — Unreleased (bench build)
 
 Two volume/mute parser fixes from a code review on 2026-09-18, both confirmed

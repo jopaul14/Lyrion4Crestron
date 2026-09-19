@@ -41,6 +41,10 @@ The build will fail up-front with a clear error if the SDK is not where it is ex
 
 If `ManifestUtil.exe` is missing, the `.dll` will still build but no `.pkg` is produced; you get a warning instead of an error.
 
+### 1.3 NuGet package (Helper only)
+
+The Helper also references Crestron's `Crestron.SimplSharp.SDK.Library` NuGet package. It needs one type, `Crestron.SimplSharp.ReadOnlyDictionary`, which the Certified Drivers SDK does not ship. Visual Studio and `msbuild /restore` fetch the package automatically. It is used for compiling only: nothing from it goes into the output folder or the `.pkg`.
+
 ## 2. Building
 
 ### 2.0 Start every deployment build from empty output folders

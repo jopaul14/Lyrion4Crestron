@@ -77,6 +77,17 @@
   </ItemGroup>
 
   <!--
+    SimplSharpHelperInterface.dll defines Crestron.SimplSharp.ReadOnlyDictionary,
+    the return type of the GetLanguageTranslations override (#51). The Certified
+    Drivers SDK does not ship it, so it comes from Crestron's NuGet package.
+    Compile-only: the processor already has this assembly, so nothing from
+    the package is copied to the output or bundled into the .pkg.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Crestron.SimplSharp.SDK.Library" Version="2.22.15" ExcludeAssets="runtime;build;buildTransitive;contentFiles;native" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
     Lyrion_Common.dll is shared by all four drivers. RAD drivers have no
     DriverAssemblyEntryPoint to hook AssemblyResolve, so it is bundled into
     the package as a plain dependency (declared in Driver.json's
