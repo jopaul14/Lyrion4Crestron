@@ -277,10 +277,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
 
             var bytes = Encoding.UTF8.GetBytes(commandLine + "\r\n");
 
-            // Acquire the write lock before reading _stream so a concurrent
-            // CloseSocket() cannot null/dispose the stream between our read
-            // and our use of it. This closes the race that would otherwise
-            // silently drop commands during reconnect.
+            // Serialises concurrent SENDERS so two commands cannot interleave
+            // their bytes on the stream. The driver sends fire-and-forget from
+            // several paths at once (SendCliLineSync, SendCliForPlayer,
+            // SubscribePlayer via SendOnCli) alongside the connect preamble and
+            // the idle liveness probe, so that is a real job.
+            //
+            // It does NOT exclude CloseSocket/TeardownCurrentConnection, and
+            // MUST NOT: those deliberately do not take this lock. A write that
+            // hangs holds it indefinitely (#63), and StopAsync's CloseSocket —
+            // disposing the stream out from under the write — is the only
+            // thing that unblocks it. A closer that waited on this lock would
+            // block behind the very write it exists to interrupt, turning #63
+            // from recoverable-by-reload into not recoverable at all.
+            //
+            // So a closer CAN dispose _stream mid-write. That is handled, not
+            // prevented: the write throws ObjectDisposedException, which the
+            // catch below turns into `return false`. Dropping a command while
+            // the socket is being torn down is the correct outcome. (#65 — an
+            // earlier version of this comment claimed the lock closed that
+            // race, which pointed at adding the lock to CloseSocket.)
             await _writeLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
