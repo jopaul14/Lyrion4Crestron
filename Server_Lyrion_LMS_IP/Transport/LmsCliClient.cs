@@ -548,8 +548,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                     probed = true;
                     // Not awaited: on a dead socket the write can block, and
                     // this loop is what has to notice. Its result is
-                    // irrelevant; only a reply proves anything.
-                    _ = SendLineAsync(LmsCliCommands.QueryServerVersion(), ct);
+                    // irrelevant; only a reply proves anything. Observed all
+                    // the same: this send fires after 30 s of silence, which
+                    // is exactly when a half-open socket makes it fault, and
+                    // an unobserved fault would surface later through
+                    // TaskScheduler.UnobservedTaskException as errlog noise.
+                    ObserveFault(SendLineAsync(LmsCliCommands.QueryServerVersion(), ct));
                     continue;
                 }
 

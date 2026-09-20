@@ -13,9 +13,10 @@
 
 ## 1.0.21 — Unreleased (bench build)
 
-Fixes #51. All four drivers are at 1.0.21 so the processor will reload them.
-**All four packages must be updated together.** Before building, delete the
-output folders (BUILD.md §2.0). Only the Lyrion Helper's code changed.
+Fixes #51, #61 and #62. All four drivers are at 1.0.21 so the processor will
+reload them. **All four packages must be updated together.** Before building,
+delete the output folders (BUILD.md §2.0). The Lyrion Helper's and the Lyrion
+Server's code changed.
 
 ### Fixed — Lyrion Helper
 
@@ -44,6 +45,41 @@ output folders (BUILD.md §2.0). Only the Lyrion Helper's code changed.
   processor already has this assembly, with the same identity that RADCommon
   references (1.0.0.0, token `1099c178b3b54c3b`).
 
+### Fixed — Lyrion Server
+
+Both from a code review on 2026-09-20. Neither changes what a room shows.
+
+- **Every LMS connect opened two status subscriptions per player.** The
+  per-player `status … subscribe:30` lives on the CLI socket and dies with it,
+  so it is re-armed on every connect — from the raw socket transition, which
+  also covers a flap too short for the connectivity FSM to commit, and again
+  from the committed transition, which reconciles the player list first. Both
+  ran, so each connect opened two subscriptions and sent two `mixer muting ?`
+  per player, and LMS then pushed every status change twice for the rest of
+  the connection. Neither path can simply be removed: without the raw one a
+  short flap leaves the subscriptions silently dead, and without the committed
+  one there is no backstop. The Server now tracks which MACs are subscribed on
+  the current socket and skips a repeat, so whichever path runs first wins and
+  the other is a no-op. The set is cleared whenever the socket goes away —
+  including the reconnect the CLI client performs in place, where the driver's
+  own teardown never runs. A consumer binding a MAC still forces a fresh query,
+  so a re-created record does not wait for the next keep-alive.
+
+  No visible symptom: the registry change-gates every field, so the second copy
+  of each reply was silent. It doubled the push volume and the parse and
+  fan-out work behind it, which is worth removing as a variable while the
+  processor's memory growth is still being tracked.
+
+- **The connection liveness probe's send was never observed.** After 30 s of
+  silence the Server sends `version ?` to tell a quiet house from a dead
+  socket. It is deliberately not awaited — on a dead socket the write can
+  block, and the read loop is what has to notice — but the discarded task was
+  not handed to the same fault-observing helper every other abandoned task on
+  that path uses. That send fires exactly when a half-open socket makes it
+  fault, so the one send most likely to fault was the one not observed, and the
+  exception surfaced later as errlog noise. Now observed like the rest. No
+  functional change; the probe's result is still irrelevant by design.
+
 ### Bench checks for this build
 
 1. **Helper page load.** Clear errlog, then open a room's Lyrion Helper page in
@@ -56,6 +92,20 @@ output folders (BUILD.md §2.0). Only the Lyrion Helper's code changed.
 3. **Driver loads (regression).** After the update, Diagnostics lists every
    Helper as 1.0.21 and online. errlog has no assembly-load errors for the
    Helper, such as `SimplSharpHelperInterface` not found.
+4. **One subscription per player (#61).** With a CLI capture running
+   (`tmp_harness/Capture-LmsCli.ps1`), restart LMS and let the Server
+   reconnect. Each bound MAC appears exactly once as
+   `<mac> status - 1 subscribe:30 …` and once as `<mac> mixer muting ?`,
+   not twice.
+5. **Subscriptions survive a short flap (#61 regression).** Pull the
+   processor's network for about two seconds — shorter than the connectivity
+   FSM's stability window, so no CONNECTED/DISCONNECTED pair is logged — and
+   plug it back in. Then change a track from Material Skin: the room's
+   now-playing text still updates, proving the subscription was re-armed off
+   the raw reconnect rather than the committed one.
+6. **Player state after a reconnect (#61 regression).** After the LMS restart
+   in check 4, every room still reflects power, playback, volume and mute
+   changes made from Material Skin.
 
 ## 1.0.20 — Unreleased (bench build)
 

@@ -102,6 +102,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
         private Timer _reconcileTimer;
         private Timer _resubscribeTimer;
 
+        // MACs whose "status ... subscribe:N" is live on the CURRENT socket.
+        // Guarded by _gate, and read/written in the same critical section that
+        // reads _cli, so a teardown racing a subscribe cannot leave a stale
+        // entry behind (see SubscribePlayer).
+        //
+        // Two paths re-arm the subscriptions on every connect — the raw
+        // transition (ResubscribeBoundPlayers) and the committed one
+        // (ReconcileBoundPlayers) — because neither can be removed: dropping
+        // the raw one leaves a sub-window flap with dead subscriptions, and
+        // dropping the committed one removes the backstop. Without this set
+        // they both fired, so every connect opened two subscriptions and sent
+        // two "mixer muting ?" per player (#61). Whichever runs first now
+        // wins and the other is a no-op.
+        // OrdinalIgnoreCase to match PlayerRegistry._records. Every MAC that
+        // reaches here is already canonical lowercase, so this only matters if
+        // a future caller forgets to normalize — which is exactly when a
+        // case-sensitive set would silently re-subscribe.
+        private readonly HashSet<string> _subscribedMacs =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private string _host;
         private int _httpPort = 9000;
         private int _cliPort = 9090;
@@ -283,7 +303,12 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                     // them off the RAW transition so they always follow the
                     // socket. Change-gating in the registry keeps the resulting
                     // status responses silent when nothing actually moved.
+                    // Losing the socket kills every subscription on it, and
+                    // LmsCliClient reconnects IN PLACE — the driver's own
+                    // teardown does not run — so this is the only place that
+                    // learns the old set is void.
                     if (s == LmsConnectionState.Connected) ResubscribeBoundPlayers();
+                    else ClearSubscribedPlayers();
                     _fsm.OnRawTransition(s);
                 };
                 _cliAuthHandler = msg => _log("Lyrion Server ERROR auth: " + msg);
@@ -342,6 +367,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             _cliStateHandler = null;
             _cliAuthHandler = null;
             _serverConnected = false;
+
+            // The subscriptions lived on the socket we are dropping. Cleared
+            // under the same lock that nulls _cli so SubscribePlayer cannot
+            // record an entry for a socket that no longer exists.
+            _subscribedMacs.Clear();
 
             // Cancel oldLifetime first so the linked token inside oldCli is
             // signaled before the caller starts disposing.
@@ -601,6 +631,13 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             lock (_gate)
             {
                 if (_disposed) return;
+
+                // A new socket carries none of the old socket's subscriptions.
+                // Clear here as well as on the non-Connected transitions, so a
+                // connect always starts from an empty set no matter how the
+                // raw states arrived.
+                _subscribedMacs.Clear();
+
                 try { _resubscribeTimer?.Dispose(); } catch { }
                 _resubscribeTimer = new Timer(_ =>
                 {
@@ -615,6 +652,11 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
                     catch { }
                 }, null, TimeSpan.FromMilliseconds(750), Timeout.InfiniteTimeSpan);
             }
+        }
+
+        private void ClearSubscribedPlayers()
+        {
+            lock (_gate) { _subscribedMacs.Clear(); }
         }
 
         private void ReconcileBoundPlayers()
@@ -666,7 +708,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             {
                 // Open a subscribing status query so this player keeps pushing
                 // full status (power/mode/metadata) on every change from now on.
-                SubscribePlayer(mac);
+                // Forced: this is a fresh bind asking for state now, and the
+                // MAC may already be subscribed on this socket from before the
+                // record was re-created.
+                SubscribePlayer(mac, force: true);
             }
         }
 
@@ -677,10 +722,51 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
         /// the query a Lyrion Server reload would leave such a player unmuted
         /// in the registry. Later changes arrive as "prefset server mute".
         /// </summary>
-        private void SubscribePlayer(string mac)
+        /// <param name="force">
+        /// Send even when this MAC is already subscribed on the current
+        /// socket. Used by <see cref="OnPlayerBound"/>: a consumer binding a
+        /// MAC wants state NOW, and a re-created record (all consumers for a
+        /// room unbound, then one re-added) would otherwise sit blank until
+        /// the next 30 s keep-alive. The bulk re-arm paths pass false.
+        /// </param>
+        private void SubscribePlayer(string mac, bool force = false)
         {
-            _ = SendCliForPlayer(mac, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
-            _ = SendCliForPlayer(mac, LmsCliCommands.QueryMute(mac));
+            if (string.IsNullOrEmpty(mac)) return;
+
+            LmsCliClient cli;
+            CancellationToken token;
+            lock (_gate)
+            {
+                // _cli, the set test and the set add share ONE critical
+                // section, and DetachAndCaptureTransport_NoLock clears the set
+                // while nulling _cli under the same lock. So a teardown racing
+                // this either wins (cli is null, we record nothing) or loses
+                // (our entry is cleared) — it can never leave a MAC marked
+                // subscribed on a socket that is gone, which would make the
+                // next connect skip it.
+                cli = _cli;
+                if (cli == null) return;
+
+                var alreadyLive = !_subscribedMacs.Add(mac);
+                if (alreadyLive && !force) return;
+
+                token = _lifetime?.Token ?? CancellationToken.None;
+            }
+
+            SendOnCli(cli, token, LmsCliCommands.QueryStatus(mac, StatusSubscribeSeconds));
+            SendOnCli(cli, token, LmsCliCommands.QueryMute(mac));
+        }
+
+        // Fire-and-observe on a client captured under _gate, rather than
+        // re-reading _cli as SendCliForPlayer does — the caller has already
+        // committed to this socket and must not send on a newer one.
+        private static void SendOnCli(LmsCliClient cli, CancellationToken token, string line)
+        {
+            cli.SendLineAsync(line, token).ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
         }
 
         // ===== CLI send helpers =====
