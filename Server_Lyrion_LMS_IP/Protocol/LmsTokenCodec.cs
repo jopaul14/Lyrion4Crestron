@@ -15,6 +15,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Protocol
     /// </summary>
     internal static class LmsTokenCodec
     {
+        /// <summary>
+        /// Percent-encodes <paramref name="token"/> per RFC 3986: UTF-8 bytes,
+        /// everything outside <c>A-Za-z0-9-._~</c> escaped, uppercase hex.
+        /// </summary>
+        /// <remarks>
+        /// Hand-rolled on purpose; do not "simplify" this to
+        /// <c>Uri.EscapeDataString</c> (issue #72 / PR #77, closed won't-fix).
+        /// On .NET Framework the BCL encoder leaves <c>! ' ( ) *</c> unescaped
+        /// unless the entry assembly targets 4.5+, and a driver DLL cannot
+        /// control the host process that decides that quirk, so its output is
+        /// host-dependent. It also throws <c>UriFormatException</c> on an
+        /// unpaired surrogate and above 65,519 characters, where this loop is
+        /// total. <c>Encode</c> is on the credential path
+        /// (<c>LmsCliCommands.Login</c>), so deterministic and non-throwing
+        /// beats 25 fewer lines.
+        /// </remarks>
         public static string Encode(string token)
         {
             if (string.IsNullOrEmpty(token))
