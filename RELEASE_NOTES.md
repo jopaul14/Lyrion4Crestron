@@ -11,7 +11,126 @@
   the changed time text, so the redraw is the iOS app's behavior, and there
   is no driver fix. Tracked as #59 (closed as a known issue).
 
-## 1.0.21 — Unreleased (bench build)
+- **The CLI transport cannot tell its own command echo from a server push.**
+  LMS echoes every command back on the same socket and the driver keeps no
+  request/response correlation, so for an *available* player an echo is
+  applied as though the command succeeded exactly as sent. Accepted and
+  documented rather than fixed — the obvious filter would discard the
+  notifications that are how the driver learns about changes made from
+  Material Skin or a player's own front panel. Tracked as #41, with #53 as
+  its one observed consequence (the Source's power button flips optimistically
+  for a player that is unavailable).
+
+- **Registry events published from different threads can arrive out of
+  order** (#54), and **a first observation whose value equals the record's
+  default publishes nothing** (#39). Both are latent: see the 1.1.0 notes
+  below for why neither is fixed in this release and what each actually costs.
+
+## 1.1.0 — Release candidate (2026-09-20)
+
+First release since 1.0.0. It carries **everything from the 1.0.1–1.0.21
+development builds** documented below — the four-driver refactor, the
+reconnect and availability rework, effective-state publishing, presets,
+Crestron Home log forwarding, and the volume/mute parser fixes — plus the
+three fixes in this section.
+
+All four drivers are at **1.1.0** so the processor will reload them. **All
+four packages must be updated together.** Before building, delete the output
+folders (BUILD.md §2.0): a pre-rename `Gateway_Lyrion_LMS_IP.dll` is still
+present in the Server's output folder and ManifestUtil packages whatever it
+finds.
+
+### Fixed — Lyrion Server
+
+- **A hung write in the connect preamble wedged the driver permanently
+  (#63).** The #46 work bounded the connect, the read and the worker task, but
+  not the three writes between them — `login`, `listen 1` and `version ?`.
+  Those run after the socket is marked Connected and before the read loop
+  (which carries the liveness bound) starts, so a write that never completed
+  there left the client Connected with no reader running and no timer able to
+  notice: #46's exact observable signature — rooms offline indefinitely,
+  recoverable only by removing and re-adding the Lyrion Server — on a path
+  #46's fix did not cover. The preamble now runs under a single five-second
+  budget for all of its lines. A timeout is an ordinary failed attempt: tear
+  down, back off, reconnect.
+
+  The budget is shared rather than per line on purpose. Per line, two or three
+  timeouts would push the attempt past the ten seconds that count as a real
+  session, which resets the backoff schedule — so a server that accepted the
+  socket and then stalled every write would have reconnected every two seconds
+  forever, with a log line each time.
+
+- **Any settings save cycled every playing room off and on (#55).** Applying
+  the Server's configuration rebuilt the transport unconditionally, and a
+  rebuild is a hard connectivity boundary: it disposes the live CLI client,
+  resets the connectivity FSM and marks every player unavailable, so the
+  registry publishes power-OFF and Stopped for every room that was playing and
+  then the ON edges again five to seven seconds later. Crestron Home applies
+  each declared step and then all of them, so one save could do that two or
+  three times — including for the HTTP Port, which nothing connects with,
+  because the JSON-RPC client is dormant. With a "Power Is Off → Room Off"
+  mapping, a benign settings edit switched off every playing room in the
+  house. The Server now records what the live transport was built with and
+  rebuilds only when the host, CLI port, username or password actually
+  changed, or when there is no transport to keep.
+
+  **This changes a procedure.** Re-saving the Server's settings no longer
+  forces a reconnect, so it can no longer be used as one — bench check H6
+  ("alternate the unused HTTP Port between 9000 and 9001") and the reload step
+  in V4 both need re-writing to re-import the package instead. Nothing is lost
+  functionally: a genuinely dead socket is still detected by the liveness
+  probe and reconnected without intervention.
+
+- **Playback-derived power overrode an explicit power value (#60).** The
+  registry derives power from playback as a *fallback* for players that report
+  no power state at all, and its own comment says that fallback must never
+  override an explicit LMS power signal. The `Stopped` branch honoured that;
+  the `Playing` branch did not. On its own that was harmless, because status
+  replies used to note mode first and power second, so the explicit value won
+  by being last. The 1.0.16 reorder to power-before-mode — correct for its own
+  purpose, killing an ON/OFF pair emitted from a single message — made the
+  unguarded derivation the last writer instead. A reply carrying `mode:play`
+  together with `power:0` then asserted ON for a player LMS said was off, and
+  it stuck, because a subsequent `pause` is deliberately power-neutral. A
+  "Power Is On → Room On" mapping turns that into a real room power-on.
+
+  The registry is now told whether the *message* that produced a playback
+  state also carried an authoritative power value, and the raise stands down
+  when it did. The test is per-message, not per-record: `power` appears in
+  every status reply, so guarding on "has this record ever seen a power value"
+  would have looked equivalent and silently disabled the fallback for every
+  player that reports power at all. The bare CLI notifications (`play`,
+  `pause 0`, `stop`) carry no power field and keep the fallback — without it a
+  player LMS sends no separate power line for would read as OFF while playing,
+  the same bug inverted onto the same room mapping.
+
+### Deliberately not fixed in 1.1.0
+
+- **#54 (registry event ordering).** The fix the issue proposes — a second
+  lock held across the change callbacks — introduces a deadlock. The consumers
+  take their own `_applyGate` inside every event handler
+  (`ReceiverDriver.OnPowerStateChanged`, `HelperDriver.OnVolumeStepChanged`),
+  while `ReceiverDriver.OnVolumeStepReceived` holds `_applyGate` and calls
+  `SetVolumeStep` straight into a registry mutator that publishes. A publish
+  lock would make those two orders opposite — registry-then-consumer on the
+  CLI thread, consumer-then-registry on the configuration thread — and hang
+  the CLI receive thread and both consumers together, recoverable only by a
+  reboot. That is strictly worse than the stale edge it would fix. Ordering
+  still needs solving; it needs a design that does not hold a lock across the
+  fan-out.
+
+- **#39 (first observation equal to the record default).** Publishing it would
+  change nothing on screen: the consumers' own `Set<T>` is change-gated
+  against the value they already hold, which for these fields is the same
+  default, so the extra publish is swallowed one layer further on. The
+  rendering symptom this was filed for is already handled by 1.0.17's
+  `InitialiseView`, which writes every bound label and icon its idle value at
+  load. What remains is a contract weakness, not a visible fault. Check C9 is
+  the evidence that matters and the note on which controls broke has never
+  been recorded — that observation should come before a change to the
+  change-gate invariant.
+
+## 1.0.21 — Development build (rolled into 1.1.0)
 
 Fixes #51, #61 and #62. All four drivers are at 1.0.21 so the processor will
 reload them. **All four packages must be updated together.** Before building,
@@ -107,7 +226,7 @@ Both from a code review on 2026-09-20. Neither changes what a room shows.
    in check 4, every room still reflects power, playback, volume and mute
    changes made from Material Skin.
 
-## 1.0.20 — Unreleased (bench build)
+## 1.0.20 — Development build (rolled into 1.1.0)
 
 Two volume/mute parser fixes from a code review on 2026-09-18, both confirmed
 against LMS 9.1. All four drivers are at 1.0.20 so the processor will reload
@@ -176,7 +295,7 @@ out of order), #55 (any Server settings save cycles every playing room off and
 on), #56 (the tail of an oversize CLI line is parsed as its own line), and #57
 (a consumer can end up bound to a stale Server service).
 
-## 1.0.19 — Unreleased (bench build)
+## 1.0.19 — Development build (rolled into 1.1.0)
 
 Opened for the fixes coming out of the 1.0.18 bench pass (2026-09-15). All four
 drivers are at 1.0.19 so the processor will reload them — Crestron Home reloads
@@ -214,7 +333,7 @@ packages must be updated together.** Before building, delete the output folders
   user gesture (Crestron Home has no draggable seek bar) and still does not,
   but it is now driven internally. The PRD and CLAUDE.md both say so.
 
-## 1.0.18 — Unreleased (bench build)
+## 1.0.18 — Development build (rolled into 1.1.0)
 
 All four drivers are at 1.0.18 for the bench pass. **All four packages must be
 updated together**: `Lyrion_Common.dll` changed (#49). Anything the pass finds

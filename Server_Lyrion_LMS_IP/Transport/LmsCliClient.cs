@@ -89,6 +89,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
         /// <summary>Pause before a worker that ended unexpectedly is restarted.</summary>
         private static readonly TimeSpan WorkerRestartDelay = TimeSpan.FromSeconds(5);
 
+        /// <summary>
+        /// Bound on each write of the connect preamble (#63). The #46 work
+        /// bounded the connect, the read and the worker task, but the three
+        /// preamble sends between them ran unbounded: the socket is marked
+        /// Connected before they run, and ReceiveLoopAsync — which carries the
+        /// liveness bound — only starts after they return. A write that never
+        /// completes there wedges the client permanently, with the state left
+        /// at Connected and no reader running: #46's exact observable
+        /// signature, on a path #46's fix does not cover.
+        ///
+        /// A timed-out preamble is an ordinary failed attempt. Throwing lets
+        /// RunAsync's finally tear the connection down, and disposing the
+        /// stream is what unblocks the abandoned write and releases
+        /// _writeLock (see SendLineAsync). Five seconds is generous for two or
+        /// three short lines on a socket the OS has just accepted.
+        ///
+        /// This is a budget for the WHOLE preamble, not per write. Per write
+        /// it would not hold the property it exists for: RunAsync stamps
+        /// connectedAtUtc BEFORE the preamble and treats a session lasting
+        /// EstablishedSession (10 s) as real, so two 5 s writes already reach
+        /// that bar and three exceed it. A server that accepts the socket and
+        /// then stalls every preamble write would have had its backoff reset
+        /// to the first step on every cycle — reconnecting every 2 s forever
+        /// with a log line each time, the exact retry storm the schedule and
+        /// the logging invariant exist to prevent. One shared 5 s budget stays
+        /// inside EstablishedSession however many lines the preamble has.
+        /// </summary>
+        private static readonly TimeSpan PreambleTimeout = TimeSpan.FromSeconds(5);
+
         // Set when a "login failed" line has been surfaced for the current
         // outage; cleared when a session is established. Touched only on the
         // worker task (EmitLine runs inside ReceiveLoopAsync).
@@ -401,13 +430,17 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                     // re-armed below, and only for a session that actually
                     // lived (see EstablishedSession).
 
+                    // One deadline for the whole preamble — see PreambleTimeout
+                    // for why this must not be per write.
+                    var preambleDeadlineUtc = DateTime.UtcNow + PreambleTimeout;
+
                     if (!string.IsNullOrEmpty(_username))
                     {
-                        await SendLineAsync(LmsCliCommands.Login(_username, _password), ct).ConfigureAwait(false);
+                        await SendPreambleLineAsync(LmsCliCommands.Login(_username, _password), preambleDeadlineUtc, ct).ConfigureAwait(false);
                     }
 
-                    await SendLineAsync(LmsCliCommands.ListenAll(), ct).ConfigureAwait(false);
-                    await SendLineAsync(LmsCliCommands.QueryServerVersion(), ct).ConfigureAwait(false);
+                    await SendPreambleLineAsync(LmsCliCommands.ListenAll(), preambleDeadlineUtc, ct).ConfigureAwait(false);
+                    await SendPreambleLineAsync(LmsCliCommands.QueryServerVersion(), preambleDeadlineUtc, ct).ConfigureAwait(false);
 
                     await ReceiveLoopAsync(stream, ct).ConfigureAwait(false);
                 }
@@ -496,6 +529,54 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
                 client.Client.IOControl(IOControlCode.KeepAliveValues, keepAlive, null);
             }
             catch { /* not all platforms expose KeepAliveValues; SO_KEEPALIVE alone still helps */ }
+        }
+
+        /// <summary>
+        /// One connect-preamble write, bounded by what is left of the shared
+        /// <see cref="PreambleTimeout"/> budget (#63). On timeout the send is
+        /// abandoned — its fault observed, since the teardown that follows
+        /// disposes the stream and that is what ends it — and a
+        /// TimeoutException is thrown so RunAsync treats it as any other
+        /// failed attempt: tear down, back off, reconnect.
+        ///
+        /// The bound covers the whole call, not just the write: SendLineAsync
+        /// waits on _writeLock first, and a write hung on a previous socket
+        /// still holds it. Bounding that wait too is the point — otherwise the
+        /// new connection's preamble simply queues behind the old wedge.
+        /// </summary>
+        private async Task SendPreambleLineAsync(string commandLine, DateTime deadlineUtc, CancellationToken ct)
+        {
+            var send = SendLineAsync(commandLine, ct);
+
+            // Whatever is left of the budget. Already spent means zero, not a
+            // fresh interval: an earlier line in the same preamble having used
+            // the whole budget is exactly the case this must not extend.
+            var remaining = deadlineUtc - DateTime.UtcNow;
+            if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+
+            using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                var winner = await Task.WhenAny(send, Task.Delay(remaining, timer.Token)).ConfigureAwait(false);
+                timer.Cancel();
+                if (winner == send)
+                {
+                    // Propagates cancellation and any real send fault to
+                    // RunAsync, exactly as the unbounded await did. A `false`
+                    // return (socket already gone) also behaves as before: the
+                    // read loop that follows ends at once and the ordinary
+                    // reconnect path runs.
+                    await send.ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            // Observed before the cancellation check, as ReadWithLivenessAsync
+            // does: on the stopping path the send is abandoned just the same.
+            ObserveFault(send);
+            ct.ThrowIfCancellationRequested();
+
+            throw new TimeoutException("LMS connect preamble write timed out after "
+                + (int)PreambleTimeout.TotalSeconds + " s");
         }
 
         private static async Task ConnectWithCancellationAsync(TcpClient client, string host, int port, CancellationToken ct)

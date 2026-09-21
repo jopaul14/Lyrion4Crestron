@@ -262,13 +262,22 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
         // "Power Is On -> Room On" mapping a PoweredOn edge for an unreachable
         // player after every LMS restart.
         //
-        // Now the registry lowers power/playback itself on every availability
-        // loss (server-level and per-player alike), publishes those as real
-        // edges, and resets HasExplicitPower so the next explicit report
-        // counts as a first observation and publishes even if it equals the
-        // lowered value. Restore is then a genuine registry edge that every
-        // consumer receives identically, and the consumers' UpdateAvailability
-        // only sets Connected — no derivation, per the PRD.
+        // Now the registry keeps the raw values and applies "unavailable
+        // implies off and stopped" at the publish boundary (see the effective
+        // state section below), so an availability loss publishes the lowered
+        // EDGES without touching the record. Restore is then a genuine
+        // registry edge that every consumer receives identically, and the
+        // consumers' UpdateAvailability only sets Connected — no derivation,
+        // per the PRD.
+        //
+        // NOTE (#60): an earlier version of this comment said availability
+        // loss "resets HasExplicitPower so the next explicit report counts as
+        // a first observation". It does not, and never does — the flag is set
+        // in exactly one place (NoteExplicitPower) and is never cleared for
+        // the life of the record. That sentence described the 1.0.12
+        // lower-the-raw-fields design that effective state replaced in 1.0.13.
+        // It is corrected here because reasoning about a power fix from it
+        // leads directly to the wrong guard.
 
         // ===== Effective state =====
         //
@@ -484,7 +493,24 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
             }
         }
 
-        public void NotePlaybackState(string mac, LyrionPlaybackState state)
+        /// <param name="powerIsAuthoritative">
+        /// True when the SAME message that produced this playback state also
+        /// carried an explicit power value, which the caller has already noted
+        /// through <see cref="NoteExplicitPower"/> (#60). The playback-derived
+        /// raise is a fallback for players that report no power state at all,
+        /// so it must stand down when the message itself said what power is.
+        ///
+        /// The test is deliberately per-message, not per-record. Guarding on
+        /// <c>rec.HasExplicitPower</c> instead would look equivalent and is
+        /// not: `power` appears in EVERY status reply, so that flag is true
+        /// for the life of any player that reports power at all, and the
+        /// fallback would be dead code. Conversely the bare CLI notifications
+        /// (`play`, `pause 0`, `stop`) carry no power field, so they pass
+        /// false and keep the fallback — without it, a player that LMS never
+        /// sends a separate power line for would report as OFF while playing,
+        /// which is the same bug inverted onto the same room mapping.
+        /// </param>
+        public void NotePlaybackState(string mac, LyrionPlaybackState state, bool powerIsAuthoritative = false)
         {
             var canon = MacAddress.Normalize(mac);
             if (canon == null) return;
@@ -513,7 +539,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Server.Registry
                 // that never report an explicit power state — a player powered
                 // on but idle (stopped) keeps its explicit "on" state.
                 var desiredPower = rec.IsPoweredOn;
-                if (state == LyrionPlaybackState.Playing)
+                if (state == LyrionPlaybackState.Playing && !powerIsAuthoritative)
                 {
                     desiredPower = true;
                 }

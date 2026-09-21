@@ -128,6 +128,16 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
         private string _username;
         private string _password;
 
+        // What the LIVE transport was actually built with (#55). Compared
+        // against the settings above to decide whether an apply has to rebuild
+        // at all. _builtHost null means no transport has ever been built, so
+        // the first apply with a host always builds. Read and written only
+        // under _gate, alongside _cli, so the pair cannot disagree.
+        private string _builtHost;
+        private int _builtCliPort;
+        private string _builtUsername;
+        private string _builtPassword;
+
         private volatile bool _disposed;
         private volatile bool _serverConnected;
 
@@ -272,6 +282,35 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             lock (_gate)
             {
                 if (_disposed) return;
+
+                // #55: an apply used to rebuild unconditionally, and a rebuild
+                // is a hard connectivity boundary — it disposes the live client
+                // (blocking up to ~3 s), resets the FSM and marks every player
+                // unavailable, so the registry publishes power-OFF and Stopped
+                // for every room that was playing and then the ON edges again
+                // 5–7 s later. Crestron Home applies each declared step and
+                // then all of them, so ONE save could do that two or three
+                // times — for a change to a value the connection never reads,
+                // such as the HTTP Port (the JSON-RPC client is dormant). With
+                // a "Power Is Off → Room Off" mapping that switched off every
+                // playing room in the house.
+                //
+                // So rebuild only when something the CLI connection is
+                // actually built from has changed, or when there is no live
+                // transport to keep. _builtHost is null until the first build
+                // and is cleared by TeardownTransport, so both of those still
+                // build. Note _httpPort is deliberately absent from this
+                // comparison: nothing connects with it.
+                if (_cli != null
+                    && _builtHost != null
+                    && string.Equals(_builtHost, _host ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+                    && _builtCliPort == _cliPort
+                    && string.Equals(_builtUsername, _username ?? string.Empty, StringComparison.Ordinal)
+                    && string.Equals(_builtPassword, _password ?? string.Empty, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
                 DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
 
                 // A rebuild is a hard connectivity boundary: this method
@@ -319,6 +358,14 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
 
                 _cli = cli;
 
+                // Record what this transport was built with, under the same
+                // lock that publishes _cli, so the guard above can never see
+                // a live client next to stale built-values (#55).
+                _builtHost = _host ?? string.Empty;
+                _builtCliPort = _cliPort;
+                _builtUsername = _username ?? string.Empty;
+                _builtPassword = _password ?? string.Empty;
+
                 _ = cli.StartAsync(lifetime.Token);
             }
 
@@ -344,6 +391,10 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             {
                 DetachAndCaptureTransport_NoLock(out oldCli, out oldLifetime);
                 _fsm.Reset(); // same boundary as RebuildTransport
+
+                // There is no transport any more, so the next apply must build
+                // one whatever the settings say (#55).
+                _builtHost = null;
             }
             DisposeOldTransport(oldCli, oldLifetime);
             _registry.SetServerConnected(false);
@@ -865,24 +916,32 @@ namespace LyrionCommunity.Crestron.Lyrion.Server
             // bounce-back class, repeated on every keep-alive while it held.
             // With the explicit value noted first, the derivation sees the
             // authoritative state when it runs.
-            if (kv.TryGetValue("power", out var powerStr))
+            var powerIsAuthoritative = kv.TryGetValue("power", out var powerStr);
+            if (powerIsAuthoritative)
             {
                 _registry.NoteExplicitPower(mac, powerStr == "1");
             }
 
-            // Playback mode
+            // Playback mode. Ordering alone was not enough (#60): noting power
+            // first stopped the ON/OFF pair, but it also made the unguarded
+            // playback raise in NotePlaybackState the LAST writer, so a reply
+            // carrying mode:play with power:0 ended up asserting ON — the
+            // fallback overriding the authoritative value the comment above
+            // says it must not. Telling the registry that THIS message carried
+            // power is what actually restores the invariant; see the parameter
+            // docs on NotePlaybackState for why a per-record flag cannot.
             if (kv.TryGetValue("mode", out var mode))
             {
                 switch (mode)
                 {
                     case "play":
-                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Playing);
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Playing, powerIsAuthoritative);
                         break;
                     case "pause":
-                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Paused);
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Paused, powerIsAuthoritative);
                         break;
                     case "stop":
-                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Stopped);
+                        _registry.NotePlaybackState(mac, LyrionPlaybackState.Stopped, powerIsAuthoritative);
                         break;
                 }
             }
