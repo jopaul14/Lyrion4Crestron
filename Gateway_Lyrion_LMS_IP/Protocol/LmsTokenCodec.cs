@@ -5,7 +5,6 @@
 
 using System;
 using System.Net;
-using System.Text;
 
 namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
 {
@@ -22,24 +21,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
                 return string.Empty;
             }
 
-            var sb = new StringBuilder(token.Length + 8);
-            var bytes = Encoding.UTF8.GetBytes(token);
-            for (var i = 0; i < bytes.Length; i++)
-            {
-                var b = bytes[i];
-                if (IsUnreserved(b))
-                {
-                    sb.Append((char)b);
-                }
-                else
-                {
-                    sb.Append('%');
-                    sb.Append(HexDigit(b >> 4));
-                    sb.Append(HexDigit(b & 0x0F));
-                }
-            }
-
-            return sb.ToString();
+            return Uri.EscapeDataString(token);
         }
 
         public static string Decode(string token)
@@ -90,17 +72,5 @@ namespace LyrionCommunity.Crestron.Lyrion.Gateway.Protocol
             return mac;
         }
 
-        private static bool IsUnreserved(byte b)
-        {
-            return (b >= (byte)'A' && b <= (byte)'Z')
-                || (b >= (byte)'a' && b <= (byte)'z')
-                || (b >= (byte)'0' && b <= (byte)'9')
-                || b == (byte)'-' || b == (byte)'.' || b == (byte)'_' || b == (byte)'~';
-        }
-
-        private static char HexDigit(int nibble)
-        {
-            return (char)(nibble < 10 ? ('0' + nibble) : ('A' + (nibble - 10)));
-        }
     }
 }
