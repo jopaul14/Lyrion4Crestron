@@ -9,6 +9,7 @@
       "SupportsDiscretePower": true,
       "SupportsTogglePower": true,
       "SupportsPowerFeedback": true,
+      "SupportsCoolDownTime": true,
       "SupportsPlayBackStatusFeedback": true,
       "SupportsFeedback": true,
       "SupportsDisconnect": true,

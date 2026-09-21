@@ -4,6 +4,7 @@
       "SupportsDiscretePower": true,
       "SupportsTogglePower": true,
       "SupportsPowerFeedback": true,
+      "SupportsCoolDownTime": true,
       "SupportsSetVolume": true,
       "SupportsChangeVolume": true,
       "SupportsVolumePercentFeedback": true,

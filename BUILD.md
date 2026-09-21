@@ -132,6 +132,8 @@ You will see ManifestUtil print `Null Exception: String reference not set to an 
 
 You may also see `System.IO.FileLoadException` for `Microsoft.Office.Interop.Word` followed by `Error creating DAT file`. This is also harmless: ManifestUtil writes the `.pkg` first, then tries to generate a companion `.dat` file via Word COM interop. With no Word installed the `.dat` is skipped. The `.dat` is not required for the driver to run on a Crestron controller; the build target ignores ManifestUtil's exit code and verifies that the `.pkg` was actually produced.
 
+After ManifestUtil runs, the build calls `build\Normalize-PkgPaths.ps1` on the package it produced. ManifestUtil writes nested package entries with Windows separators (`uidefinitions\UiDefinition.xml`), which violates the ZIP specification and makes Crestron Home's CustomAppManager log a warning for every scan of that package (#78). The script rewrites the entry names to forward slashes, leaving contents, order and timestamps untouched; a package with no nested entries is left alone, so today only the Helper is actually rewritten. You will see one `NormalizePkgPaths:` line per project in the build output.
+
 ### 2.4 .pkg location
 
 After building, the .pkg files will be located under the following locations (dependent on your higher-level directory structure)
