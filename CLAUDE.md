@@ -1,7 +1,7 @@
 # Lyrion4Crestron — Working Instructions
 
 Four-driver Crestron Home suite integrating Lyrion Music Server (LMS). The
-four-driver refactor is **complete** (all drivers ship together at 1.1.0).
+four-driver refactor is **complete** (all drivers ship together at 1.1.1).
 
 **The authoritative product/architecture document is [docs/PRD.md](docs/PRD.md).**
 It describes the system as-built: architecture, driver contracts, behavioral

@@ -26,19 +26,114 @@
   default publishes nothing** (#39). Both are latent: see the 1.1.0 notes
   below for why neither is fixed in this release and what each actually costs.
 
-## 1.1.0 — Release candidate (2026-09-20)
+## 1.1.1 — Release candidate (2026-09-21)
+
+Supersedes the 1.1.0 RC, which was installed on the bench but never run —
+its sheet recorded no verdicts. 1.1.1 **carries every 1.1.0 change
+unaltered**; the 1.1.0 section below remains the record of what the #63,
+#55 and #60 fixes were and why #54 and #39 were deliberately left out. The
+two fixes in this section are the only difference, and **neither changes
+the driver's runtime behaviour** — one renames entries inside a package,
+the other sets a driver-data flag that no driver code reads.
+
+All four drivers are at **1.1.1** so the processor will reload them. **All
+four packages must be updated together.** Before building, delete the output
+folders (BUILD.md §2.0): a pre-rename `Gateway_Lyrion_LMS_IP.dll` is still
+present in the Server's output folder and ManifestUtil packages whatever it
+finds.
+
+### Why a respin rather than a rebuilt 1.1.0
+
+Crestron Home reloads a driver only when `Driver.json`'s `DriverVersion`
+changes, and #79 *is* a `Driver.json` change — a rebuilt "1.1.0" would have
+shipped a package the processor ignored. The RC rule says the same thing
+independently: the build under test is the build that ships, so a respin
+gets its own number rather than re-using one. Bumping now cost nothing
+because no 1.1.0 verdicts existed to invalidate.
+
+### Fixed — packaging (all four drivers)
+
+- **The Helper package used backslash path separators, and Crestron Home
+  warned on every scan (#78).** `CustomAppManager` logged
+  `Helper_Lyrion_Player.pkg appears to use backslashes as path separators`
+  once per package scan — so at every boot, not just at import. A `.pkg` is
+  a ZIP archive, and `ManifestUtil.exe` writes nested entries with Windows
+  separators: `programming\HelperDriver.json`, `translations\en-US.json`,
+  `uidefinitions\UiDefinition.xml`. The ZIP specification (APPNOTE 4.4.17.1)
+  requires the forward slash, and the processor runs Linux, where `\` is a
+  legal filename character rather than a separator.
+
+  Only the Helper was affected: it is the only package with nested entries.
+  It is the only driver with `[ProgrammableOperation]` members (the four
+  preset operations, hence `programming\`), and the only one carrying
+  `IncludeInPkg` content (the UI definition, and the deliberately empty
+  translations file added in 1.0.18). The other three packages are flat.
+
+  ManifestUtil is a closed binary, so the fix is a post-build step:
+  `build\Normalize-PkgPaths.ps1` rebuilds the package with the same entries,
+  same order, same contents and same timestamps, with `\` replaced by `/`.
+  A package already using forward slashes is left untouched, so the step is
+  idempotent and a no-op for the three flat packages. It is wired into all
+  four projects rather than the Helper alone, so the invariant survives the
+  next driver that gains a folder or a programmable operation. Verified
+  against a real ManifestUtil-produced package: six entries rewritten, all
+  six payloads SHA256-identical before and after.
+
+### Fixed — Lyrion Source, Lyrion Receiver
+
+- **Neither driver declared `SupportsCoolDownTime`, so Crestron Home logged
+  an Error on every power-wait extraction (#79).**
+  `RadMediaBase.ExtractWarmupTimeFromDevice` logs
+  `Device does not support CooldownTime` for any device whose
+  `IPower.SupportsCoolDownTime` is false, and it fires per operation rather
+  than once per device — three of them landed in the same second on the
+  bench. That is log churn on a flash-backed log, and it is noise in exactly
+  the place the Crestron Home log forwarding added in #49 asks an installer
+  to look.
+
+  `SupportsCoolDownTime` is get-only on `ABasicBlurayPlayer` and
+  `ABasicAVReceiver`, so it can only come from `Driver.json`'s
+  `DeviceSupport` block. One key added to each of the two drivers.
+  `PowerWaitPeriod.CoolDownTime` stays `0`: the two are independent keys in
+  the RAD schema (Crestron's own `AVSwitcher_Crestron_SampleDriver_IP` ships
+  `SupportsCoolDownTime: false` alongside a cool-down of 5), and a Lyrion
+  player has no cool-down.
+
+  Nothing in the driver acts on the flag. `SourceProtocol` and
+  `ReceiverProtocol` override `PowerOn`/`PowerOff`/`Power` without chaining
+  to the base, so `ABaseDriverProtocol`'s warm-up/cool-down state machine is
+  never entered and `WarmingUp`/`CoolingDown` stay false. The flag changes
+  what Crestron Home *reads* from `IPower`, and nothing else.
+  `SupportsWarmUpTime` is deliberately not declared: no matching warm-up
+  line was ever logged, so there is nothing to suppress.
+
+### Not verified off-hardware
+
+Both fixes address messages emitted by Crestron Home, not by the driver, and
+there is no source or decompiler for that side. What is established is that
+`SupportsCoolDownTime` is data-driven and that the rewritten package is
+byte-identical in content; what is not established is that either message
+actually stops. Worst case for #79 is that the Error persists — it cannot
+introduce a routing or power delay, for the reason above.
+
+Two checks to run with 1.1.1 imported: no `appears to use backslashes` line
+for `Helper_Lyrion_Player.pkg` after a reboot, and no
+`ExtractWarmupTimeFromDevice` Error when a Source or Receiver is added or
+routed. Then confirm nothing moved behaviourally — source select still
+switches without a wait, and power follows the player both ways (R4).
+
+## 1.1.0 — Release candidate, superseded by 1.1.1 (2026-09-20)
+
+**Do not build this one.** It was installed on the bench but never run, and
+1.1.1 carries all of it unaltered. This section is kept because it is the
+record of the three fixes below and of the two issues deliberately left out
+— 1.1.1's notes do not repeat them.
 
 First release since 1.0.0. It carries **everything from the 1.0.1–1.0.21
 development builds** documented below — the four-driver refactor, the
 reconnect and availability rework, effective-state publishing, presets,
 Crestron Home log forwarding, and the volume/mute parser fixes — plus the
 three fixes in this section.
-
-All four drivers are at **1.1.0** so the processor will reload them. **All
-four packages must be updated together.** Before building, delete the output
-folders (BUILD.md §2.0): a pre-rename `Gateway_Lyrion_LMS_IP.dll` is still
-present in the Server's output folder and ManifestUtil packages whatever it
-finds.
 
 ### Fixed — Lyrion Server
 
