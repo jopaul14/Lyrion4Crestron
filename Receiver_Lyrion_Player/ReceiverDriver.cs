@@ -296,6 +296,26 @@ namespace LyrionCommunity.Crestron.Lyrion.Receiver
             //    sees a field edge while this device reports itself
             //    disconnected: restore = Connected first, then fields;
             //    loss = fields first, then Connected.
+            //
+            // Boot-time "FireVolumeChanged: no one subscribed to handler"
+            // (#43) originates here and is EXPECTED: Subscribe() invokes
+            // OnServerAvailable SYNCHRONOUSLY when the Lyrion Server is
+            // already up, so this bind-time publish can beat the RAD
+            // wrapper's own handler attach. It is cosmetic — UpdateVolume/
+            // UpdateMute/UpdatePower assign the RAD property BEFORE raising
+            // the event, so the value is in the object either way and the
+            // wrapper reads it when it attaches. Verified on hardware
+            // 2026-09-21 (1.1.1): volume changed in Material Skin to 15
+            // DURING a processor reboot; Crestron Home came back showing 15,
+            // not its stale pre-reboot value. Intermittent (one clean boot in
+            // three) and unrelated to any Crestron Home volume automation.
+            //
+            // Do NOT silence it by deferring this publish until after
+            // Initialize. A field whose first observed value equals the
+            // record's default publishes nothing (the change gate), so a
+            // deferred publish can become NO publish at all and Crestron Home
+            // renders a placeholder — the 1.0.17 "silence is not information"
+            // class.
             if (snap.IsAvailable) UpdateAvailability(true);
             if (snap.IsObserved)
             {
