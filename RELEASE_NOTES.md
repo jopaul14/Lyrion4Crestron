@@ -17,16 +17,27 @@
   applied as though the command succeeded exactly as sent. Accepted and
   documented rather than fixed — the obvious filter would discard the
   notifications that are how the driver learns about changes made from
-  Material Skin or a player's own front panel. Tracked as #41, with #53 as
-  its one observed consequence (the Source's power button flips optimistically
-  for a player that is unavailable).
+  Material Skin or a player's own front panel. Tracked as #41. Its one
+  observed consequence is that the Source's power button flips optimistically
+  for a player that is both switched off and absent from LMS: nothing is sent,
+  no room is driven, and the Helper — the device that owns the room UI —
+  behaves correctly throughout. That was #53, closed as accepted rather than
+  fixed; if it ever costs anything in practice it should come back as a fresh
+  issue describing the cost.
 
 - **Registry events published from different threads can arrive out of
-  order** (#54), and **a first observation whose value equals the record's
-  default publishes nothing** (#39). Both are latent: see the 1.1.0 notes
-  below for why neither is fixed in this release and what each actually costs.
+  order** (#54). Latent: see the 1.1.0 notes below for why it is not fixed and
+  what it actually costs. The related **#39** — a first observation whose value
+  equals the record's default publishes nothing — is **closed**. Its
+  discriminating test is bench check C9, the project's only recorded Tier 1
+  failure, and C9 passed on 1.1.1 with the exact predicted case (a player whose
+  shuffle and mute both matched the driver's defaults) rendering correctly. The
+  code behaviour is real; the user-visible effect is not, because each
+  consumer's own change-gated setter swallows the republished default and
+  1.0.17's `InitialiseView` already writes every label and icon an idle value at
+  load.
 
-## 1.1.1 — Release candidate (2026-09-21)
+## 1.1.1 (2026-09-21)
 
 Supersedes the 1.1.0 RC, which was installed on the bench but never run —
 its sheet recorded no verdicts. 1.1.1 **carries every 1.1.0 change
@@ -107,20 +118,45 @@ because no 1.1.0 verdicts existed to invalidate.
   `SupportsWarmUpTime` is deliberately not declared: no matching warm-up
   line was ever logged, so there is nothing to suppress.
 
-### Not verified off-hardware
+### Both fixes confirmed on hardware
 
-Both fixes address messages emitted by Crestron Home, not by the driver, and
-there is no source or decompiler for that side. What is established is that
-`SupportsCoolDownTime` is data-driven and that the rewritten package is
-byte-identical in content; what is not established is that either message
-actually stops. Worst case for #79 is that the Error persists — it cannot
-introduce a routing or power delay, for the reason above.
+Both addressed messages emitted by Crestron Home rather than by the driver, so
+neither could be proved without a processor. Both were then confirmed:
 
-Two checks to run with 1.1.1 imported: no `appears to use backslashes` line
-for `Helper_Lyrion_Player.pkg` after a reboot, and no
-`ExtractWarmupTimeFromDevice` Error when a Source or Receiver is added or
-routed. Then confirm nothing moved behaviourally — source select still
-switches without a wait, and power follows the player both ways (R4).
+- **#78** — no `appears to use backslashes` line for the Helper package across
+  four boots, and the Helper page and its four programmable preset operations
+  survived the entry-name rewrite intact.
+- **#79** — no `ExtractWarmupTimeFromDevice` Error for any Lyrion device across
+  the same four boots, while two other vendors' drivers on the same processor
+  still logged it. That confirms the diagnosis: the cause was the missing
+  `DeviceSupport` key, not noise Crestron Home emits for everyone. Nothing
+  waits, either — source select is unchanged and power still follows the player
+  in both directions.
+
+### Verification
+
+1.1.1 is the first release in this project's history to ship against a
+**complete** run of its hardware test plan: **66 checks — 59 pass, 7 not
+tested, 0 failures.** The Tier 1 subset, which is the bar modelled on
+Crestron's own certification self-test plans, is **39 pass, 3 not tested, 0
+failures**.
+
+The seven not-tested are environment limits rather than deferrals, and they are
+the honest gaps in this release:
+
+- **Four** share one cause: the test system's Crestron Home cannot re-import a
+  single driver package without removing and re-adding the device, which blocks
+  the four checks that use a package re-import as their reload step. The
+  behaviour underneath is partly covered elsewhere — mute is confirmed to
+  survive a full processor reboot, which is a stronger reload — but "muted at
+  volume 0 specifically, across a driver reload" is untested.
+- **One** needs a room with more than one selectable source; the test system has
+  none.
+- **One** is a whole-house power outage, which the test environment could not
+  accommodate. A processor-only reboot and a four-minute network outage were
+  both run and both passed.
+- **One** needs an auth-enabled LMS; driver credentials were not exercised, so
+  the blank-credentials behaviour tracked as #52 remains unverified.
 
 ## 1.1.0 — Release candidate, superseded by 1.1.1 (2026-09-20)
 
