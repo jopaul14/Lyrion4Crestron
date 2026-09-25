@@ -2,7 +2,7 @@
 <!--
   Source_Lyrion_Player - Driver 2 of the four-driver Lyrion architecture.
   Per-room routable audio source (RAD Bluray Player). Binds to one MAC
-  address; consumes the ILyrionGatewayService published by Driver 1. Never
+  address; consumes the ILyrionServerService published by Driver 1. Never
   connects to LMS.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
@@ -120,6 +120,16 @@
 
     <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pkg')"
            Text="ManifestUtil.exe did not produce $(AssemblyName).pkg." />
+
+    <!--
+      ManifestUtil writes nested package entries with Windows separators
+      ("uidefinitions\UiDefinition.xml"). The ZIP spec (APPNOTE 4.4.17.1)
+      requires forward slashes, and Crestron Home's CustomAppManager logs an
+      errlog warning for every package that does not use them (#78), so the entry
+      names are rewritten in place. A package with no nested entries is left
+      untouched.
+    -->
+    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\build\Normalize-PkgPaths.ps1&quot; -Path &quot;$(TargetDir)$(AssemblyName).pkg&quot;" />
 
     <Message Importance="high" Text="ManifestUtil: produced $(TargetDir)$(AssemblyName).pkg" />
   </Target>

@@ -18,7 +18,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
     /// Bluray Player. Exposes only the transport and power controls the
     /// Bluray Player type supports natively (Play / Pause / Stop /
     /// ForwardSkip / ReverseSkip / Power). Never opens a socket to LMS — every
-    /// command is forwarded to the Lyrion Server gateway service, and all
+    /// command is forwarded to the Lyrion Server service, and all
     /// feedback (availability, power, playback) arrives from that service.
     /// Volume, metadata, shuffle, repeat, and seek live in the companion
     /// Helper and Receiver drivers, not here.
@@ -28,10 +28,29 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private readonly Action<string> _log;
         private readonly object _gate = new object();
 
+        // Serialises every write of the RAD-facing state (PowerIsOn,
+        // PlayBackStatus, Connected): the bind-time snapshot read+apply, each
+        // Lyrion Server event handler, and Dispose's unbind. Without it a
+        // CLI-thread event delivered between TryGetSnapshot and ApplySnapshot
+        // was overwritten by the stale forced snapshot — and because the
+        // registry only publishes on change, never corrected — and a Dispose
+        // or MAC edit racing an in-flight bind could unbind a MAC this driver
+        // had not yet bound (decrementing the Helper/Receiver's shared count)
+        // and then leak the late bind. Lock order: _applyGate, then _gate;
+        // never the reverse. The registry raises events outside its own lock,
+        // so holding this while calling TryGetSnapshot cannot invert.
+        private readonly object _applyGate = new object();
+
+        // Last availability the Lyrion Server reported for the bound player,
+        // so Connect() — which the framework re-runs after any MAC edit — can
+        // restore it instead of forcing Connected=true over it. Starts true
+        // (the framework's pre-bind default).
+        private bool _lastAvailability = true;
+
         private SourceProtocol _protocol;
         private string _configuredMac;
         private string _boundMac;
-        private ILyrionGatewayService _gateway;
+        private ILyrionServerService _server;
         private volatile bool _disposed;
 
         public SourceDriver()
@@ -53,12 +72,40 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             BlurayPlayerProtocol = _protocol;
             BlurayPlayerProtocol.Initialize(BlurayPlayerData);
 
-            LyrionGatewayServiceRegistry.Subscribe(OnGatewayAvailable);
+            // Align the framework baseline with the registry's: RAD defaults
+            // PlayBackStatus to NoDisc (enum 0), which is wrong for an audio
+            // player at rest, while an unobserved registry record is Stopped.
+            // Setting it once here means a bind never has to force-publish a
+            // playback value for a player nobody has observed.
+            PlayBackStatus = PlayBackStatusEnum.Stop;
+
+            LyrionServerServiceRegistry.Subscribe(OnServerAvailable);
         }
 
         public override void Connect()
         {
-            Connected = true;
+            // The framework calls this at load. After an edit to a
+            // RequiredForConnection attribute (the MAC) Crestron Home
+            // re-creates the driver (seen on the 1.0.17 pass, test H2), so it
+            // runs again on a FRESH instance rather than this one; the code
+            // must be right either way. An unconditional
+            // Connected=true here overrode the availability already learned
+            // from the Lyrion Server, and the registry — change-gated on its
+            // own unchanged copy — never sent AvailabilityChanged(false) again.
+            // Not `!bound || available` (1.0.13): that read an UNBOUND driver as
+            // connected and undid UnbindInvalidMac's "offline" as soon as the
+            // framework re-ran this for the edit that caused the unbind.
+            // _lastAvailability starts true (the pre-bind default) and is
+            // driven false by a loss or by an invalid-MAC unbind. Under
+            // _applyGate like every other write of Connected (1.0.15), so it
+            // cannot interleave with a loss arriving on the CLI thread and
+            // leave a stale true that the registry would never correct.
+            lock (_applyGate)
+            {
+                bool available;
+                lock (_gate) { available = _lastAvailability; }
+                Connected = available;
+            }
         }
 
         // ===== Configuration =====
@@ -66,137 +113,260 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
         private void OnMacAddressReceived(string rawMac)
         {
             var canon = MacAddress.Normalize(rawMac);
-            if (canon == null) return;
+            if (canon == null)
+            {
+                UnbindInvalidMac(rawMac);
+                return;
+            }
 
             lock (_gate) { _configuredMac = canon; }
-            TryBindToGateway();
+            TryBindToServer();
         }
 
-        // ===== Gateway binding =====
-
-        private void OnGatewayAvailable(ILyrionGatewayService service)
+        /// <summary>
+        /// The installer cleared the MAC or typed something unparseable.
+        /// Before 1.0.13 this was silently ignored and the driver stayed bound
+        /// to — and kept driving — the previous player. Treat it as an unbind:
+        /// release the registry record, report off/stopped then disconnected
+        /// (the registry's loss order), and log the one misconfiguration
+        /// warning the PRD sanctions.
+        ///
+        /// In practice it is the nothing-bound branch that runs. Crestron Home
+        /// re-creates the driver when the MAC is edited, so the new value
+        /// arrives at a fresh instance with nothing bound. Seen on hardware
+        /// (1.0.17 pass, test H2): a Source set to "xyz" let go of its player
+        /// but still showed Online, because this branch only logged and left
+        /// _lastAvailability at its initial true. A NON-BLANK invalid value
+        /// now marks the device offline here too, and still gets the warning
+        /// (a typo at first setup is the one moment the installer is looking
+        /// at the log). Offline only: a fresh instance has observed nothing,
+        /// and a forced power-off would fire a Power Is Off → Room Off
+        /// mapping on every reboot with a bad MAC saved — the 1.0.11 harm.
+        /// An empty attribute stays silent and untouched: nothing is
+        /// configured yet. The bound branch stays for an edit that does
+        /// reach a live instance.
+        /// </summary>
+        private void UnbindInvalidMac(string rawMac)
         {
-            // May be invoked more than once: on initial subscription and again
-            // whenever the Gateway driver reloads and registers a fresh service.
-            // Detach from the old service and rebind to the new one.
-            if (_disposed) return;
-
-            ILyrionGatewayService oldService;
-            lock (_gate)
+            lock (_applyGate)
             {
-                if (_disposed) return;
-                if (ReferenceEquals(_gateway, service)) return;
-
-                oldService = _gateway;
-                _gateway = service;
-                _boundMac = null;
-
-                service.AvailabilityChanged += OnAvailabilityChanged;
-                service.PowerStateChanged += OnPowerStateChanged;
-                service.PlaybackStateChanged += OnPlaybackStateChanged;
-            }
-
-            if (oldService != null)
-            {
-                try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
-            }
-
-            TryBindToGateway();
-        }
-
-        private void TryBindToGateway()
-        {
-            ILyrionGatewayService svc;
-            string mac;
-            string previousMac = null;
-            lock (_gate)
-            {
-                svc = _gateway;
-                mac = _configuredMac;
-                if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
+                ILyrionServerService svc;
+                string previous;
+                lock (_gate)
                 {
+                    _configuredMac = null;
+                    previous = _boundMac;
+                    _boundMac = null;
+                    svc = _server;
+                }
+                if (previous == null)
+                {
+                    if (!string.IsNullOrWhiteSpace(rawMac))
+                    {
+                        UpdateAvailability(false);
+                        _log("Source WARNING: player MAC '" + rawMac + "' is not valid; nothing bound");
+                    }
                     return;
                 }
-                if (_boundMac != null && !string.Equals(_boundMac, mac, StringComparison.Ordinal))
+
+                if (svc != null) { try { svc.UnbindPlayer(previous); } catch { } }
+                UpdatePlayback(LyrionPlaybackState.Stopped, force: true);
+                UpdatePower(false, force: true);
+                UpdateAvailability(false);
+                _log("Source WARNING: player MAC '" + (rawMac ?? string.Empty) + "' is not valid; unbound from " + previous);
+            }
+        }
+
+        // ===== Lyrion Server binding =====
+
+        private void OnServerAvailable(ILyrionServerService service)
+        {
+            // May be invoked more than once: on initial subscription and again
+            // whenever the Lyrion Server driver reloads and registers a fresh
+            // service. Detach from the old service and rebind to the new one.
+            // The whole swap runs under _applyGate (1.0.15) so it cannot
+            // interleave with a bind already in flight on the OLD service:
+            // that bind either finishes first (and the rebind below replaces
+            // what it applied) or sees the new service — never half of each,
+            // which could force-apply a disposed registry's stale snapshot
+            // and leave it standing.
+            if (_disposed) return;
+
+            lock (_applyGate)
+            {
+                ILyrionServerService oldService;
+                lock (_gate)
                 {
-                    previousMac = _boundMac;
+                    if (_disposed) return;
+                    if (ReferenceEquals(_server, service)) return;
+
+                    oldService = _server;
+                    _server = service;
+                    _boundMac = null;
+
+                    service.AvailabilityChanged += OnAvailabilityChanged;
+                    service.PowerStateChanged += OnPowerStateChanged;
+                    service.PlaybackStateChanged += OnPlaybackStateChanged;
                 }
-                _boundMac = mac;
-            }
 
-            if (previousMac != null)
-            {
-                svc.UnbindPlayer(previousMac);
-            }
-
-            if (svc.BindPlayer(mac))
-            {
-                _log("Source: Bound to MAC " + mac);
-
-                if (svc.TryGetSnapshot(mac, out var snap))
+                if (oldService != null)
                 {
-                    ApplySnapshot(snap);
+                    try { oldService.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { oldService.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { oldService.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                }
+
+                TryBindToServer();
+            }
+        }
+
+        private void TryBindToServer()
+        {
+            // The whole bind — commit _boundMac, unbind the previous MAC, bind,
+            // read the snapshot, apply it — runs under _applyGate, so no event
+            // handler and no concurrent Dispose/MAC edit can interleave with
+            // it (see the field comment).
+            lock (_applyGate)
+            {
+                ILyrionServerService svc;
+                string mac;
+                string previousMac;
+                lock (_gate)
+                {
+                    svc = _server;
+                    mac = _configuredMac;
+                    if (svc == null || string.IsNullOrEmpty(mac) || string.Equals(_boundMac, mac, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    previousMac = _boundMac; // null when nothing was bound
+                    _boundMac = mac;
+                }
+
+                if (previousMac != null)
+                {
+                    svc.UnbindPlayer(previousMac);
+                }
+
+                if (svc.BindPlayer(mac))
+                {
+                    _log("Source: Bound to MAC " + mac);
+
+                    if (svc.TryGetSnapshot(mac, out var snap))
+                    {
+                        ApplySnapshot(snap);
+                    }
                 }
             }
         }
 
         private void ApplySnapshot(LyrionPlayerSnapshot snap)
         {
-            UpdateAvailability(snap.IsAvailable);
-            UpdatePower(snap.IsPoweredOn);
-            UpdatePlayback(snap.PlaybackState);
+            // Two rules, both learned the hard way (RELEASE_NOTES 1.0.11–1.0.13):
+            //
+            // 1. Touch power/playback ONLY for a snapshot the Lyrion Server has
+            //    observed (LyrionPlayerSnapshot.IsObserved — a full status
+            //    response applied; NOT IsAvailable, which flips before power
+            //    is parsed). For an unobserved record touch nothing but
+            //    Connected. Not "call UpdatePower un-forced": an un-forced
+            //    false still passes the change-gate when this driver holds
+            //    ON, which is exactly the case on a Lyrion Server reload, and
+            //    it published a fabricated PoweredOff that a "Power Is Off ->
+            //    Room Off" mapping turned into a real power-off.
+            //
+            // 2. Apply in the registry's own order so Crestron Home never
+            //    sees a field edge while this device reports itself
+            //    disconnected: an available snapshot is a restore
+            //    (availability first, then fields); an unavailable one is a
+            //    loss (fields first — they are the effective off/stopped —
+            //    then availability).
+            //
+            // No playback force for unobserved records: Initialize() aligns
+            // the RAD baseline (NoDisc) to the registry's (Stopped) once.
+            //
+            // Field order within a restore is power then playback and within
+            // a loss playback then power (the registry's RaiseAvailabilityChange
+            // order), so the pair is written out per branch.
+            if (snap.IsAvailable)
+            {
+                UpdateAvailability(true);
+                if (snap.IsObserved)
+                {
+                    UpdatePower(snap.IsPoweredOn, force: true);
+                    UpdatePlayback(snap.PlaybackState, force: true);
+                }
+            }
+            else
+            {
+                if (snap.IsObserved)
+                {
+                    UpdatePlayback(snap.PlaybackState, force: true);
+                    UpdatePower(snap.IsPoweredOn, force: true);
+                }
+                UpdateAvailability(false);
+            }
         }
 
-        // ===== Gateway event handlers =====
+        // ===== Lyrion Server event handlers =====
+
+        // Each handler applies under _applyGate, and checks IsMine inside it
+        // so a bind that completes concurrently cannot be raced by an event
+        // for the MAC it is in the middle of binding.
 
         private void OnAvailabilityChanged(string mac, bool isAvailable)
         {
-            if (!IsMine(mac)) return;
-            UpdateAvailability(isAvailable);
+            lock (_applyGate)
+            {
+                if (!IsMine(mac)) return;
+                UpdateAvailability(isAvailable);
+            }
         }
 
         private void OnPowerStateChanged(string mac, bool isOn)
         {
-            if (!IsMine(mac)) return;
-            UpdatePower(isOn);
+            lock (_applyGate)
+            {
+                if (!IsMine(mac)) return;
+                UpdatePower(isOn);
+            }
         }
 
         private void OnPlaybackStateChanged(string mac, LyrionPlaybackState state)
         {
-            if (!IsMine(mac)) return;
-            UpdatePlayback(state);
+            lock (_applyGate)
+            {
+                if (!IsMine(mac)) return;
+                UpdatePlayback(state);
+            }
         }
 
         // ===== Feedback into the RAD framework =====
 
         private void UpdateAvailability(bool isAvailable)
         {
+            // Connection only. "Unavailable implies powered off and stopped"
+            // is the registry's derivation (effective state): it publishes the
+            // off/stopped edges BEFORE this event on loss and the on/playing
+            // edges AFTER it on restore. Deriving it here as well (as this
+            // driver did through 1.0.11) kept a second copy the registry could
+            // not see, and the change-gate then swallowed the correction.
+            lock (_gate) { _lastAvailability = isAvailable; }
             Connected = isAvailable;
             SendStateChangeEvent(BlurayPlayerStateObjects.Connection);
-
-            if (!isAvailable)
-            {
-                // When the player drops off the server, stop reporting stale
-                // power/playback so the routing graph reflects reality.
-                UpdatePlayback(LyrionPlaybackState.Stopped);
-                UpdatePower(false);
-            }
         }
 
-        private void UpdatePower(bool isOn)
+        private void UpdatePower(bool isOn, bool force = false)
         {
-            if (PowerIsOn == isOn) return;
+            if (!force && PowerIsOn == isOn) return;
             PowerIsOn = isOn;
             SendStateChangeEvent(isOn ? BlurayPlayerStateObjects.PoweredOn : BlurayPlayerStateObjects.PoweredOff);
             SendStateChangeEvent(BlurayPlayerStateObjects.Power);
         }
 
-        private void UpdatePlayback(LyrionPlaybackState state)
+        private void UpdatePlayback(LyrionPlaybackState state, bool force = false)
         {
             var mapped = Map(state);
-            if (PlayBackStatus == mapped) return;
+            if (!force && PlayBackStatus == mapped) return;
             PlayBackStatus = mapped;
             SendStateChangeEvent(BlurayPlayerStateObjects.PlayBackStatus);
         }
@@ -211,20 +381,20 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             }
         }
 
-        // ===== Commands (routed to the gateway) =====
+        // ===== Commands (routed to the Lyrion Server) =====
 
         // Transport commands are virtual on the driver and intercepted here.
-        public override void Play() => InvokeOnGateway((svc, mac) => svc.Play(mac));
-        public override void Pause() => InvokeOnGateway((svc, mac) => svc.Pause(mac));
-        public override void Stop() => InvokeOnGateway((svc, mac) => svc.Stop(mac));
-        public override void ForwardSkip() => InvokeOnGateway((svc, mac) => svc.Next(mac));
-        public override void ReverseSkip() => InvokeOnGateway((svc, mac) => svc.Previous(mac));
+        public override void Play() => InvokeOnServer((svc, mac) => svc.Play(mac));
+        public override void Pause() => InvokeOnServer((svc, mac) => svc.Pause(mac));
+        public override void Stop() => InvokeOnServer((svc, mac) => svc.Stop(mac));
+        public override void ForwardSkip() => InvokeOnServer((svc, mac) => svc.Next(mac));
+        public override void ReverseSkip() => InvokeOnServer((svc, mac) => svc.Previous(mac));
 
         // Power commands are non-virtual on the driver; they arrive via the
         // protocol's power events (wired up in Initialize).
-        private void OnPowerOnRequested() => InvokeOnGateway((svc, mac) => svc.PowerOn(mac));
-        private void OnPowerOffRequested() => InvokeOnGateway((svc, mac) => svc.PowerOff(mac));
-        private void OnPowerToggleRequested() => InvokeOnGateway((svc, mac) => svc.PowerToggle(mac));
+        private void OnPowerOnRequested() => InvokeOnServer((svc, mac) => svc.PowerOn(mac));
+        private void OnPowerOffRequested() => InvokeOnServer((svc, mac) => svc.PowerOff(mac));
+        private void OnPowerToggleRequested() => InvokeOnServer((svc, mac) => svc.PowerToggle(mac));
 
         // ===== Helpers =====
 
@@ -235,29 +405,54 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             return string.Equals(bound, mac, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void InvokeOnGateway(Action<ILyrionGatewayService, string> action)
+        private void InvokeOnServer(Action<ILyrionServerService, string> action)
         {
-            ILyrionGatewayService svc;
+            ILyrionServerService svc;
             string mac;
             lock (_gate)
             {
-                svc = _gateway;
+                svc = _server;
                 mac = _boundMac;
             }
             if (svc == null || string.IsNullOrEmpty(mac)) return;
             try { action(svc, mac); } catch { }
         }
 
-        private static Action<string> BuildLogger()
+        private Action<string> BuildLogger()
         {
             // Trace.WriteLine (not Debug.WriteLine): the TRACE constant is
             // defined in both Debug and Release builds, so these calls survive
             // Release compilation.
+            //
+            // Trace reaches only a Toolbox console, so a WARNING or ERROR line
+            // also goes to the RAD base Logger, which hands it to Crestron
+            // Home's runtime logger — the log the Setup app shows under
+            // Diagnostics → Logs (#49; LyrionLogLine decides which lines).
+            // Logger is read at call time, and a failure there never costs
+            // the Trace line.
             return msg =>
             {
                 try { Trace.WriteLine("[Lyrion.Source " + DateTime.UtcNow.ToString("HH:mm:ss.fff") + "] " + msg); }
                 catch { }
+                ForwardToCrestronLog(msg);
             };
+        }
+
+        private void ForwardToCrestronLog(string msg)
+        {
+            try
+            {
+                var logger = Logger;
+                if (logger == null) return;
+                // Crestron's logger takes a format string; a brace in an
+                // installer's typed MAC would make it throw.
+                switch (LyrionLogLine.Classify(msg))
+                {
+                    case LyrionLogLevel.Error: logger.Error(msg.Replace('{', '(').Replace('}', ')')); break;
+                    case LyrionLogLevel.Warning: logger.Warning(msg.Replace('{', '(').Replace('}', ')')); break;
+                }
+            }
+            catch { }
         }
 
         public override void Dispose()
@@ -265,7 +460,7 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
             if (_disposed) { base.Dispose(); return; }
             _disposed = true;
 
-            try { LyrionGatewayServiceRegistry.Unsubscribe(OnGatewayAvailable); } catch { }
+            try { LyrionServerServiceRegistry.Unsubscribe(OnServerAvailable); } catch { }
 
             if (_protocol != null)
             {
@@ -275,24 +470,30 @@ namespace LyrionCommunity.Crestron.Lyrion.Source
                 try { _protocol.PowerToggleRequested -= OnPowerToggleRequested; } catch { }
             }
 
-            ILyrionGatewayService svc;
-            string mac;
-            lock (_gate)
+            // Under _applyGate so an in-flight TryBindToServer either finishes
+            // before we unbind (and we unbind what it bound) or sees
+            // _boundMac already null and does nothing.
+            lock (_applyGate)
             {
-                svc = _gateway;
-                mac = _boundMac;
-                _gateway = null;
-                _boundMac = null;
-            }
-
-            if (svc != null)
-            {
-                try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
-                try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
-                try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
-                if (!string.IsNullOrEmpty(mac))
+                ILyrionServerService svc;
+                string mac;
+                lock (_gate)
                 {
-                    try { svc.UnbindPlayer(mac); } catch { }
+                    svc = _server;
+                    mac = _boundMac;
+                    _server = null;
+                    _boundMac = null;
+                }
+
+                if (svc != null)
+                {
+                    try { svc.AvailabilityChanged -= OnAvailabilityChanged; } catch { }
+                    try { svc.PowerStateChanged -= OnPowerStateChanged; } catch { }
+                    try { svc.PlaybackStateChanged -= OnPlaybackStateChanged; } catch { }
+                    if (!string.IsNullOrEmpty(mac))
+                    {
+                        try { svc.UnbindPlayer(mac); } catch { }
+                    }
                 }
             }
 

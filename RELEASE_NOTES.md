@@ -1,40 +1,1575 @@
 # Release Notes
 
+## Known issues
+
+- **Crestron Home iOS app: the Helper's track card flashes every second
+  while a track plays.** The top card on the Lyrion Helper page shows the
+  track number, title, artist, album and elapsed / total time. The elapsed
+  time updates once a second. The iOS app redraws the whole card on each
+  update, so the card flashes. The Crestron Home app on Android and Crestron
+  touchscreens update the same card without flashing. The driver sends only
+  the changed time text, so the redraw is the iOS app's behavior, and there
+  is no driver fix. Tracked as #59 (closed as a known issue).
+
+- **The CLI transport cannot tell its own command echo from a server push.**
+  LMS echoes every command back on the same socket and the driver keeps no
+  request/response correlation, so for an *available* player an echo is
+  applied as though the command succeeded exactly as sent. Accepted and
+  documented rather than fixed — the obvious filter would discard the
+  notifications that are how the driver learns about changes made from
+  Material Skin or a player's own front panel. Tracked as #41. Its one
+  observed consequence is that the Source's power button flips optimistically
+  for a player that is both switched off and absent from LMS: nothing is sent,
+  no room is driven, and the Helper — the device that owns the room UI —
+  behaves correctly throughout. That was #53, closed as accepted rather than
+  fixed; if it ever costs anything in practice it should come back as a fresh
+  issue describing the cost.
+
+- **Registry events published from different threads can arrive out of
+  order** (#54). Latent: see the 1.1.0 notes below for why it is not fixed and
+  what it actually costs. The related **#39** — a first observation whose value
+  equals the record's default publishes nothing — is **closed**. Its
+  discriminating test is bench check C9, the project's only recorded Tier 1
+  failure, and C9 passed on 1.1.1 with the exact predicted case (a player whose
+  shuffle and mute both matched the driver's defaults) rendering correctly. The
+  code behaviour is real; the user-visible effect is not, because each
+  consumer's own change-gated setter swallows the republished default and
+  1.0.17's `InitialiseView` already writes every label and icon an idle value at
+  load.
+
+## 1.1.1 (2026-09-21)
+
+Supersedes the 1.1.0 RC, which was installed on the bench but never run —
+its sheet recorded no verdicts. 1.1.1 **carries every 1.1.0 change
+unaltered**; the 1.1.0 section below remains the record of what the #63,
+#55 and #60 fixes were and why #54 and #39 were deliberately left out. The
+two fixes in this section are the only difference, and **neither changes
+the driver's runtime behaviour** — one renames entries inside a package,
+the other sets a driver-data flag that no driver code reads.
+
+All four drivers are at **1.1.1** so the processor will reload them. **All
+four packages must be updated together.** Before building, delete the output
+folders (BUILD.md §2.0): a pre-rename `Gateway_Lyrion_LMS_IP.dll` is still
+present in the Server's output folder and ManifestUtil packages whatever it
+finds.
+
+### Why a respin rather than a rebuilt 1.1.0
+
+Crestron Home reloads a driver only when `Driver.json`'s `DriverVersion`
+changes, and #79 *is* a `Driver.json` change — a rebuilt "1.1.0" would have
+shipped a package the processor ignored. The RC rule says the same thing
+independently: the build under test is the build that ships, so a respin
+gets its own number rather than re-using one. Bumping now cost nothing
+because no 1.1.0 verdicts existed to invalidate.
+
+### Fixed — packaging (all four drivers)
+
+- **The Helper package used backslash path separators, and Crestron Home
+  warned on every scan (#78).** `CustomAppManager` logged
+  `Helper_Lyrion_Player.pkg appears to use backslashes as path separators`
+  once per package scan — so at every boot, not just at import. A `.pkg` is
+  a ZIP archive, and `ManifestUtil.exe` writes nested entries with Windows
+  separators: `programming\HelperDriver.json`, `translations\en-US.json`,
+  `uidefinitions\UiDefinition.xml`. The ZIP specification (APPNOTE 4.4.17.1)
+  requires the forward slash, and the processor runs Linux, where `\` is a
+  legal filename character rather than a separator.
+
+  Only the Helper was affected: it is the only package with nested entries.
+  It is the only driver with `[ProgrammableOperation]` members (the four
+  preset operations, hence `programming\`), and the only one carrying
+  `IncludeInPkg` content (the UI definition, and the deliberately empty
+  translations file added in 1.0.18). The other three packages are flat.
+
+  ManifestUtil is a closed binary, so the fix is a post-build step:
+  `build\Normalize-PkgPaths.ps1` rebuilds the package with the same entries,
+  same order, same contents and same timestamps, with `\` replaced by `/`.
+  A package already using forward slashes is left untouched, so the step is
+  idempotent and a no-op for the three flat packages. It is wired into all
+  four projects rather than the Helper alone, so the invariant survives the
+  next driver that gains a folder or a programmable operation. Verified
+  against a real ManifestUtil-produced package: six entries rewritten, all
+  six payloads SHA256-identical before and after.
+
+### Fixed — Lyrion Source, Lyrion Receiver
+
+- **Neither driver declared `SupportsCoolDownTime`, so Crestron Home logged
+  an Error on every power-wait extraction (#79).**
+  `RadMediaBase.ExtractWarmupTimeFromDevice` logs
+  `Device does not support CooldownTime` for any device whose
+  `IPower.SupportsCoolDownTime` is false, and it fires per operation rather
+  than once per device — three of them landed in the same second on the
+  bench. That is log churn on a flash-backed log, and it is noise in exactly
+  the place the Crestron Home log forwarding added in #49 asks an installer
+  to look.
+
+  `SupportsCoolDownTime` is get-only on `ABasicBlurayPlayer` and
+  `ABasicAVReceiver`, so it can only come from `Driver.json`'s
+  `DeviceSupport` block. One key added to each of the two drivers.
+  `PowerWaitPeriod.CoolDownTime` stays `0`: the two are independent keys in
+  the RAD schema (Crestron's own `AVSwitcher_Crestron_SampleDriver_IP` ships
+  `SupportsCoolDownTime: false` alongside a cool-down of 5), and a Lyrion
+  player has no cool-down.
+
+  Nothing in the driver acts on the flag. `SourceProtocol` and
+  `ReceiverProtocol` override `PowerOn`/`PowerOff`/`Power` without chaining
+  to the base, so `ABaseDriverProtocol`'s warm-up/cool-down state machine is
+  never entered and `WarmingUp`/`CoolingDown` stay false. The flag changes
+  what Crestron Home *reads* from `IPower`, and nothing else.
+  `SupportsWarmUpTime` is deliberately not declared: no matching warm-up
+  line was ever logged, so there is nothing to suppress.
+
+### Both fixes confirmed on hardware
+
+Both addressed messages emitted by Crestron Home rather than by the driver, so
+neither could be proved without a processor. Both were then confirmed:
+
+- **#78** — no `appears to use backslashes` line for the Helper package across
+  four boots, and the Helper page and its four programmable preset operations
+  survived the entry-name rewrite intact.
+- **#79** — no `ExtractWarmupTimeFromDevice` Error for any Lyrion device across
+  the same four boots, while two other vendors' drivers on the same processor
+  still logged it. That confirms the diagnosis: the cause was the missing
+  `DeviceSupport` key, not noise Crestron Home emits for everyone. Nothing
+  waits, either — source select is unchanged and power still follows the player
+  in both directions.
+
+### Verification
+
+1.1.1 is the first release in this project's history to ship against a
+**complete** run of its hardware test plan: **66 checks — 59 pass, 7 not
+tested, 0 failures.** The Tier 1 subset, which is the bar modelled on
+Crestron's own certification self-test plans, is **39 pass, 3 not tested, 0
+failures**.
+
+The seven not-tested are environment limits rather than deferrals, and they are
+the honest gaps in this release:
+
+- **Four** share one cause: the test system's Crestron Home cannot re-import a
+  single driver package without removing and re-adding the device, which blocks
+  the four checks that use a package re-import as their reload step. The
+  behaviour underneath is partly covered elsewhere — mute is confirmed to
+  survive a full processor reboot, which is a stronger reload — but "muted at
+  volume 0 specifically, across a driver reload" is untested.
+- **One** needs a room with more than one selectable source; the test system has
+  none.
+- **One** is a whole-house power outage, which the test environment could not
+  accommodate. A processor-only reboot and a four-minute network outage were
+  both run and both passed.
+- **One** needs an auth-enabled LMS; driver credentials were not exercised, so
+  the blank-credentials behaviour tracked as #52 remains unverified.
+
+## 1.1.0 — Release candidate, superseded by 1.1.1 (2026-09-20)
+
+**Do not build this one.** It was installed on the bench but never run, and
+1.1.1 carries all of it unaltered. This section is kept because it is the
+record of the three fixes below and of the two issues deliberately left out
+— 1.1.1's notes do not repeat them.
+
+First release since 1.0.0. It carries **everything from the 1.0.1–1.0.21
+development builds** documented below — the four-driver refactor, the
+reconnect and availability rework, effective-state publishing, presets,
+Crestron Home log forwarding, and the volume/mute parser fixes — plus the
+three fixes in this section.
+
+### Fixed — Lyrion Server
+
+- **A hung write in the connect preamble wedged the driver permanently
+  (#63).** The #46 work bounded the connect, the read and the worker task, but
+  not the three writes between them — `login`, `listen 1` and `version ?`.
+  Those run after the socket is marked Connected and before the read loop
+  (which carries the liveness bound) starts, so a write that never completed
+  there left the client Connected with no reader running and no timer able to
+  notice: #46's exact observable signature — rooms offline indefinitely,
+  recoverable only by removing and re-adding the Lyrion Server — on a path
+  #46's fix did not cover. The preamble now runs under a single five-second
+  budget for all of its lines. A timeout is an ordinary failed attempt: tear
+  down, back off, reconnect.
+
+  The budget is shared rather than per line on purpose. Per line, two or three
+  timeouts would push the attempt past the ten seconds that count as a real
+  session, which resets the backoff schedule — so a server that accepted the
+  socket and then stalled every write would have reconnected every two seconds
+  forever, with a log line each time.
+
+- **Any settings save cycled every playing room off and on (#55).** Applying
+  the Server's configuration rebuilt the transport unconditionally, and a
+  rebuild is a hard connectivity boundary: it disposes the live CLI client,
+  resets the connectivity FSM and marks every player unavailable, so the
+  registry publishes power-OFF and Stopped for every room that was playing and
+  then the ON edges again five to seven seconds later. Crestron Home applies
+  each declared step and then all of them, so one save could do that two or
+  three times — including for the HTTP Port, which nothing connects with,
+  because the JSON-RPC client is dormant. With a "Power Is Off → Room Off"
+  mapping, a benign settings edit switched off every playing room in the
+  house. The Server now records what the live transport was built with and
+  rebuilds only when the host, CLI port, username or password actually
+  changed, or when there is no transport to keep.
+
+  **This changes a procedure.** Re-saving the Server's settings no longer
+  forces a reconnect, so it can no longer be used as one — bench check H6
+  ("alternate the unused HTTP Port between 9000 and 9001") and the reload step
+  in V4 both need re-writing to re-import the package instead. Nothing is lost
+  functionally: a genuinely dead socket is still detected by the liveness
+  probe and reconnected without intervention.
+
+- **Playback-derived power overrode an explicit power value (#60).** The
+  registry derives power from playback as a *fallback* for players that report
+  no power state at all, and its own comment says that fallback must never
+  override an explicit LMS power signal. The `Stopped` branch honoured that;
+  the `Playing` branch did not. On its own that was harmless, because status
+  replies used to note mode first and power second, so the explicit value won
+  by being last. The 1.0.16 reorder to power-before-mode — correct for its own
+  purpose, killing an ON/OFF pair emitted from a single message — made the
+  unguarded derivation the last writer instead. A reply carrying `mode:play`
+  together with `power:0` then asserted ON for a player LMS said was off, and
+  it stuck, because a subsequent `pause` is deliberately power-neutral. A
+  "Power Is On → Room On" mapping turns that into a real room power-on.
+
+  The registry is now told whether the *message* that produced a playback
+  state also carried an authoritative power value, and the raise stands down
+  when it did. The test is per-message, not per-record: `power` appears in
+  every status reply, so guarding on "has this record ever seen a power value"
+  would have looked equivalent and silently disabled the fallback for every
+  player that reports power at all. The bare CLI notifications (`play`,
+  `pause 0`, `stop`) carry no power field and keep the fallback — without it a
+  player LMS sends no separate power line for would read as OFF while playing,
+  the same bug inverted onto the same room mapping.
+
+### Deliberately not fixed in 1.1.0
+
+- **#54 (registry event ordering).** The fix the issue proposes — a second
+  lock held across the change callbacks — introduces a deadlock. The consumers
+  take their own `_applyGate` inside every event handler
+  (`ReceiverDriver.OnPowerStateChanged`, `HelperDriver.OnVolumeStepChanged`),
+  while `ReceiverDriver.OnVolumeStepReceived` holds `_applyGate` and calls
+  `SetVolumeStep` straight into a registry mutator that publishes. A publish
+  lock would make those two orders opposite — registry-then-consumer on the
+  CLI thread, consumer-then-registry on the configuration thread — and hang
+  the CLI receive thread and both consumers together, recoverable only by a
+  reboot. That is strictly worse than the stale edge it would fix. Ordering
+  still needs solving; it needs a design that does not hold a lock across the
+  fan-out.
+
+- **#39 (first observation equal to the record default).** Publishing it would
+  change nothing on screen: the consumers' own `Set<T>` is change-gated
+  against the value they already hold, which for these fields is the same
+  default, so the extra publish is swallowed one layer further on. The
+  rendering symptom this was filed for is already handled by 1.0.17's
+  `InitialiseView`, which writes every bound label and icon its idle value at
+  load. What remains is a contract weakness, not a visible fault. Check C9 is
+  the evidence that matters and the note on which controls broke has never
+  been recorded — that observation should come before a change to the
+  change-gate invariant.
+
+## 1.0.21 — Development build (rolled into 1.1.0)
+
+Fixes #51, #61 and #62. All four drivers are at 1.0.21 so the processor will
+reload them. **All four packages must be updated together.** Before building,
+delete the output folders (BUILD.md §2.0). The Lyrion Helper's and the Lyrion
+Server's code changed.
+
+### Fixed — Lyrion Helper
+
+- **errlog Warning: `GetLanguageTranslations … Provided Culture = ''`.**
+  Crestron Home sometimes asks an extension device for its translations with
+  a blank culture: at page load, and again around network reconnects. The SDK's
+  default `AExtensionDevice.GetLanguageTranslations` only accepts a culture it
+  has a file for. For any other culture it writes this Warning to errlog, then
+  returns the `en-US` translations anyway. The Helper now overrides the method
+  and asks for `en-US` directly when the culture is blank. The translations
+  returned are the same, without the warning. A real culture code is passed
+  through unchanged.
+
+  Only the Helper could log this. It is the only one of the four drivers built
+  on `AExtensionDevice`. The Source (`ABasicBlurayPlayer`), Receiver
+  (`ABasicAVReceiver`) and Server (`ReflectedAttributeDriverEntity`) never go
+  through that code. The SDK decides which cultures a driver supports from its
+  translation file names, and only `xx-YY` names count. That's why no change
+  to `Translations/` could have fixed it.
+
+- **Build:** the override's return type, `Crestron.SimplSharp.ReadOnlyDictionary`,
+  is in `SimplSharpHelperInterface.dll`. The Certified Drivers SDK doesn't ship
+  that file. The Helper project now references Crestron's
+  `Crestron.SimplSharp.SDK.Library` NuGet package, for compiling only. Nothing
+  from the package is copied to the output or packed into the `.pkg`. The
+  processor already has this assembly, with the same identity that RADCommon
+  references (1.0.0.0, token `1099c178b3b54c3b`).
+
+### Fixed — Lyrion Server
+
+Both from a code review on 2026-09-20. Neither changes what a room shows.
+
+- **Every LMS connect opened two status subscriptions per player.** The
+  per-player `status … subscribe:30` lives on the CLI socket and dies with it,
+  so it is re-armed on every connect — from the raw socket transition, which
+  also covers a flap too short for the connectivity FSM to commit, and again
+  from the committed transition, which reconciles the player list first. Both
+  ran, so each connect opened two subscriptions and sent two `mixer muting ?`
+  per player, and LMS then pushed every status change twice for the rest of
+  the connection. Neither path can simply be removed: without the raw one a
+  short flap leaves the subscriptions silently dead, and without the committed
+  one there is no backstop. The Server now tracks which MACs are subscribed on
+  the current socket and skips a repeat, so whichever path runs first wins and
+  the other is a no-op. The set is cleared whenever the socket goes away —
+  including the reconnect the CLI client performs in place, where the driver's
+  own teardown never runs. A consumer binding a MAC still forces a fresh query,
+  so a re-created record does not wait for the next keep-alive.
+
+  No visible symptom: the registry change-gates every field, so the second copy
+  of each reply was silent. It doubled the push volume and the parse and
+  fan-out work behind it, which is worth removing as a variable while the
+  processor's memory growth is still being tracked.
+
+- **The connection liveness probe's send was never observed.** After 30 s of
+  silence the Server sends `version ?` to tell a quiet house from a dead
+  socket. It is deliberately not awaited — on a dead socket the write can
+  block, and the read loop is what has to notice — but the discarded task was
+  not handed to the same fault-observing helper every other abandoned task on
+  that path uses. That send fires exactly when a half-open socket makes it
+  fault, so the one send most likely to fault was the one not observed, and the
+  exception surfaced later as errlog noise. Now observed like the rest. No
+  functional change; the probe's result is still irrelevant by design.
+
+### Bench checks for this build
+
+1. **Helper page load.** Clear errlog, then open a room's Lyrion Helper page in
+   the Crestron Home app. errlog shows no
+   `AExtensionDevice.GetLanguageTranslations` lines. The page shows real text,
+   with no `^Key` placeholders.
+2. **Network blip.** Unplug the processor's network for about a minute, then
+   plug it back in. Once the Helper reconnects, errlog still has no
+   `GetLanguageTranslations` lines.
+3. **Driver loads (regression).** After the update, Diagnostics lists every
+   Helper as 1.0.21 and online. errlog has no assembly-load errors for the
+   Helper, such as `SimplSharpHelperInterface` not found.
+4. **One subscription per player (#61).** With a CLI capture running
+   (`tmp_harness/Capture-LmsCli.ps1`), restart LMS and let the Server
+   reconnect. Each bound MAC appears exactly once as
+   `<mac> status - 1 subscribe:30 …` and once as `<mac> mixer muting ?`,
+   not twice.
+5. **Subscriptions survive a short flap (#61 regression).** Pull the
+   processor's network for about two seconds — shorter than the connectivity
+   FSM's stability window, so no CONNECTED/DISCONNECTED pair is logged — and
+   plug it back in. Then change a track from Material Skin: the room's
+   now-playing text still updates, proving the subscription was re-armed off
+   the raw reconnect rather than the committed one.
+6. **Player state after a reconnect (#61 regression).** After the LMS restart
+   in check 4, every room still reflects power, playback, volume and mute
+   changes made from Material Skin.
+
+## 1.0.20 — Development build (rolled into 1.1.0)
+
+Two volume/mute parser fixes from a code review on 2026-09-18, both confirmed
+against LMS 9.1. All four drivers are at 1.0.20 so the processor will reload
+them. **All four packages must be updated together**, and B2 is the check that
+the reload happened. Before building, delete the output folders (BUILD.md §2.0).
+Only the Lyrion Server's code changed.
+
+### Fixed — Lyrion Server
+
+- **Each Vol+/Vol− step briefly published the step size as the volume.**
+  The Receiver's ramp and the Helper's buttons send `<mac> mixer volume +2`,
+  and LMS echoes that line back verbatim. The parser read `+2` as a level of
+  2; it also stripped the sign, so `-2` became 2 as well. Pressing Vol+ at 50
+  published 50 → 2 → 52: the correction came from the
+  `prefset server volume 52` line LMS sends next. The same happened when
+  another client, such as Material Skin, changed the volume by a step. A signed
+  `mixer volume` value is now treated as a relative step: it asserts no level,
+  and the parser ignores it. The `prefset` line still sets the volume.
+- **A player muted at volume 0 always showed as unmuted.** A status reply
+  carries mute only as the sign of the volume, and 0 has no sign. So
+  `mixer volume:0` was noted as "unmuted", overwriting the mute. LMS's direct
+  signal, `prefset server mute 1`, was never parsed. On the Helper the Mute
+  button kept reading "Mute" for a muted player, and pressing it only sent
+  mute again, so the player couldn't be unmuted from Crestron Home. Now:
+  - `prefset server mute 0|1` is parsed as the mute state.
+  - A volume of 0 in a status reply no longer says anything about mute.
+  - Every status subscribe also sends `mixer muting ?`. This covers a Lyrion
+    Server reload while a player sits muted at 0, when no prefset line arrives.
+  - `mixer muting` counts only for an explicit `0`/`1`. Before, a `toggle`
+    from another client, or the echoed `?` for a MAC LMS doesn't know, read
+    as "unmuted".
+
+### Bench checks for this build
+
+1. **Volume ramp.** Hold Vol+ on the Receiver for a couple of seconds, then
+   Vol− the same way. The Crestron Home slider moves steadily in the right
+   direction and never dips to the step size.
+2. **Helper Vol±.** Tap Vol+ and Vol− on the Helper page. The volume moves by
+   one step each tap, with no flicker.
+3. **Muted at 0.** In Material Skin, set a player's volume to 0, then mute it.
+   The Helper's button changes to "Unmute" within a second. Unmute it from the
+   Helper: the player unmutes and the button reads "Mute".
+4. **Reload while muted at 0.** With that player muted at 0, reload the Lyrion
+   Server package (re-import, or toggle an unrelated Server setting; note #55).
+   After the reconnect the Helper still reads "Unmute".
+5. **Muted above 0 (regression).** Mute a player at volume 25 from Material
+   Skin: the Helper reads "Unmute" and the Receiver shows muted at 25. Unmute
+   it: both follow.
+
+### Documentation
+
+- **Rooms with an uncontrolled amplifier: Room Off didn't switch the player
+  off.** Without a Lyrion Receiver in the route, turning the room off in the
+  Crestron Home app removes the route but sends nothing to the player, which
+  stays on. This is a configuration gap, not a driver fault. BUILD.md step 8
+  now describes two hidden Quick Actions, `Music On` (power on the Lyrion
+  Source, optionally then Play) and `Music Off` (power it off), attached to the
+  room's Media Zone On and Media Zone Off events. The README's quick install
+  points to it.
+
+### Filed, not fixed in this build
+
+The same review found four more issues, filed with a full mechanism and a
+candidate fix each: #54 (registry events from different threads can publish
+out of order), #55 (any Server settings save cycles every playing room off and
+on), #56 (the tail of an oversize CLI line is parsed as its own line), and #57
+(a consumer can end up bound to a stale Server service).
+
+## 1.0.19 — Development build (rolled into 1.1.0)
+
+Opened for the fixes coming out of the 1.0.18 bench pass (2026-09-15). All four
+drivers are at 1.0.19 so the processor will reload them — Crestron Home reloads
+a driver only when its `DriverVersion` changes, so the bump is what makes this
+build testable at all, and **B2 is the check that proves it took**. **All four
+packages must be updated together.** Before building, delete the output folders
+(BUILD.md §2.0). Anything the pass finds is fixed in this section until release.
+
+### Changed — Lyrion Server
+
+- **Previous now restarts the current track when you are past the first few
+  seconds, and steps back a track only near the start (#50).** The Player's own
+  control and Material Skin both behave this way; the Helper and the Source
+  always jumped back a track, whatever the elapsed position. LMS has no "smart
+  previous" to ask for — `playlist jump -1` is an unconditional playlist-index
+  decrement, and the restart-versus-step-back decision is made client-side by
+  every other LMS client. `LyrionServerServiceImpl.Previous` now reads the
+  player's elapsed position from the registry snapshot and sends `time 0`
+  instead of `playlist jump -1` once it is past the threshold. Both the
+  Source's `ReverseSkip()` and the Helper's Previous button route through that
+  one method, so they cannot diverge, and the existing `CanCommand` gate still
+  sits ahead of the branch — a command for an unreachable player is dropped as
+  before, on either path.
+
+  The threshold is five seconds, held as
+  `LyrionServerServiceImpl.PreviousRestartThresholdSeconds`. **It is an
+  observation, not a documented value** — LMS neither specifies nor reports
+  it — so it is a named constant with a comment saying so, and check C2 on the
+  next bench pass is what confirms or corrects it. One case to watch there:
+  on a radio stream the elapsed position still advances, so a Previous press
+  well into a stream now sends `time 0`; what LMS does with a seek on a live
+  stream has not been observed, and nothing here guesses at it.
+
+  Side effect worth noting: `Seek` is no longer dead code. It has never had a
+  user gesture (Crestron Home has no draggable seek bar) and still does not,
+  but it is now driven internally. The PRD and CLAUDE.md both say so.
+
+## 1.0.18 — Development build (rolled into 1.1.0)
+
+All four drivers are at 1.0.18 for the bench pass. **All four packages must be
+updated together**: `Lyrion_Common.dll` changed (#49). Anything the pass finds
+is fixed in this section until release. Before building, delete the output
+folders (BUILD.md §2.0).
+
+### Fixed — Lyrion Server
+
+- **After a network outage the Server never reconnected to LMS, and every room
+  stayed offline (#46).** On the 1.0.17 pass the processor lost its link and
+  its IP address for 3½ minutes. More than an hour later both bound rooms were
+  still offline, although the processor could ping LMS, LMS held no socket
+  from it, and LMS had announced both players' return. Only removing the
+  Server from the room and adding it back recovered it. The connection loop
+  is guarded throughout, so the likely cause was a wait that never finished,
+  and every wait on that path was unbounded. Which one wedged is not known,
+  so all three are now bounded:
+
+  - A **connect attempt gives up after 10 s** and is retried on the normal
+    backoff.
+  - **After 30 s of silence the Server sends LMS a cheap query**, and after a
+    second 30 s with no reply at all it declares the connection dead and
+    reconnects. A quiet house and a dead socket used to look the same, and
+    the only other detector was TCP keepalive at roughly two hours.
+  - **The connection worker is restarted** if it ever stops outside a
+    deliberate shutdown, with one ERROR line.
+
+  Worst case from a dead connection to a reconnect attempt is about a minute.
+  A healthy connection in a quiet house answers the query every 30 s and
+  logs nothing.
+
+- **The Server device always showed Online, even with no LMS connection
+  (#47).** It had no online flag, so Crestron Home showed it Online whenever it
+  was loaded. During the #46 outage it read Online for over an hour, which
+  pointed diagnosis at the players first. The Server now reports Crestron
+  Home's standard online indicator (`onlineIndicator:isOnline`, the property
+  every Entity Model sample in the SDK uses). It's Online only while the
+  connection to LMS is established and has stayed up for the 5 s smoothing
+  window, so brief flaps don't show. It starts Offline at boot until LMS
+  answers, and a settings save shows it Offline until the rebuilt connection
+  is up. **Not yet known:** whether Crestron Home honors this property for a
+  device of type Platform. If it doesn't, the Server simply keeps showing
+  Online as before.
+
+- **A radio stream showed two now-playing lines where Material Skin shows
+  three (#42).** The missing line is the station name. LMS reports it as
+  `remote_title` (tag `N`), which the driver has always requested but read
+  only as a stand-in for a missing title. Most streams do name their current
+  track, so `remote_title` was discarded. Such a stream sends no `album` key
+  at all, so the album line was blank (in 1.0.16 and earlier it kept the
+  previous track's album).
+
+  `ApplyStatusResponse` now fills the album line from `remote_title` when the
+  reply carries no album, so KCSN reads `from KCSN`. A real album still wins,
+  and `remote_title` is skipped when it is already serving as the title, so a
+  stream with no track title shows the station once rather than on both
+  lines.
+
+### Fixed — all four drivers
+
+- **The drivers' warnings and errors never reached Diagnostics → Logs
+  (#49).** Every driver line went only to `System.Diagnostics.Trace`, which
+  only a Toolbox Text Console shows. On the 1.0.17 pass the log was read in
+  the Setup app, where none of them appear. So the mistyped-MAC warning (H3),
+  which exists so that a first-setup typo isn't silent, was still silent to
+  an installer, and no "exactly one WARNING" expectation could be checked.
+
+  Every line still goes to Trace. In addition, each `… WARNING …` and
+  `… ERROR …` line, plus the Server's `LMS DISCONNECTED` (as a warning) and
+  `LMS CONNECTED` (as information), now also goes to Crestron Home's own log.
+  That covers a bad MAC or volume step, a bound player missing from LMS, an
+  authentication failure, and an LMS outage. Nothing new is logged. **Not yet
+  known:** whether Crestron Home shows *warnings* there by default, or only
+  errors. The retest settles it.
+
+### Fixed — Source, Receiver and Helper
+
+- **A device given an invalid MAC stayed Online with nothing bound (#48).**
+  On the 1.0.17 pass (test H2), a Guest Room Source set to `xyz` let go of its
+  player (none of its controls reached it), but the Setup app still showed it
+  Online, and its Power Is Off → Room Off mapping never fired. A MAC edit in
+  Crestron Home reaches a *fresh* driver instance with nothing bound. That
+  instance took the "nothing bound" branch of `UnbindInvalidMac`, which only
+  logged, and the device kept its start-up "assumed connected" state. The
+  same branch runs on a reboot or Server reload with a bad MAC saved, and on
+  a first-setup typo. It is identical in all three consumers.
+
+  A non-blank invalid MAC now marks the device **Offline** there too, and it
+  still logs the one warning. Offline only: a fresh instance has observed
+  nothing, and a forced power-off would fire a Power Is Off → Room Off mapping
+  on every reboot with a bad MAC saved (the harm 1.0.11 fixed). A blank MAC is
+  unchanged: silent, and Online until bound.
+
+### Fixed — Helper
+
+- **`errlog` filled with `'translations' folder does not exist` errors
+  (#45).** Every load or UI request of the Helper wrote `Error` lines from
+  `AExtensionDevice.GetSupportedCultures` and `GetLanguageTranslations`, once
+  for the installed driver directory and once for its `_swap1` copy. The
+  Helper is the one extension device of the four, and an extension device
+  looks for a `translations` folder in its package; the Helper never shipped
+  one. Nothing was drawn wrong (the UI uses literal labels), it was log noise.
+
+  The package now carries `IncludeInPkg/Translations/en-US.json`, an empty
+  `{}` (ManifestUtil lowercases the folder to `translations` in the `.pkg`,
+  as it does `uidefinitions`). The labels stay literal on purpose.
+
+### Documentation
+
+- **Fixed-output players (#44, documentation part).** The README now says not
+  to give a Lyrion Receiver to a player whose LMS Volume Control is "Output
+  level is fixed at 100%", and to use an uncontrolled amplifier as that
+  room's endpoint. LMS still reports a volume number for such a player, so a
+  Receiver shows a working slider that changes nothing audible.
+- **Build from empty output folders (BUILD.md §2.0).** A build never deletes
+  files it no longer produces, and ManifestUtil packages the whole folder. A
+  pre-rename `Gateway_Lyrion_LMS_IP.dll` was still in the Server's output
+  folder nine versions later. Deleting `bin` and `obj` is now a build step;
+  it replaces bench-pass tests A1 and A2.
+
+### Retest
+
+1. **No `translations` errors from the Helper (#45).** What produced the
+   original errors is not known (they appeared at 09:59, hours after a
+   reboot), so try each plausible trigger, then run `errlog` on the processor
+   and confirm **no line mentions `'translations' folder does not exist` for
+   `lyrioncommunity.lyrionhelper`**:
+   - **Install the new package** over 1.0.17. The original errors hit the
+     `_swap1` directory too, which only exists during a driver update.
+   - **Open the room and its Now Playing page** in the Crestron Home app.
+   - **Diagnostics:** in the Crestron Home setup app, go into Diagnostics and
+     bring up the devices, including opening the Lyrion Helper device.
+   - **Pair Devices:** open the Pair Devices page and bring up the devices
+     there too, including the Lyrion Helper in the driver list.
+   - **Reboot the processor** and check once more.
+
+   Also confirm **no new translations error replaced it**, such as
+   `No supported cultures were found.` or `GetLanguageTranslations called but
+   no cultures are supported`. That would mean the empty `{}` was rejected;
+   give `en-US.json` one real entry. And **the Helper page still reads
+   normally**: every label and icon is unchanged, with no `^` text anywhere.
+2. **Radio station on the album line (#42).**
+   - **Stream that names its track.** Play a radio favourite such as KCSN.
+     **The Helper shows the track title, the artist, and `from <station>`**,
+     matching Material Skin's three lines.
+   - **Local track.** Play a local track with a real album. **The album line
+     shows the album, not a station.**
+   - **Stream with no track title.** **The station appears once**, on the
+     title line, and the album line stays blank.
+   - **Switching back and forth.** Go from the stream to a local track and
+     back again. **Each line follows**, with nothing carried over from the
+     previous item (the 1.0.17 fix still holding).
+3. **An invalid MAC shows the device Offline (#48).**
+   - **Source.** Set a Source's MAC to `xyz`. **It goes Online → Offline**,
+     one `Source WARNING: player MAC 'xyz' is not valid` line is logged (see
+     item 5 for where it should appear), and **none of its controls reach the
+     player**. This room's
+     Helper and Receiver are unaffected, since each has its own MAC. The room
+     itself may stay on; that is Crestron Home's decision.
+   - **Receiver, then Helper.** The same, one device at a time.
+   - **Restore.** Put each MAC back: **the device returns Online** and works.
+   - **Reboot with a bad MAC saved.** Leave one device at `xyz` and reboot the
+     processor. **It comes up Offline, and its room is not turned off.**
+   - **Typo at first setup.** Pair a fresh Receiver and give it a MAC one
+     character short. **It shows Offline**, and exactly one `Receiver WARNING:
+     player MAC '…' is not valid; nothing bound` is logged, with no
+     `Bound to MAC`. Correct the MAC: **the device goes Online** and controls
+     the player. `Bound to MAC` is routine, so it is in the Text Console only;
+     the warning should *also* be in Diagnostics → Logs (item 5).
+   - **Blank MAC at boot.** Leave a device's MAC blank and reboot. **It logs
+     nothing.** It still shows Online: a blank MAC is deliberately unchanged.
+4. **Reconnect after a network outage (#46).** This is the test that was
+   deferred from the 1.0.17 pass, now verifying the fix. Have a Toolbox Text
+   Console attached and **capturing to file**, and Diagnostics → Logs open.
+   - **Cable pull.** With a room playing, unplug the processor's Ethernet for
+     about **4 minutes**, then plug it back in. **Within about 2 minutes of
+     link-up every bound room is back Online, with no Server re-save and no
+     re-adding.** In the console: `Lyrion Server: LMS DISCONNECTED` during the
+     outage, then `LMS CONNECTED` and one `reconcile players=…` after.
+   - **If it doesn't recover,** capture before touching anything: the last
+     `[Lyrion.Server …]` lines in the console, and `netstat -an` on the LMS
+     host (is there a socket from 10.0.2.7?). Then recover by changing the
+     Server's HTTP Port and saving (§ Recovery on #46).
+   - **Short outage.** Repeat with a 20 s pull. Rooms return, with at most one
+     `connectivity unstable` notice.
+   - **Quiet house.** With nothing playing anywhere, leave it for 10 minutes
+     with the console attached. **No log lines appear and nothing goes
+     offline.** The Server's 30 s idle query is answered and logs nothing.
+   - **Regressions:** the E-section tests (LMS restart with both rooms playing;
+     a player switched off during an LMS outage; a player absent from LMS),
+     H6 (save the Server settings five times: the Setup app has no unchanged
+     re-save, so alternate the unused HTTP Port between 9000 and 9001; rooms
+     keep working after each) and H7 (bad credentials back
+     off quietly: one ERROR line, then 2 → 5 → 10 → 30 → 60 s with no more
+     lines).
+5. **Warnings and errors reach Diagnostics → Logs (#49).** Watch the Setup
+   app's Diagnostics → Logs, not the Toolbox console.
+   - **Warnings:** a Source MAC set to `xyz` (item 3), a Receiver VolumeStep
+     set to `x`, and a Helper MAC set to a valid-looking but unused
+     `aa:bb:cc:dd:ee:ff` (the Server's `bound player … not present on LMS`).
+     **Each appears once.**
+   - **Errors:** a wrong LMS password on the Server. **One `Lyrion Server
+     ERROR auth: …` line.**
+   - **Connectivity:** the cable pull in item 4. **`LMS DISCONNECTED` appears
+     as a warning** and `LMS CONNECTED` as information.
+   - **Record which levels showed up.** If errors appear but warnings don't,
+     Crestron Home's log is set above Warning by default. Note it; don't
+     count it as a fail. The follow-up is deciding whether misconfiguration
+     lines should be logged as errors.
+   - **Nothing else appears.** During ordinary playback no Lyrion line reaches
+     Diagnostics → Logs at all.
+6. **The Server device shows Offline when LMS is unreachable (#47).** Watch
+   the Lyrion Server's status in the Setup app. (Not during the cable pull: the
+   app can't reach the processor then either.)
+   - **Stop LMS** for 30 s: within about 10 s **the Server shows Offline**.
+     Start LMS: it returns **Online** once reconnected.
+   - **Wrong LMS password** (H7): **Offline** for as long as it's wrong;
+     **Online** once it's corrected.
+   - **Settings save** (H6): briefly Offline, then Online.
+   - **At boot:** Online within a few seconds of the processor coming up.
+   - **If it stays Online throughout,** Crestron Home doesn't honor the
+     indicator for a Platform device. Record it; it isn't a regression, since
+     that was the old behavior.
+
+## 1.0.17 — Idle labels at load; an absent metadata field means empty (2026-09-04)
+
+All four drivers ship at 1.0.17. Two bugs, both found on the 1.0.16 hardware
+pass. **All four packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **A radio stream inherited the previous track's artist and album.** Playing
+  a local song and then selecting a radio favourite left "FROM IT STILL
+  MOVES" under a stream that has no album — permanently, since no later reply
+  ever contradicted it. Whichever field the station omits is the one that
+  stays: no artist tag, the old artist stands; no album tag, the old album.
+  The track title always updated, because streams do send one.
+
+  `NoteMetadata` reads a null field as "keep what you had", which is correct
+  for the `NewSong` notification — a genuine partial update carrying only a
+  title, whose whole job is to survive until the full status query returns.
+  But `ApplyStatusResponse` also passed null for a key that was simply
+  absent, and that reply is the authoritative full picture: absent means the
+  field is empty. Material Skin renders the same reply with the field
+  missing, which is the behaviour to match.
+
+  Title, artist and album now coerce an absent key to empty, and duration to
+  0 (so a stream shows elapsed alone rather than hanging a finished track's
+  total off it as `03:14 / 04:52`). The coercion is in `ApplyStatusResponse`
+  rather than in `NoteMetadata`, so the partial `NewSong` path keeps its
+  sentinels. Position deliberately keeps the "unchanged" sentinel: the 1 s
+  pump advances it between replies.
+
+### Fixed — Helper
+
+- **A button could render `S...` or `Tex...` instead of its icon or label.**
+  After a processor reboot, one room's Helper showed the literal text `S...`
+  where the shuffle icon belongs and `Tex...` where the Mute label belongs,
+  and kept showing them through every other button press and through leaving
+  and re-entering the page. Pressing the affected button fixed it for good.
+
+  Nothing had ever written those two properties, so Crestron Home rendered a
+  placeholder: an unset icon makes a button fall back to its literal label
+  (`S...` is "Shuffle" truncated at five across), and MuteBtn has no literal
+  label to fall back to. They go unwritten when a player's first observed
+  value happens to *equal* the record's default, because the registry
+  change-gates and publishes nothing — and the Helper had bound before the
+  player was observed, which touches nothing but `Connected` (1.0.14). The
+  player in question reported `power:1 mode:play repeat:2 shuffle:0` and was
+  unmuted: the three fields that differed from their defaults rendered
+  correctly, and the exact two that matched did not. A player merely switched
+  off at boot loses its power icon and tile status the same way.
+
+  `HelperDriver.Initialize` now gives every bound label, icon and text line
+  its idle value once, before any bind or event can arrive — the same
+  baseline the Source sets with `PlayBackStatus = Stop`. It asserts nothing
+  about a player: the values written are the labels for the state the
+  properties already hold by default, so the two cannot disagree, and the
+  first real observation overwrites them.
+
+  Not fixed here, and worth doing deliberately later: the underlying rule
+  that a first observation equal to the default publishes nothing. Power has
+  an explicit exception (`HasExplicitPower` false→true); shuffle, repeat,
+  mute, volume and name do not.
+
+### Retest
+
+1. **Cold boot with a default-valued field.** Set a player's shuffle off and
+   leave it unmuted. Reboot the processor. **Every button on that room's
+   Helper renders its icon or label** — no `S...`, no `Tex...` — before
+   anything is pressed.
+2. **Cold boot with the player switched off.** **The power button shows its
+   glyph and the room tile reads `Off`**, rather than rendering blank.
+3. **Real state still wins.** With shuffle on and the player muted, reboot.
+   **The page shows shuffle on and "Unmute"**, not the idle defaults.
+4. **Song to stream.** Play a local track with artist and album, then select
+   a radio favourite that supplies neither. **Both lines clear**; the track
+   title follows the stream. Then one that supplies an album but no artist:
+   **the album line shows, the artist line is blank.** Go back to a local
+   track: both return.
+5. **Stream timing.** On that stream, **the time line shows elapsed alone** —
+   no `/ total` left over from the song before it.
+
+## 1.0.16 — A player LMS does not know is no longer a live player (2026-09-04)
+
+All four drivers ship at 1.0.16. This fixes one bug, found on the 1.0.15
+hardware pass. **All four packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **A room could be switched on, and its position timer advanced, for a
+  player that was not on the network at all.** With a player switched off and
+  unplugged across an LMS restart, LMS came back without that player in its
+  list — and Crestron Home showed it *online*. Power, Play and Pause on the
+  Helper and the Receiver all appeared to work: the room turned on, the
+  elapsed timer ran, paused, and resumed where it left off. Nothing was there.
+
+  Three things had to line up. LMS does not reject a query for a MAC it does
+  not know — it echoes the query back carrying no fields at all
+  (`<mac> status - 1 tags:`, verified against LMS 9.1), which reaches
+  `ApplyStatusResponse` as a status response whose only key is the `tags` of
+  the echoed argument. That method treated an absent `player_connected` as
+  Online, so the echo ran to the bottom and marked the record OBSERVED and
+  Online — that is, AVAILABLE. Consumers were told the player was connected,
+  `CanCommand` opened, and because LMS echoes every command back on the same
+  socket and this driver keeps no request/response correlation, the driver's
+  own `power 1` and `play` came back and were applied as if the server had
+  pushed them.
+
+  Two changes, and the existing effective-state model contains the rest (a
+  mutation on an unavailable record stores the raw value and publishes
+  nothing):
+
+  - `ApplyStatusResponse` returns before noting anything unless the reply
+    carries at least one of `player_connected`, `player_name`, `power` or
+    `mode`. A real reply always carries all four. (The test cannot be "no
+    keys": `tags:` parses as an empty-valued key, so the echo yields one.)
+  - `ApplyPlayersResponse` marks a bound MAC that is missing from the
+    server's player list as OFFLINE, instead of only logging the
+    bound-MAC-missing warning — the driver already had the authoritative
+    answer and discarded it. Only a *complete* reply counts (its `count:`
+    must match the number of ids parsed), so a truncated list can never
+    report a live player offline. A player that later joins LMS sends
+    `client new`/`reconnect`, which restores it through the normal path.
+
+  Not a regression from 1.0.10–1.0.15: through 1.0.11 a status reply marked
+  a player Online unconditionally, so this behaved the same way or worse. It
+  had simply never been tested with a MAC the server did not know.
+
+  **This also covered up a mistyped MAC.** A well-formed MAC for a player
+  that does not exist passed validation, bound, and then presented as a
+  working player — right down to a room that turned on. It now shows offline,
+  with the warning that was always logged.
+
+### Retest
+
+1. **Player absent from LMS entirely.** Switch a player off and unplug it.
+   Restart LMS and confirm on the CLI (`players 0 50`) that the player is not
+   listed. **In Crestron Home the room's devices must show offline**; the
+   Helper and Receiver power buttons must do nothing; the position timer must
+   not run. The log carries one
+   `Lyrion Server WARNING: bound player <mac> not present on LMS`.
+   Reconnect the player: it returns, powered off, and controls normally.
+2. **Well-formed wrong MAC.** Set a Helper's MAC to a valid-format address no
+   player uses (e.g. `aa:bb:cc:dd:ee:ff`). **The device shows offline and its
+   buttons do nothing**, with the same one warning. Restore the MAC.
+3. **Known-but-disconnected player still behaves.** The 1.0.14 case: two
+   players playing, stop LMS, switch one off at the device, start LMS. That
+   player's room stays off with no flicker; the other returns. (Distinct from
+   test 1 — here LMS still lists the player.)
+4. **Nothing else moved.** The 1.0.15 retest list unchanged, in particular the
+   mute-survives-a-Server-reload and volume-ramp checks.
+
+## 1.0.15 — Mute is observed; Receiver volume ramp; consumer lock scope (2026-09-02)
+
+All four drivers ship at 1.0.15. This closes the nine findings of a full-file
+review of the Receiver driver — the last of the five projects to get one.
+**All four packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **Mute was never observed, so a Lyrion Server reload while muted showed
+  "unmuted".** A status reply has no mute field and nothing ever queried one,
+  so a rebuilt record held `Muted=false` unobserved; two seconds after the
+  reconnect `RepublishAll` pushed that to every consumer — the Receiver's mute
+  and the Helper's Mute/Unmute label both flipped — and a muted player's
+  volume, which LMS reports as a **negative** number while muted, was clamped
+  to 0. The sign is now read: every status reply notes mute (negative =
+  muted) and the absolute volume, so `IsObserved` vouches for mute like every
+  other field. (Verified against LMS 9.1: `status` reports `mixer volume:-N`
+  while `mixer muting` is 1.)
+- **`RepublishAll` republished records no status reply had reached.** It
+  pushed default volume/mute/name/metadata for them, fabricating edges on
+  consumers still showing the real pre-outage values. It now skips unobserved
+  records: their loss was already published at the disconnect, and they
+  publish the moment their first status reply is applied.
+
+### Fixed — Receiver
+
+- **Press-and-hold on the room volume moved exactly one step.** Crestron Home
+  delivers a hold as press then release and the framework ramps between them;
+  the Receiver forwarded the press as a single step and never saw the release.
+  It now steps once on press and every 300 ms until release (a tap is still
+  one step), with a 12 s fuse should the release never arrive. The framework's
+  own ramp is deliberately bypassed — it fabricates volume feedback each tick,
+  which would fight the real feedback from LMS.
+- **An invalid or cleared `VolumeStep` silently kept the previous step.** The
+  same persisted value stepped by the old amount until a reload and by 2 after
+  it. It now falls back to the default (2), re-publishes it to the Helper, and
+  logs one warning for a non-blank invalid value.
+- **A `VolumeStep` edit could race the bind's re-publish** and leave the
+  Helper stepping by a different amount than the Receiver. The write and the
+  publish now run under the apply lock.
+
+### Fixed — Source, Receiver, Helper
+
+- **The service swap on a Lyrion Server reload ran outside the apply lock.**
+  A bind already in flight on the old service could force-apply a disposed
+  registry's stale snapshot *after* the swap and leave it standing. The whole
+  swap — detach, attach, rebind — now runs under `_applyGate`.
+- **`Connect()` wrote `Connected` outside the apply lock.** Re-run by the
+  framework after a MAC edit, it could interleave with a loss on the CLI
+  thread and leave a stale true that the registry never corrects.
+- **A mistyped MAC at first setup logged nothing.** A blank attribute still
+  stays silent (an unconfigured driver at boot); a non-blank unparseable value
+  now logs one warning.
+
+### Changed
+
+- Receiver `ApplySnapshot` collapsed to one branch (Connected first on a
+  restore, last on a loss; fields only for an observed record).
+- CLAUDE.md and the PRD record that mute is observed from the status volume
+  sign, that `RepublishAll` skips unobserved records, and the widened
+  apply-lock rule (service swap, `Connect()`, `VolumeStep`).
+
+### Deferred
+
+- **Shared consumer binding helper** (the review's reuse finding). The three
+  consumers still hand-roll the same bind/apply/dispose choreography, and this
+  release applied the same two lock-scope fixes three times over. Deferred to
+  after the 1.0.15 hardware pass: it is a refactor of all three consumers, and
+  there is no compiler on the development machine to catch a slip.
+
+### Retest (1.0.15)
+
+1. **Mute survives a Lyrion Server reload.** Mute a player from the Helper.
+   Re-import only the Server package; wait 10 s. The Receiver's mute and the
+   Helper's "Unmute" label must still show muted, and the Receiver's volume
+   must show the real level, not 0. Unmute from the Helper: both must follow.
+2. **Mute is seen at first sight.** Mute a player from the LMS web UI, then
+   reboot the processor. After boot the Receiver and the Helper must show
+   muted without any tap.
+3. **Volume hold ramps.** In the Crestron Home app hold the room volume-up
+   for about two seconds: the volume must climb several steps and stop on
+   release; a tap must move exactly one step. Same for volume-down.
+4. **VolumeStep fallback.** Set the Receiver's VolumeStep to `x`: Vol± on
+   the Receiver and the Helper must step by 2 and the log must carry one
+   WARNING. Clear it: still 2, no warning. Set 5: both step by 5.
+5. **Typo at first setup.** Pair a fresh Receiver with a one-character-short
+   MAC: one WARNING "nothing bound" in the log, no "Bound to MAC". Correct
+   it: "Bound to MAC" follows.
+6. **Regression pass.** The 1.0.14 retest list unchanged: LMS restart with a
+   player switched off during the outage, offline tile tap, invalid-MAC
+   unbind, tile glyph.
+
+## 1.0.14 — Available means freshly observed; Helper hardening (2026-09-02)
+
+All four drivers ship at 1.0.14. This closes the ten findings of a full-file
+review of the Helper driver — two of them regressions from 1.0.13. **All four
+packages must be updated together.**
+
+### Fixed — Lyrion Server
+
+- **A reconnect republished cached pre-outage state before any status
+  arrived.** 1.0.13's effective-state model publishes edges the instant a
+  player becomes available, but a player's lifecycle survived a server outage
+  as Online, so `SetServerConnected(true)` made every record available at once
+  and published its *cached* raw power/playback. A player switched off during
+  an LMS restart produced a PoweredOn edge — Room On — and the real OFF one
+  round-trip later: the 1.0.5 bounce-back class. The driver still carried the
+  comment saying this must never happen. Now a record becomes Online **only
+  from a full status response, noted as that response's last step**;
+  `client new`/`reconnect` only trigger the status query; a server-level loss
+  resets every lifecycle to Unknown. "Available" is a postcondition of
+  "freshly observed", by construction.
+- **Commands for an unreachable player were handed to LMS as stored
+  preferences.** `PowerToggle` on an offline player read its effective power
+  (always false) and sent `power 1`; LMS applied it on reconnect and the room
+  switched on unexpectedly. Every player command is now gated on the player
+  being available (`CanCommand`), the same silent-drop rule the PRD applies to
+  a disconnected server.
+- **The 1 s pump could overlap itself.** `System.Threading.Timer` fires the
+  next tick on another thread if the previous one is still running (a slow
+  consumer commit inside the fan-out is enough), advancing the same record
+  twice and racing payloads out of order. An `Interlocked` guard now skips
+  the tick instead.
+
+### Fixed — Source, Receiver, Helper
+
+- **`Connect()` re-enabled a device the installer had just unbound.**
+  1.0.13's `!bound || available` read an unbound driver as connected, so the
+  framework's post-edit `Connect()` undid `UnbindInvalidMac`'s "offline" for
+  the very edit that caused it. `Connect()` now applies `_lastAvailability`
+  alone (initialised true; driven false by a loss or an invalid-MAC unbind).
+- **An invalid-MAC unbind left the old player's name, track, volume and mute
+  on screen.** It now blanks the whole view (Helper and Receiver).
+
+### Fixed — Helper
+
+- **A Lyrion Server reload wiped the live tile with a blank record, and mute
+  could never recover.** The Helper wrote every level of an unobserved
+  snapshot; name, track (defeating the 30 s freeze), volume, shuffle/repeat
+  and mute were replaced with defaults, and any field whose real value equals
+  the default was never corrected because the registry change-gates against
+  that blank record — mute is not in a status reply at all, so a muted player
+  showed "Mute" and the first tap was a no-op. The Helper now applies a
+  bind-time snapshot for observed records only, like the Source and Receiver.
+- **Preset edits and button presses bypassed the apply lock.**
+  `OnPresetReceived` wrote four properties and committed on Crestron Home's
+  configuration thread with no lock while a CLI-thread handler could be
+  mid-commit; `DoCommand` read playback/mute/step state unlocked. Both now run
+  under `_applyGate`.
+- **One commit per unit of work, and nothing rewritten that did not change.**
+  `Update*` methods now only assign, through a change-gated `Set`; each event
+  handler, the bind snapshot, a preset edit and an unbind commit once. The
+  1 Hz position tick used to rewrite fourteen properties, format time three
+  times and rebuild four strings per playing player; it now writes the time
+  text and touches nothing else. A bind cost ten commits; it costs one.
+- **The room tile showed a pause icon while music played.** Its secondary
+  icon was bound to the Play/Pause *button's* next-action glyph. A new
+  `PlaybackStateIcon` (play while playing, pause otherwise) drives the tile;
+  the button keeps its affordance.
+
+### Changed
+
+- CLAUDE.md and the PRD no longer claim `Lyrion_Common.dll` is embedded in
+  the consumer packages. The Server embeds it; the consumers ship it as a
+  package dependency declared in `Driver.json` — removing that entry breaks
+  the consumer at load.
+- CLAUDE.md invariants record the lifecycle rule, the command gate, and the
+  widened apply-lock rule.
+
+### Retest
+
+1. **LMS restart with a player switched off during the outage.** Two
+   players playing; stop LMS; switch one player off (front panel or Material
+   Skin — LMS is down, so at the device); start LMS. **The switched-off
+   player's room stays off with no flicker; the other's returns.**
+2. **Offline player, tile tap.** Unplug a player; tap its room tile. **Nothing
+   is sent; when the player is plugged back in it is in the state it was in
+   before, not powered on.**
+3. **Server-only reload while muted.** Mute a player; re-import only the
+   Lyrion Server. **The Helper still says "Unmute" and one tap unmutes.**
+4. **Invalid MAC.** Set a Helper's MAC to `xyz`. **The page blanks — no name,
+   no track, volume 0 — and shows offline, and STAYS offline after the
+   settings screen closes.** Restore the MAC.
+5. **Tile glyph.** Play, then pause. **The room tile's secondary icon shows
+   play while playing and pause while paused.**
+6. Everything from the 1.0.13 retest still holds.
+
+## 1.0.13 — Effective state at the boundary; consumer apply lock (2026-09-02)
+
+All four drivers ship at 1.0.13. This closes the ten findings of a full-file
+review of the Source driver — three of which were holes in 1.0.12's own fix.
+**All four packages must be updated together** (shared contract semantics
+changed; the consumers' bind behaviour changed to match).
+
+### Fixed — the mechanism
+
+- **"Unavailable ⇒ off/stopped" is now applied at the publish boundary, not
+  written into the record.** 1.0.12 lowered the registry's raw power/playback
+  on availability loss and re-armed the first-report rule. Two things it
+  could not see: a status keep-alive for a *disconnected* client
+  (`player_connected:0 power:1`) was noted Offline and lowered, and fourteen
+  lines later its `power:1` counted as a first explicit report and was
+  published — the Source emitted PoweredOn while disconnected, a "Power Is On
+  → Room On" mapping turned on a room for an unreachable player, and the
+  record stuck there; and after an LMS restart the first status reply lands
+  while the FSM still holds the server disconnected, so the same rule
+  published ON before `Connected` went true. Records now keep the raw values;
+  every publish, snapshot, and republish exposes the *effective* value (raw
+  when available, off/stopped when not). A mutation while unavailable stores
+  and publishes nothing; loss publishes effective edges then unavailable;
+  restore publishes available *then* the effective edges. Nothing is re-armed.
+
+- **Consumers serialise every RAD-facing write under one apply lock.** Bind
+  (commit MAC, unbind previous, bind, snapshot, apply), each event handler,
+  Dispose's unbind, and invalid-MAC unbinding now run under `_applyGate`.
+  Before: a CLI-thread event between the snapshot read and its forced apply
+  was overwritten by the stale snapshot and — the registry publishing only on
+  change — never corrected; and a Dispose or MAC edit racing an in-flight
+  bind could unbind a MAC this driver had not yet bound, decrementing the
+  Helper/Receiver's shared count (possibly deleting their record) and then
+  leaking the late bind.
+
+### Fixed — Source, Receiver, Helper
+
+- **A Lyrion Server reload while playing emitted a fabricated PoweredOff.**
+  The rebind's snapshot is a blank record; 1.0.12 called `UpdatePower(false)`
+  un-forced, which is a no-op only when the consumer already holds false —
+  against a Source holding ON it passed the change-gate. Consumers now touch
+  power/playback only for an *observed* snapshot; for an unobserved one they
+  touch nothing but `Connected`.
+- **`Connect()` forced `Connected=true` over registry availability.** The
+  framework re-runs it after any MAC edit, and the registry — change-gated on
+  its own unchanged copy — never sent `AvailabilityChanged(false)` again.
+  `Connect()` now restores the last availability reported (true only while
+  unbound).
+- **A cleared or unparseable MAC was silently ignored**, leaving the driver
+  bound to and controlling the previous player. It is now an unbind: release
+  the record, report off/stopped then offline, one warning line (silent when
+  nothing was bound, so an unconfigured driver does not log at boot).
+- **Bind-time playback was forced after `Connected=false`**, which a
+  framework that drops state from a disconnected device would discard,
+  leaving the RAD default `NoDisc`. The Source now sets `PlayBackStatus =
+  Stop` once in `Initialize` and forces nothing for unobserved records.
+  Snapshots are applied in the registry's order (available: `Connected`
+  first; unavailable: fields first).
+- The dead `_boundMac != mac` guard in `TryBindToServer` is gone (the method
+  had already returned in that case).
+
+### Fixed — Lyrion Server
+
+- **`Dispose` never published an availability loss.** It unregistered the
+  service and tore down the transport but, unlike `RebuildTransport`, never
+  called `SetServerConnected(false)`, so consumers kept asserting a dead
+  server's last state — and a replacement Server's blank record met consumers
+  still holding ON. It now publishes the loss before unregistering.
+
+### Changed
+
+- `VersionDate` in all four `Driver.json` files now matches the release date
+  (it had been stale since 1.0.10).
+- CLAUDE.md's invariants now define "change" as a change in the effective
+  value and record the consumer apply-lock rule.
+
+### Retest
+
+1. **Disconnected keep-alive.** Player playing; unplug its network. Room
+   goes off. Wait ≥ 35 s (one keep-alive). **Room stays off**; the Helper
+   stays off. Reconnect: room and Helper return.
+2. **LMS restart.** Two players playing. Stop LMS ~30 s, start it. Both
+   rooms show off during the outage and **come back on within ~8 s of LMS
+   returning**, with no OFF/ON flicker at the end.
+3. **Server-only reload while playing.** Re-import only the Lyrion Server.
+   **No room turns off; playback continues; rooms show on once the new
+   Server connects.**
+4. **MAC edit while offline.** Player unplugged; edit the Source's MAC to
+   itself and save. **The device still shows disconnected.**
+5. **Invalid MAC.** Set a Source's MAC to `xyz`. **One WARNING line; the
+   room's source shows off and disconnected; the other rooms are unaffected.**
+   Restore the MAC.
+6. Everything from the 1.0.12 retest still holds.
+
+## 1.0.12 — Registry owns availability; transport and lifecycle fixes (2026-09-02)
+
+All four drivers ship at 1.0.12. This release closes the ten findings of a
+full-file review of the Lyrion Server and the shared contract. **All four
+packages must be updated together:** `Lyrion_Common.dll` changed (a new
+`IsObserved` field on the player snapshot), and a 1.0.11 consumer beside a
+1.0.12 Server will fail to bind.
+
+### Fixed — Lyrion Server
+
+- **Re-saving the LMS settings while connected left the driver permanently
+  "disconnected".** Rebuilding the transport forced the driver and registry
+  to disconnected but never told the connectivity FSM, and detached the old
+  socket's handler before it could report the drop. The FSM stayed committed
+  =Connected, the new socket's Connected matched it, nothing was published,
+  and every command was dropped and every player unavailable — silently —
+  until LMS itself went down for more than five seconds. The FSM is now reset
+  on every rebuild/teardown, so the replacement socket's Connected commits
+  and reconciles normally.
+
+- **A player that dropped off the network and came back stayed OFF/Stopped
+  in Crestron Home while it was on and playing.** The Source and Helper
+  derived "unavailable ⇒ off/stopped" themselves; the registry kept the
+  pre-outage values; on restore the change-gated mutators compared the real
+  value against the registry's *unchanged* copy and published nothing. This
+  is the gap 1.0.8 tried to patch from the wrong side. The registry now owns
+  that derivation: on any availability loss it lowers its own power/playback,
+  publishes them as edges before `AvailabilityChanged(false)`, and re-arms
+  the first-observation rule, so restore is a genuine edge every consumer
+  receives. Consumers no longer derive anything from availability. As a
+  consequence the Receiver now also reports PoweredOff for an unreachable
+  player, matching the Source.
+
+- **After an LMS restart, a player that was still offline was reported
+  powered ON.** `RepublishAll` re-emitted the registry's stale `IsPoweredOn`
+  for a record that had gone Offline before the outage; the Source lowered
+  power on the availability event and raised it again on the next — a
+  PoweredOn edge for an unreachable player, which a "Power Is On → Room On"
+  mapping turned into a real Room On after every LMS reboot. Fixed by the
+  registry lowering above.
+
+- **Disposing or re-addressing one consumer killed the other two for the
+  same room.** All three consumers bind the same MAC and shared one registry
+  record; `Unbind` removed it outright. Reloading just the (optional)
+  Receiver left the Source and Helper bound to a MAC the registry no longer
+  knew — every notification and command dropped, no event, no log. Records
+  are now reference-counted and removed only when the last consumer lets go.
+  First-bind work (the initial status subscribe) now runs once per player
+  rather than once per consumer.
+
+- **A rejected login was an endless two-second reconnect loop with a log
+  line each cycle and no explanation.** Two bugs: the backoff counter and
+  the connect announcement were reset the instant a socket connected, before
+  login, so a server that accepted and then closed the socket never advanced
+  past the schedule's first step; and the "login failed" line could never be
+  recognised, because the parser classifies it as `LoginAck` and the check
+  required `GlobalRaw`. The schedule now resets only after a session that
+  lived ten seconds, a short-lived accept-then-close keeps escalating in
+  silence, and the auth failure is surfaced once per outage.
+
+- **`NoteMetadata` published on every call and lifted freezes blindly.** It
+  was the one registry mutator without a change-gate: every 30 s status
+  keep-alive fanned an identical payload to all three consumers, and the
+  Helper re-committed its now-playing properties into Crestron Home each
+  time, forever. It also cleared `IsFrozen` unconditionally, so a keep-alive
+  for a *disconnected* player un-froze its record and the documented 30 s
+  clear never ran. Now gated on the six fields, and a freeze is lifted only
+  for an available record. Separately, availability restore now lifts a
+  freeze itself and publishes the live payload, instead of waiting for the
+  next status push.
+
+- **A status reply marked the player Online regardless of
+  `player_connected`, and `client forget` left the record internally
+  inconsistent.** Keep-alives for a disconnected client carry
+  `player_connected:0`; that is now honoured (absence still means Online).
+  `NoteInvalidSession` goes through the same availability path as every
+  other lifecycle change, so a forgotten player becomes unavailable
+  immediately instead of sitting available with a non-Online lifecycle and a
+  1 s tick advancing a ghost.
+
+- **`mode` was noted before `power` in a status reply.** A reply carrying
+  `mode:play` with `power:0` raised a derived ON edge that the explicit OFF
+  a few lines later contradicted — the 1.0.5 bounce-back class, repeated on
+  every keep-alive while it held. Power is now noted first.
+
+- **The 1.0.11 "observed" proxy had a hole.** It used `IsAvailable`, which
+  flips true on `client new`/`reconnect` with no status at all, and inside
+  a status response before power is parsed; a consumer binding in that
+  window still force-published a blank PoweredOff. "Observed" is now a
+  registry fact (`LyrionPlayerSnapshot.IsObserved`), set only after a full
+  status response has been applied, and consumers force on it alone.
+  Playback is forced regardless at bind, because the RAD default `NoDisc` is
+  wrong for an idle audio player and the registry's default `Stopped` is
+  right — the 1.0.11 change had left an idle player showing NoDisc after a
+  cold boot.
+
+- **The connectivity FSM logged "connectivity unstable" on every boot.** Its
+  fast-flap test measured against a last-commit time initialised to
+  construction time, so the first Connecting transition — always within
+  milliseconds — looked like a flap. It now measures against "never".
+
+### Changed
+
+- The Lyrion Server's installer-facing description no longer claims a
+  JSON-RPC connection (reserved, unused) and now names all three consumers.
+- CLAUDE.md's change-gating invariant now lists its three sanctioned
+  exceptions, and two new invariants: the registry owns every derivation,
+  and never force-publish an unobserved value.
+
+### Retest
+
+1. **Per-player reconnect.** Player on and playing; pull its network cable
+   for ~10 s; reconnect. Room shows off during the outage and **comes back
+   on, playing, within a few seconds of reconnect.**
+2. **LMS restart with one player offline.** Two players, one unplugged. Stop
+   LMS for ~30 s, start it. **The unplugged player's room stays off; the
+   other's returns.**
+3. **Config re-save.** With everything connected, open the Lyrion Server's
+   settings in Crestron Home and save them unchanged. **Within ~10 s the
+   log shows `Lyrion Server: LMS CONNECTED`, and the rooms still work.**
+4. **Reload one consumer.** Re-import only the Receiver package. **The
+   Source and Helper for that room keep working.**
+5. **Wrong password.** Set a bad LMS password. **One `ERROR auth` line, then
+   the reconnect interval grows 2→5→10→30→60 s with no further log lines.**
+   Restore the password.
+6. **Boot log.** Reboot the processor. **No "connectivity unstable" line.**
+
+## 1.0.11 — A processor reboot no longer shuts down a playing player (2026-09-02)
+
+All four drivers ship at 1.0.11.
+
+### Fixed
+
+- **Rebooting the Crestron Home processor while a player was playing could
+  power that player off.** Seen live with two players playing through a
+  reboot: one was shut down every time, always the same one, with no
+  configuration difference between the rooms.
+
+  At startup, when a Source or Receiver bound to the Lyrion Server, it
+  force-published its bind-time snapshot to Crestron Home. That force was
+  added in 1.0.3 for the driver-reload case, where the registry holds real
+  state that must reach Crestron Home even when it equals the framework
+  default. But on a cold boot the registry record is brand new — nothing has
+  been observed yet — so the driver was reporting **"powered off" for a
+  player nobody had looked at**. With the recommended "Power Is Off → Room
+  Off" mapping, Crestron Home acted on that fabrication: Room Off sent
+  PowerOff, and LMS paused the player and switched it off. Which player died
+  depended only on whether its Source bound before or after Crestron Home's
+  Actions & Events engine was listening — deterministic by driver load
+  order, hence always the same one.
+
+  The bind-time snapshot is now force-published **only when the record has
+  actually been observed** (it is available, which requires a status
+  response to have arrived). A cold-boot snapshot is a change-gated no-op
+  against the framework defaults, and the real state arrives seconds later
+  as a genuine edge. This change only *removes* an unobserved assertion; it
+  cannot produce a spurious power-on.
+
+- **The first explicit power report for a player now always publishes**,
+  even when its value equals the blank default. Previously a first
+  observation of `power 0` was silent (`false == false`), which the change
+  above would otherwise expose in one corner: a Lyrion Server driver reload
+  while a player was switched off would leave a stale ON in a Source that
+  stayed loaded. `HasExplicitPower` flipping from false to true is the
+  change being gated on, and it happens once per record; consumers still
+  change-gate on their side, so a first report matching what they hold is a
+  no-op there.
+
+### Retest
+
+1. Two players off, both rooms off. Power the processor off. Power both
+   players on and start music. Power the processor on. **Both keep playing;
+   both rooms show on.**
+2. One player on and playing, the other switched off. Reload only the
+   Lyrion Server driver. (Re-importing it alone is safe here only because
+   `Lyrion_Common.dll` did not change in 1.0.11; when it does, all four
+   packages must move together — see the 1.0.10 note.) **The off player's
+   room shows off; the playing player's room shows on.**
+
+## 1.0.10 — The Gateway is now the Lyrion Server (2026-09-02)
+
+All four drivers ship at 1.0.10. **No behaviour changed.** This release renames
+the first driver so its package, code, and documentation match the name
+installers actually see.
+
+### Changed
+
+- **`Gateway_Lyrion_LMS_IP.pkg` is now `Server_Lyrion_LMS_IP.pkg`.** The
+  driver has always presented itself in the Crestron Home Setup app and
+  Configure Pro as **Lyrion Server** (its `BaseModel`), so a package called
+  "Gateway" sent people looking for a device that did not exist. The project,
+  assembly, namespace (`…Lyrion.Gateway` → `…Lyrion.Server`), driver class
+  (`GatewayDriver` → `ServerDriver`), and the shared contract
+  (`ILyrionGatewayService` → `ILyrionServerService`, and its registry and
+  implementation) were renamed to match. The driver GUID and
+  `DependencyGroup` are unchanged, so Crestron Home treats it as the same
+  driver.
+
+- **Log prefixes** changed from `Gateway:` to `Lyrion Server:`, and the
+  connectivity lines now say `LMS CONNECTED` / `LMS DISCONNECTED` rather than
+  `Server CONNECTED`, because "Server" alone is now ambiguous. In this
+  codebase *the Lyrion Server* is the driver; *LMS* is the media server it
+  talks to. `ServerDriver` carries a remarks block explaining the history and
+  that convention for anyone reading the code cold.
+
+- **All documentation** now says Lyrion Server, and the deploy steps in
+  BUILD.md give the exact Pair Devices path for each driver (Drivers →
+  Platform / Blu-ray Player / Media Player / AV Receiver → Lyrion Community).
+
+### Upgrading from 1.0.9 or earlier
+
+Because the package filename changed, import `Server_Lyrion_LMS_IP.pkg` and
+remove the old `Gateway_Lyrion_LMS_IP.pkg` from the processor's driver store.
+The other three packages keep their names but are re-versioned so Crestron
+Home reloads them; they embed the renamed `Lyrion_Common.dll` and **must** be
+updated together with the Server — a 1.0.9 Source loading beside a 1.0.10
+Server would look for `ILyrionGatewayService` and fail to bind.
+
+## 1.0.9 — Revert 1.0.8 (2026-08-31)
+
+**1.0.8 made room power tracking worse and is fully reverted here.** All four
+drivers ship at 1.0.9, which is behaviourally identical to 1.0.7. The version
+number moves forward rather than back because Crestron Home caches sideloaded
+drivers by `DriverVersion` — re-publishing 1.0.7 would leave the 1.0.8
+assemblies in place.
+
+**If you are running 1.0.8, update.** Its regression is worse than the bug it
+tried to fix.
+
+### What 1.0.8 broke
+
+Powering the player on from the Receiver stopped showing media on in the room.
+The player did power on and playback did start — only the room's state was
+wrong.
+
+1.0.8 made a player's availability-restore re-emit its power state, forced past
+the change-gate. But `ApplyStatusResponse` in the Lyrion Server parses a status push
+in this order: `NoteLifecycle` first, then playback mode, then the `power`
+field. `NoteLifecycle` is what flips availability, so the forced power emit ran
+against the registry's *previous* power value — twenty-odd lines before the same
+status response updated it. The result was a spurious, forced `PoweredOff`
+landing microseconds ahead of the real `PoweredOn`: the 1.0.5 bounce-back
+pathology inverted, and enough to leave a room with a "Power Is Off → Room Off"
+mapping showing off.
+
+The Receiver was hit hardest. In 1.0.7 it never emitted power on an availability
+change at all, so this path was entirely new there — and the Receiver is the
+device most installers power on.
+
+### The original problem was configuration, not the driver
+
+The bug 1.0.8 set out to fix — "Power Is Off → Room Off" works but "Power Is
+On → Room On" does nothing — was **a missing default route in Crestron Home**.
+A room is on when a source is routed to it; `Room On` routes the room's
+*default* source, and with no Default Source (Source Routes → Available
+Sources) or Preferred Routing set, it silently does nothing while `Room Off`
+keeps working. Setting both to the Lyrion devices fixed it with **no driver
+change at all**. BUILD.md step 6 now makes this a required setup step, and
+step 8 says how to tell this apart from a driver fault in one minute (a
+driver-free `Room On` Quick Action).
+
+1.0.8's "edge starvation" diagnosis was wrong. It did not even fit the
+reported sequence — a genuine off→on cycle still failed — and should not be
+revisited. The Source emits `PoweredOn` and `PoweredOff` symmetrically on
+every real transition; that was verified down to the framework's IL and was
+never the problem.
+
+## 1.0.7 — Helper layout fixes (2026-08-31)
+
+All four drivers ship at 1.0.7. Driver behaviour is unchanged from 1.0.6; this
+release exists to correct the now-playing page after 1.0.6 was tested on a
+phone, and to give Crestron Home a new version number so it actually reloads
+the packages.
+
+### Fixed
+
+- **The power/transport row did not render at all.** 1.0.6 put six buttons in
+  one group; Crestron Home renders at most five and silently drops the entire
+  row rather than wrapping it. Playback is back to the five-button row that
+  works — Repeat / Previous / Play-Pause / Next / Shuffle — and Power has moved
+  in with the volume controls.
+
+- **"Vol -" and "Vol +" displayed as "-  V..." and "+  V...".** A button's icon
+  and label compete for the same width, and at three or more across the label
+  is truncated to fit. The +/- icons were decorative while the text was the
+  actual affordance, so the icons are gone and the labels now render in full.
+
+### Changed
+
+- **The read-only volume level bar has been removed.** It cost a full-height
+  card to draw one thin, unadjustable line. Room volume lives on the Receiver
+  (or the room's own volume control), and Vol -/+ still step it by the
+  Receiver's configured amount. The `SupportsVolume` property is still
+  published, just no longer drawn.
+
+- The now-playing page is now: source header, track card (title / artist /
+  album / timing), a five-button playback row, a four-button Power / Vol - /
+  Mute / Vol + row, then the preset rows.
+
+- The layout rules learned from testing on hardware are recorded at the top of
+  `UiDefinition.xml`: the five-button ceiling, the icon-versus-label width
+  interaction at each row width, and the control-group stacking behaviour.
+  Crestron Home — not the SDK — interprets that file, and neither the build nor
+  ManifestUtil validates it, so these constraints are only discoverable by
+  deploying.
+
+## 1.0.6 — Configurable presets (2026-08-31)
+
+All four drivers ship at 1.0.6. Includes everything in 1.0.5 below, which was
+never released separately.
+
+### Added
+
+- **Up to four presets per room, configured on the Lyrion Helper.** Each is one
+  optional user attribute in the Crestron Home setup app, entered as
+  `Name|Icon|Command`:
+
+  ```
+  KCRW|icBroadcastRegular|favorites playlist play item_id:2
+  ```
+
+  The command is the LMS CLI text that follows the player MAC — the driver adds
+  the MAC and the line feed. The icon field may be left empty (defaults to
+  `icBroadcastRegular`), and the shorter `Name|Command` form works too.
+
+  Configured presets appear as buttons under a "Presets" heading on the Helper's
+  now-playing page, carrying the configured name and icon. Empty or unparseable
+  slots are hidden, so a room that uses no presets looks exactly as it did
+  before.
+
+- **Presets as Crestron Home sequence operations.** The Helper exposes
+  "Play Preset 1" … "Play Preset 4" to the event/scene/button-press editor, so a
+  single button can power a player on, set its volume, and start a preset.
+
+  This is why presets are declared rather than discovered: an LMS library can
+  hold hundreds of playlists and favourites, and enumerating them would mean a
+  browsing UI and a discovery cycle in the Lyrion Server to surface a list the
+  homeowner would immediately want filtered. The installer names the few that
+  matter for the room instead, and the driver never scans the server.
+
+### Changed
+
+- **The now-playing page is more compact,** to make room for presets without
+  pushing anything off a phone screen. Three cards were removed and none added
+  beyond the presets themselves:
+
+  - The elapsed/duration line moved onto the track card's fourth line, so it no
+    longer needs a card of its own.
+  - Power moved into the transport row, which is now Power / Previous /
+    Play-Pause / Next / Repeat / Shuffle on one line.
+  - Volume is now a single `Vol − | Mute | Vol +` row above the level bar. It
+    previously tried to wrap those buttons around the bar, which Crestron Home
+    rendered stacked — orphaning Vol + in a card of its own.
+
+- **The read-only progress bar has been removed.** It cost a full-height card to
+  draw one thin line, it could never seek (Crestron Home has no draggable seek
+  bar), and the elapsed/duration text says the same thing. The `Progress`,
+  `HasDuration`, and `NoDuration` properties are still published for anyone
+  building on the driver's property surface.
+
+### Removed
+
+- **The dormant LMS hardware-preset plumbing** — `LyrionPreset`, the
+  `PresetsUpdated` event, `ActivatePreset`, `NotePresets`, and the `Presets`
+  field on the player snapshot. It was never wired to anything (the event only
+  ever fired with an empty list) and described a different feature: physical
+  preset buttons on a Squeezebox Radio, not playlists. Its replacement is the
+  configurable presets above, backed by a single pass-through
+  `ILyrionServerService.SendPlayerCommand`.
+
+### Security
+
+- `SendPlayerCommand` strips control characters from the configured command. The
+  LMS CLI is newline-delimited, so a preset containing a newline would otherwise
+  be read by the server as two commands, letting one configured value issue a
+  second one the installer never intended.
+
+## 1.0.5 — Power-state bounce-back fix (2026-08-31)
+
+All four drivers ship at 1.0.5.
+
+### Fixed
+
+- **A room configured with "Power Is On → Room On" / "Power Is Off → Room Off"
+  turned itself back on 1–2 seconds after being powered off.** Turning a player
+  off from Material Skin (or any other LMS app) briefly published a *power on*
+  event, which Crestron Home's media-function mapping executed as a genuine
+  Room On — restoring the route and restarting playback.
+
+  Root cause: LMS emits `<mac> pause 1` and `<mac> playlist pause 1` about one
+  millisecond after `<mac> power 0`, as part of its own power-off sequence. The
+  registry's power-derivation fallback treated *paused* as playback, so that
+  pause immediately re-raised power that the authoritative `power 0`
+  notification had just lowered. Pause is now power-neutral: only `play` raises
+  power, and only `stop` can lower it (and then only for players that never
+  report an explicit power state, so an on-but-idle player still shows ON).
+
+  Verified against a live LMS: an external power-off now yields exactly one
+  power event, `OFF`, with the trailing pause and stop producing playback
+  events only.
+
+- **Per-player status subscriptions could stay dead after a brief server
+  reconnect.** The `status … subscribe:30` subscriptions live on the CLI socket
+  and die with it, but the connectivity FSM deliberately smooths away flaps
+  shorter than its stability window — so a fast drop/reconnect re-armed
+  `listen 1` without ever re-running reconciliation, and the richer status
+  pushes (power, mode, metadata, volume) went silent until the next committed
+  reconnect. Subscriptions are now re-armed off the raw socket transition as
+  well, so they always follow the connection.
+
+### Removed
+
+- The temporary `DIAG` power-tracing lines added to the Source and Receiver in
+  1.0.3. They violated the "no per-player power-change logging" rule and are no
+  longer needed.
+
 ## 1.0.0 — Initial release (2026-06-04)
 
-First public release of the **Lyrion Media Server – Crestron Certified Drivers**: a
-four-driver suite that integrates [Lyrion Media Server](https://lyrion.org/)
+First public release of the **Lyrion Music Server – Crestron Certified Drivers**: a
+four-driver suite that integrates [Lyrion Music Server](https://lyrion.org/)
 (formerly Logitech Media Server / Squeezebox Server) with Crestron Home.
 
 The suite splits responsibilities across four cooperating drivers so a Lyrion
 player presents cleanly in Crestron Home's source-routing graph — a routable
 audio source, a rich now-playing UI, and an optional volume endpoint — while a
-single Gateway owns the one and only connection to LMS.
+single Lyrion Server owns the one and only connection to LMS.
 
 ### Drivers in this release
 
 | Driver | Crestron device type | Instances | Version |
 |---|---|---|---|
-| `Gateway_Lyrion_LMS_IP` (Lyrion Server) | Platform (Entity Model) | 1 per home | 1.0.0 |
+| `Server_Lyrion_LMS_IP` (Lyrion Server) | Platform (Entity Model) | 1 per home | 1.0.0 |
 | `Source_Lyrion_Player` (Lyrion Source) | Bluray Player (RAD) | 1 per player | 1.0.0 |
 | `Helper_Lyrion_Player` (Lyrion Helper) | Media Player extension (RAD) | 1 per player | 1.0.0 |
 | `Receiver_Lyrion_Player` (Lyrion Receiver) | AV Receiver (RAD) | 1 per player (optional) | 1.0.0 |
 
-Each driver ships as an independent `.pkg`. The Gateway is installed once per
+Each driver ships as an independent `.pkg`. The Lyrion Server is installed once per
 home; the Source, Helper, and (optional) Receiver are installed once per
 room/player and bound by the player's MAC address.
 
 ### Highlights
 
-- **Single LMS connection.** Only the Gateway opens sockets to LMS — one
+- **Single LMS connection.** Only the Lyrion Server opens sockets to LMS — one
   persistent CLI connection plus stateless JSON-RPC over HTTP. The Source,
   Helper, and Receiver drivers never touch the network; they communicate with
-  the Gateway through a process-wide service registry (`ILyrionGatewayService`).
+  the Lyrion Server through a process-wide service registry (`ILyrionServerService`).
 - **Routable source.** The Source declares one digital (Coaxial) and one analog
   (RCA) audio output, so a Lyrion player can be routed to any room endpoint in
   the Crestron Home Source Routes graph.
 - **Rich now-playing UI.** The Helper extension surfaces title / artist / album /
-  track number, an elapsed/duration progress bar, full transport (incl. seek),
+  track number, an elapsed/duration progress bar, full transport,
   shuffle, repeat, and power — with a custom layout via `UiDefinition.xml`.
 - **Optional volume endpoint.** The Receiver provides 0–100 absolute volume,
   step up/down, mute, and power, and declares matching digital + analog audio
@@ -45,15 +1580,15 @@ room/player and bound by the player's MAC address.
 **Lyrion Source — routable audio source**
 - Play / Pause / Stop, Next / Previous, Power on / off / toggle
 - Declares digital (Coaxial) + analog (RCA) audio outputs for routing
-- Transport/power retained for Crestron Home programming even when the source
+- Transport/power retained for Crestron Home programming even if the source
   tile is hidden from end users
 
 **Lyrion Helper — rich UI extension**
 - Source-name header (the LMS player name)
 - Now-playing metadata: title, artist, album, track number, elapsed, duration
 - Read-only progress bar with `hh:mm:ss` (hidden when duration is unknown, e.g.
-  radio streams)
-- Transport: Play / Pause / Stop / Next / Previous / Seek
+  radio streams; Crestron Home does not support a draggable seek bar)
+- Transport: Play / Pause / Stop / Next / Previous
 - Shuffle and Repeat as state-driven button icons; power on / off / toggle
 - Room-page tile reflects the player's on/off state and now-playing status
 
@@ -64,12 +1599,12 @@ room/player and bound by the player's MAC address.
 
 ### Reliability & behavior
 
-- **Reconnect is a hard state boundary.** On reconnect the Gateway re-queries
+- **Reconnect is a hard state boundary.** On reconnect the Lyrion Server re-queries
   every bound MAC and recomputes availability, power, playback, volume, mute,
   shuffle, and repeat before republishing — no stale or out-of-order state.
 - **Metadata freeze/clear.** Metadata freezes the instant a player goes
   unavailable and is cleared after 30 seconds if it stays offline.
-- **Flash-safe, low-chatter logging.** The Gateway logs connectivity
+- **Flash-safe, low-chatter logging.** The Lyrion Server logs connectivity
   transitions only, with a 5-second minimum stable time and oscillation
   suppression; each room driver logs a single `Bound to MAC ...` line.
 - **Bounded backoff.** CLI reconnect schedule: 2s → 5s → 10s → 30s → 60s (cap).
@@ -80,7 +1615,7 @@ room/player and bound by the player's MAC address.
 ### Requirements
 
 - Crestron Home with driver runtime **25.0000.0033** or later
-- One reachable Lyrion Media Server instance (HTTP port, default 9000; CLI port,
+- One reachable Lyrion Music Server instance (HTTP port, default 9000; CLI port,
   default 9090)
 - Building from source requires Visual Studio 2019/2022 (.NET Framework 4.7.2)
   and the Crestron Certified Drivers SDK 27.0000.0024 or later — see
@@ -88,7 +1623,7 @@ room/player and bound by the player's MAC address.
 
 ### Installation
 
-Deploy the `.pkg` files via Crestron Toolbox, add the **Gateway first** (one per
+Deploy the `.pkg` files via Crestron Toolbox, add the **Lyrion Server first** (one per
 home), then add the Source / Helper / (optional) Receiver per player using the
 same MAC address on all three, and route the Source output to the room endpoint.
 Full step-by-step instructions, including hiding the Source tile from the room
@@ -96,8 +1631,8 @@ UI, are in [BUILD.md](BUILD.md).
 
 ### Not included in this release
 
-The following are intentionally out of scope (see CLAUDE.md "Explicitly Removed
-Features"):
+The following are intentionally out of scope (see [docs/PRD.md](docs/PRD.md)
+"Out of Scope"):
 
 - No sleep timer
 - No browse / favorites / queue APIs and no raw LMS command pass-through

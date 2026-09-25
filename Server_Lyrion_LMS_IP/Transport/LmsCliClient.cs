@@ -1,0 +1,826 @@
+// ---------------------------------------------------------------------------
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
+//  Licensed under the MIT License. See LICENSE at the repository root.
+// ---------------------------------------------------------------------------
+
+using System;
+using System.IO;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using LyrionCommunity.Crestron.Lyrion.Server.Protocol;
+
+namespace LyrionCommunity.Crestron.Lyrion.Server.Transport
+{
+    /// <summary>Connection state reported by <see cref="LmsCliClient"/>.</summary>
+    public enum LmsConnectionState
+    {
+        Disconnected,
+        Connecting,
+        Connected,
+        Faulted
+    }
+
+    /// <summary>
+    /// Persistent async TCP client for the LMS CLI (Telnet) protocol.
+    /// Reconnect schedule per CLAUDE.md: 2s → 5s → 10s → 30s → 60s (cap).
+    /// </summary>
+    /// <remarks>
+    /// All raw transitions are forwarded to the caller via
+    /// <see cref="ConnectionStateChanged"/>. Higher-level smoothing
+    /// (oscillation suppression, minimum stable time) is applied above this
+    /// layer in <see cref="Lifecycle.ServerConnectivityFsm"/>.
+    /// <para/>
+    /// Memory: the line-assembly buffer is capped at <see cref="MaxLineBytes"/>;
+    /// oversize lines are dropped without growing the buffer further.
+    /// </remarks>
+    internal sealed class LmsCliClient : IDisposable
+    {
+        private const int MaxLineBytes = 64 * 1024;
+
+        // CLAUDE.md mandates this exact sequence; values are in seconds.
+        private static readonly int[] BackoffSecondsSchedule = new[] { 2, 5, 10, 30, 60 };
+
+        /// <summary>
+        /// How long a connected socket must live before it counts as a real
+        /// session — the threshold that resets the backoff schedule, re-arms
+        /// the one-line connect announcement, and re-arms the auth-failure
+        /// notice. A server that accepts the socket and closes it within this
+        /// window (rejected credentials, an IP block) is treated as a failed
+        /// attempt, so the schedule keeps escalating instead of restarting at
+        /// 2 s on every accept. Ten seconds is well past any login/listen
+        /// preamble and well short of anything a homeowner would notice.
+        /// </summary>
+        private static readonly TimeSpan EstablishedSession = TimeSpan.FromSeconds(10);
+
+        // ----- Recovery from a dead or wedged connection (#46) -----
+        //
+        // On the 1.0.17 bench pass a 3½-minute network outage left the Lyrion
+        // Server with no connection to LMS for over an hour: the processor
+        // could ping LMS, LMS held no socket from it, and LMS had announced
+        // every player's return, yet nothing reconnected until the Server was
+        // removed and re-added. The loop body is guarded throughout, so the
+        // likely cause was an await that never completed — and every await on
+        // this path ran with no bound: the connect, the read, and the worker
+        // task itself. Which one wedged is not known, so all three are bounded
+        // here rather than betting on one.
+
+        /// <summary>
+        /// Bound on one connect attempt. <c>TcpClient.ConnectAsync</c> has no
+        /// timeout of its own and completes only when the OS and the runtime
+        /// deliver a result. A timed-out attempt is an ordinary failed attempt:
+        /// same backoff, same one-line announcement rule.
+        /// </summary>
+        private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// Liveness. With <c>listen 1</c>, LMS speaks only when something
+        /// happens, so a quiet house and a dead socket look the same to a
+        /// blocked read, and the only other detector is TCP keepalive — whose
+        /// 30 s tuning goes through a Windows-style IOControl that may not take
+        /// effect on the processor's runtime, leaving the ~2 h default. After
+        /// this long with no bytes at all, send <c>version ?</c>; if another
+        /// full interval passes with still nothing, the connection is declared
+        /// dead and the ordinary reconnect path takes over.
+        /// </summary>
+        private static readonly TimeSpan IdleProbeInterval = TimeSpan.FromSeconds(30);
+
+        /// <summary>Pause before a worker that ended unexpectedly is restarted.</summary>
+        private static readonly TimeSpan WorkerRestartDelay = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// Bound on each write of the connect preamble (#63). The #46 work
+        /// bounded the connect, the read and the worker task, but the three
+        /// preamble sends between them ran unbounded: the socket is marked
+        /// Connected before they run, and ReceiveLoopAsync — which carries the
+        /// liveness bound — only starts after they return. A write that never
+        /// completes there wedges the client permanently, with the state left
+        /// at Connected and no reader running: #46's exact observable
+        /// signature, on a path #46's fix does not cover.
+        ///
+        /// A timed-out preamble is an ordinary failed attempt. Throwing lets
+        /// RunAsync's finally tear the connection down, and disposing the
+        /// stream is what unblocks the abandoned write and releases
+        /// _writeLock (see SendLineAsync). Five seconds is generous for two or
+        /// three short lines on a socket the OS has just accepted.
+        ///
+        /// This is a budget for the WHOLE preamble, not per write. Per write
+        /// it would not hold the property it exists for: RunAsync stamps
+        /// connectedAtUtc BEFORE the preamble and treats a session lasting
+        /// EstablishedSession (10 s) as real, so two 5 s writes already reach
+        /// that bar and three exceed it. A server that accepts the socket and
+        /// then stalls every preamble write would have had its backoff reset
+        /// to the first step on every cycle — reconnecting every 2 s forever
+        /// with a log line each time, the exact retry storm the schedule and
+        /// the logging invariant exist to prevent. One shared 5 s budget stays
+        /// inside EstablishedSession however many lines the preamble has.
+        /// </summary>
+        private static readonly TimeSpan PreambleTimeout = TimeSpan.FromSeconds(5);
+
+        // Set when a "login failed" line has been surfaced for the current
+        // outage; cleared when a session is established. Touched only on the
+        // worker task (EmitLine runs inside ReceiveLoopAsync).
+        private bool _authFailureAnnounced;
+
+        private readonly string _host;
+        private readonly int _port;
+        private readonly string _username;
+        private readonly string _password;
+        private readonly Action<string> _log;
+
+        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
+
+        // Serializes Start/Stop transitions so the _cts and _workerTask
+        // fields cannot be reassigned concurrently. Today only RebuildTransport
+        // calls Start, and it holds ServerDriver._gate — but relying on that
+        // invariant from outside is a foot-gun, so we guard locally too.
+        private readonly object _startLock = new object();
+
+        private readonly object _stateLock = new object();
+        // volatile so SendLineAsync can read _state outside _stateLock without
+        // a stale-cache hazard on weakly-ordered hardware. Mutation still
+        // happens under _stateLock so the read-modify-write in SetState stays
+        // atomic with the equality check.
+        private volatile LmsConnectionState _state = LmsConnectionState.Disconnected;
+
+        private CancellationTokenSource _cts;
+        private Task _workerTask;
+
+        // volatile so CloseSocket() can read these fields outside any lock
+        // without seeing stale values on weakly-ordered hardware (ARM). The
+        // writes in RunAsync are inside the try block before SetState; the
+        // volatile semantics on these fields and on _state together provide
+        // the publication barrier without requiring a lock.
+        private volatile Stream _stream;
+        private volatile TcpClient _tcpClient;
+
+        // Lifecycle counters for diagnostics. Updated with Interlocked so they
+        // can be read locklessly from any thread. Useful for diagnosing slow
+        // socket leaks or reconnect storms in the field.
+        private long _connectCount;
+        private long _disconnectCount;
+
+        public LmsCliClient(string host, int port, string username, string password, Action<string> log)
+        {
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                throw new ArgumentException("Host is required.", nameof(host));
+            }
+
+            if (port <= 0 || port > 65535)
+            {
+                throw new ArgumentOutOfRangeException(nameof(port));
+            }
+
+            _host = host;
+            _port = port;
+            _username = username ?? string.Empty;
+            _password = password ?? string.Empty;
+            _log = log ?? (_ => { });
+        }
+
+        public event Action<LmsMessage> MessageReceived;
+        public event Action<LmsConnectionState> ConnectionStateChanged;
+
+        /// <summary>
+        /// Raised when LMS rejects our login. Surfaced separately so the FSM
+        /// can log it as an error per CLAUDE.md "ERROR LOGGING ONLY".
+        /// </summary>
+        public event Action<string> AuthenticationFailed;
+
+        public LmsConnectionState State
+        {
+            get { lock (_stateLock) { return _state; } }
+        }
+
+        /// <summary>Total successful connects since this client was created.</summary>
+        public long ConnectCount => Interlocked.Read(ref _connectCount);
+
+        /// <summary>Total disconnects (clean or faulted) since this client was created.</summary>
+        public long DisconnectCount => Interlocked.Read(ref _disconnectCount);
+
+        public Task StartAsync(CancellationToken externalToken)
+        {
+            lock (_startLock)
+            {
+                if (_workerTask != null && !_workerTask.IsCompleted)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+                _cts = cts;
+                _workerTask = Task.Run(() => SuperviseAsync(cts.Token));
+                return Task.CompletedTask;
+            }
+        }
+
+        /// <summary>
+        /// Keeps <see cref="RunAsync"/> running until a deliberate stop (#46).
+        /// RunAsync only returns on cancellation, but nothing observed its task:
+        /// had it ever ended some other way, the driver would never have tried
+        /// to reconnect and nothing would have said so. Announced once per
+        /// client, then silent, so a fault that repeats cannot flood the log.
+        /// </summary>
+        private async Task SuperviseAsync(CancellationToken ct)
+        {
+            var announced = false;
+            while (!ct.IsCancellationRequested)
+            {
+                string why;
+                try
+                {
+                    await RunAsync(ct).ConfigureAwait(false);
+                    why = "it returned";
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    why = ex.GetType().Name + ": " + ex.Message;
+                }
+
+                if (ct.IsCancellationRequested) break;
+
+                if (!announced)
+                {
+                    announced = true;
+                    _log("Lyrion Server ERROR: LMS connection worker stopped unexpectedly (" + why + "); restarting");
+                }
+
+                try { await Task.Delay(WorkerRestartDelay, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+
+        public async Task StopAsync(TimeSpan timeout)
+        {
+            var cts = _cts;
+            if (cts != null)
+            {
+                try { cts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+
+            // CloseSocket is required, not just defensive: on .NET Framework
+            // 4.7.2 NetworkStream.ReadAsync does not reliably honor its
+            // CancellationToken. Disposing the underlying stream is the
+            // canonical way to unblock an in-flight read.
+            CloseSocket();
+
+            var worker = _workerTask;
+            if (worker != null)
+            {
+                var completed = await Task.WhenAny(worker, Task.Delay(timeout)).ConfigureAwait(false);
+                if (completed != worker)
+                {
+                    _log("LmsCliClient worker did not exit within timeout; abandoning.");
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            // Bounded Wait rather than GetAwaiter().GetResult(): the latter
+            // is a sync-over-async pattern that would deadlock if any
+            // continuation downstream were to capture the calling sync
+            // context. The 3s outer bound is StopAsync's 2s internal timeout
+            // plus a small slack for cancellation/dispose handlers to run.
+            try
+            {
+                var stop = StopAsync(TimeSpan.FromSeconds(2));
+                stop.Wait(TimeSpan.FromSeconds(3));
+            }
+            catch { }
+
+            _cts?.Dispose();
+            _writeLock.Dispose();
+        }
+
+        public async Task<bool> SendLineAsync(string commandLine, CancellationToken ct)
+        {
+            if (commandLine == null) return false;
+
+            var bytes = Encoding.UTF8.GetBytes(commandLine + "\r\n");
+
+            // Serialises concurrent SENDERS so two commands cannot interleave
+            // their bytes on the stream. The driver sends fire-and-forget from
+            // several paths at once (SendCliLineSync, SendCliForPlayer,
+            // SubscribePlayer via SendOnCli) alongside the connect preamble and
+            // the idle liveness probe, so that is a real job.
+            //
+            // It does NOT exclude CloseSocket/TeardownCurrentConnection, and
+            // MUST NOT: those deliberately do not take this lock. A write that
+            // hangs holds it indefinitely (#63), and StopAsync's CloseSocket —
+            // disposing the stream out from under the write — is the only
+            // thing that unblocks it. A closer that waited on this lock would
+            // block behind the very write it exists to interrupt, turning #63
+            // from recoverable-by-reload into not recoverable at all.
+            //
+            // So a closer CAN dispose _stream mid-write. That is handled, not
+            // prevented: the write throws ObjectDisposedException, which the
+            // catch below turns into `return false`. Dropping a command while
+            // the socket is being torn down is the correct outcome. (#65 — an
+            // earlier version of this comment claimed the lock closed that
+            // race, which pointed at adding the lock to CloseSocket.)
+            await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                if (_state != LmsConnectionState.Connected)
+                {
+                    return false;
+                }
+                var stream = _stream;
+                if (stream == null)
+                {
+                    return false;
+                }
+
+                await stream.WriteAsync(bytes, 0, bytes.Length, ct).ConfigureAwait(false);
+                await stream.FlushAsync(ct).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Socket torn down underneath us; nothing to close, just bail.
+                return false;
+            }
+            catch (Exception)
+            {
+                CloseSocket();
+                return false;
+            }
+            finally
+            {
+                try { _writeLock.Release(); }
+                catch (ObjectDisposedException) { }
+            }
+        }
+
+        private async Task RunAsync(CancellationToken ct)
+        {
+            var attempt = 0;
+
+            // Announce the first connect attempt of a cycle, then stay silent
+            // while the backoff retries; a successful connection re-arms the
+            // announcement so a later drop is announced once more. Without this
+            // a server that is down overnight writes a line every backoff tick
+            // (60s at the top of the schedule) for as long as it stays down —
+            // exactly the retry-attempt logging the CLAUDE.md logging invariant
+            // rules out. Nothing is lost: ServerConnectivityFsm still logs each
+            // committed CONNECTED/DISCONNECTED transition once.
+            //
+            // This cannot be driven off `attempt`. That counter is reset to 0 on
+            // a successful connect and then incremented *before* the retry
+            // delay, so the first attempt following a dropped connection is
+            // attempt 1, not 0 — gating on `attempt == 0` would silence the one
+            // line worth keeping.
+            var announceNextAttempt = true;
+
+            while (!ct.IsCancellationRequested)
+            {
+                var announceThisAttempt = announceNextAttempt;
+                announceNextAttempt = false;
+
+                // Whether this iteration got as far as a connected socket, and
+                // when. Losing a live connection is a real error, so it is
+                // logged even mid-cycle when retries are otherwise silent —
+                // but only once the session has lasted EstablishedSession.
+                var wasConnected = false;
+                var connectedAtUtc = DateTime.MinValue;
+
+                SetState(LmsConnectionState.Connecting);
+
+                TcpClient tcp = null;
+                NetworkStream stream = null;
+
+                try
+                {
+                    if (announceThisAttempt)
+                    {
+                        _log("LmsCliClient: connecting to " + _host + ":" + _port);
+                    }
+
+                    tcp = new TcpClient { NoDelay = true };
+                    EnableKeepAliveFlag(tcp);
+                    await ConnectWithCancellationAsync(tcp, _host, _port, ct).ConfigureAwait(false);
+                    TuneKeepAliveInterval(tcp);
+                    stream = tcp.GetStream();
+                    _tcpClient = tcp;
+                    _stream = stream;
+
+                    SetState(LmsConnectionState.Connected);
+                    wasConnected = true;
+                    connectedAtUtc = DateTime.UtcNow;
+                    // NOT `attempt = 0` / `announceNextAttempt = true` here.
+                    // A TCP accept proves nothing: a server that takes the
+                    // socket and then closes it (rejected credentials, an IP
+                    // block) would reset the backoff to its first step and
+                    // re-arm the announcement on every cycle — a reconnect
+                    // every 2 s forever with a log line each time, which is
+                    // exactly the retry storm the 2/5/10/30/60 schedule and
+                    // the logging invariant exist to prevent. Both are
+                    // re-armed below, and only for a session that actually
+                    // lived (see EstablishedSession).
+
+                    // One deadline for the whole preamble — see PreambleTimeout
+                    // for why this must not be per write.
+                    var preambleDeadlineUtc = DateTime.UtcNow + PreambleTimeout;
+
+                    if (!string.IsNullOrEmpty(_username))
+                    {
+                        await SendPreambleLineAsync(LmsCliCommands.Login(_username, _password), preambleDeadlineUtc, ct).ConfigureAwait(false);
+                    }
+
+                    await SendPreambleLineAsync(LmsCliCommands.ListenAll(), preambleDeadlineUtc, ct).ConfigureAwait(false);
+                    await SendPreambleLineAsync(LmsCliCommands.QueryServerVersion(), preambleDeadlineUtc, ct).ConfigureAwait(false);
+
+                    await ReceiveLoopAsync(stream, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // Same rule as the connect announcement: the first failure
+                    // of a cycle is worth a line, the identical failure on every
+                    // subsequent backoff tick is not. A drop of an ESTABLISHED
+                    // connection always logs — established meaning it lived
+                    // long enough to have been a real session, not a socket
+                    // the server accepted and immediately closed.
+                    var established = wasConnected && DateTime.UtcNow - connectedAtUtc >= EstablishedSession;
+                    if (announceThisAttempt || established)
+                    {
+                        _log("LmsCliClient: connect/receive error: " + ex.Message);
+                    }
+                }
+                finally
+                {
+                    TeardownCurrentConnection(tcp, stream);
+                }
+
+                if (ct.IsCancellationRequested) break;
+
+                // A session that lived is what resets the schedule and
+                // re-arms the one-line announcement for the NEXT drop. A
+                // short-lived accept-then-close keeps escalating and stays
+                // silent, so a wrong password costs one line per backoff
+                // step and then one per minute, not one every two seconds.
+                if (wasConnected && DateTime.UtcNow - connectedAtUtc >= EstablishedSession)
+                {
+                    attempt = 0;
+                    announceNextAttempt = true;
+                    _authFailureAnnounced = false;
+                }
+
+                SetState(LmsConnectionState.Faulted);
+
+                var seconds = BackoffSecondsSchedule[Math.Min(attempt, BackoffSecondsSchedule.Length - 1)];
+                attempt++;
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            SetState(LmsConnectionState.Disconnected);
+        }
+
+        /// <summary>
+        /// Enable the bare SO_KEEPALIVE flag. Safe to call pre-connect.
+        /// </summary>
+        private static void EnableKeepAliveFlag(TcpClient client)
+        {
+            try
+            {
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            }
+            catch { /* unsupported on some constrained runtimes */ }
+        }
+
+        /// <summary>
+        /// Tune keepalive timing via IOControl. Must be called AFTER the
+        /// socket is connected — <c>IOControlCode.KeepAliveValues</c>
+        /// requires a connected socket on Windows / .NET Framework.
+        /// </summary>
+        private static void TuneKeepAliveInterval(TcpClient client)
+        {
+            try
+            {
+                // Windows / Mono: 30s idle, 10s interval. 12-byte payload:
+                //   u32 onoff (1) | u32 time-ms (30000) | u32 interval-ms (10000)
+                var keepAlive = new byte[12];
+                keepAlive[0] = 1;
+                BitConverter.GetBytes((uint)30000).CopyTo(keepAlive, 4);
+                BitConverter.GetBytes((uint)10000).CopyTo(keepAlive, 8);
+                client.Client.IOControl(IOControlCode.KeepAliveValues, keepAlive, null);
+            }
+            catch { /* not all platforms expose KeepAliveValues; SO_KEEPALIVE alone still helps */ }
+        }
+
+        /// <summary>
+        /// One connect-preamble write, bounded by what is left of the shared
+        /// <see cref="PreambleTimeout"/> budget (#63). On timeout the send is
+        /// abandoned — its fault observed, since the teardown that follows
+        /// disposes the stream and that is what ends it — and a
+        /// TimeoutException is thrown so RunAsync treats it as any other
+        /// failed attempt: tear down, back off, reconnect.
+        ///
+        /// The bound covers the whole call, not just the write: SendLineAsync
+        /// waits on _writeLock first, and a write hung on a previous socket
+        /// still holds it. Bounding that wait too is the point — otherwise the
+        /// new connection's preamble simply queues behind the old wedge.
+        /// </summary>
+        private async Task SendPreambleLineAsync(string commandLine, DateTime deadlineUtc, CancellationToken ct)
+        {
+            var send = SendLineAsync(commandLine, ct);
+
+            // Whatever is left of the budget. Already spent means zero, not a
+            // fresh interval: an earlier line in the same preamble having used
+            // the whole budget is exactly the case this must not extend.
+            var remaining = deadlineUtc - DateTime.UtcNow;
+            if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
+
+            using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                var winner = await Task.WhenAny(send, Task.Delay(remaining, timer.Token)).ConfigureAwait(false);
+                timer.Cancel();
+                if (winner == send)
+                {
+                    // Propagates cancellation and any real send fault to
+                    // RunAsync, exactly as the unbounded await did. A `false`
+                    // return (socket already gone) also behaves as before: the
+                    // read loop that follows ends at once and the ordinary
+                    // reconnect path runs.
+                    await send.ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            // Observed before the cancellation check, as ReadWithLivenessAsync
+            // does: on the stopping path the send is abandoned just the same.
+            ObserveFault(send);
+            ct.ThrowIfCancellationRequested();
+
+            throw new TimeoutException("LMS connect preamble write timed out after "
+                + (int)PreambleTimeout.TotalSeconds + " s");
+        }
+
+        private static async Task ConnectWithCancellationAsync(TcpClient client, string host, int port, CancellationToken ct)
+        {
+            var connectTask = client.ConnectAsync(host, port);
+            using (ct.Register(() =>
+            {
+                try { client.Close(); }
+                catch { }
+            }))
+            using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                var winner = await Task.WhenAny(connectTask, Task.Delay(ConnectTimeout, timer.Token)).ConfigureAwait(false);
+                timer.Cancel();
+                if (winner != connectTask)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // Timed out (#46). Closing the client abandons the attempt;
+                    // observe its eventual fault so it cannot surface later as
+                    // an unobserved task exception.
+                    try { client.Close(); }
+                    catch { }
+                    ObserveFault(connectTask);
+                    throw new TimeoutException("connect to " + host + ":" + port + " timed out after "
+                        + (int)ConnectTimeout.TotalSeconds + " s");
+                }
+
+                await connectTask.ConfigureAwait(false);
+            }
+
+            ct.ThrowIfCancellationRequested();
+        }
+
+        /// <summary>
+        /// One read, bounded by the liveness rule (#46): after
+        /// <see cref="IdleProbeInterval"/> of silence, send <c>version ?</c>;
+        /// if a second interval passes with still nothing, throw. RunAsync
+        /// then logs the drop (once, as for any established session) and the
+        /// ordinary reconnect path runs. Any byte at all, a reply or a push,
+        /// counts as proof of life.
+        /// </summary>
+        private async Task<int> ReadWithLivenessAsync(NetworkStream stream, byte[] buffer, CancellationToken ct)
+        {
+            var read = stream.ReadAsync(buffer, 0, buffer.Length, ct);
+            var probed = false;
+            while (true)
+            {
+                using (var timer = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    var winner = await Task.WhenAny(read, Task.Delay(IdleProbeInterval, timer.Token)).ConfigureAwait(false);
+                    timer.Cancel();
+                    if (winner == read) return await read.ConfigureAwait(false);
+                }
+
+                if (ct.IsCancellationRequested)
+                {
+                    // Stopping: StopAsync disposes the stream, which ends the
+                    // abandoned read.
+                    ObserveFault(read);
+                    ct.ThrowIfCancellationRequested();
+                }
+
+                if (!probed)
+                {
+                    probed = true;
+                    // Not awaited: on a dead socket the write can block, and
+                    // this loop is what has to notice. Its result is
+                    // irrelevant; only a reply proves anything. Observed all
+                    // the same: this send fires after 30 s of silence, which
+                    // is exactly when a half-open socket makes it fault, and
+                    // an unobserved fault would surface later through
+                    // TaskScheduler.UnobservedTaskException as errlog noise.
+                    ObserveFault(SendLineAsync(LmsCliCommands.QueryServerVersion(), ct));
+                    continue;
+                }
+
+                // The teardown that follows disposes the stream, which ends
+                // the abandoned read; observe its fault.
+                ObserveFault(read);
+                throw new TimeoutException("no data from LMS for "
+                    + (int)(2 * IdleProbeInterval.TotalSeconds) + " s, including no reply to a probe");
+            }
+        }
+
+        private static void ObserveFault(Task task)
+        {
+            task.ContinueWith(t => { var ignored = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
+        {
+            var readBuffer = new byte[8192];
+            using (var lineBuffer = new MemoryStream(1024))
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    int bytesRead;
+                    try
+                    {
+                        bytesRead = await ReadWithLivenessAsync(stream, readBuffer, ct).ConfigureAwait(false);
+                    }
+                    catch (IOException)
+                    {
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Stream disposed by CloseSocket() during a clean teardown.
+                        return;
+                    }
+                    catch (SocketException)
+                    {
+                        // Hard reset from the peer.
+                        return;
+                    }
+
+                    if (bytesRead <= 0) return;
+
+                    for (var i = 0; i < bytesRead; i++)
+                    {
+                        var b = readBuffer[i];
+                        if (b == (byte)'\n')
+                        {
+                            EmitLine(lineBuffer);
+                            lineBuffer.SetLength(0);
+                        }
+                        else if (b != (byte)'\r')
+                        {
+                            if (lineBuffer.Length >= MaxLineBytes)
+                            {
+                                lineBuffer.SetLength(0);
+                                continue;
+                            }
+                            lineBuffer.WriteByte(b);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void EmitLine(MemoryStream lineBuffer)
+        {
+            if (lineBuffer.Length == 0) return;
+
+            string line;
+            try
+            {
+                line = Encoding.UTF8.GetString(lineBuffer.GetBuffer(), 0, (int)lineBuffer.Length);
+            }
+            catch
+            {
+                return;
+            }
+
+            LmsMessage message;
+            try
+            {
+                message = LmsCliParser.Parse(line);
+            }
+            catch
+            {
+                return;
+            }
+
+            // LMS returns a single "login" line on auth failure too — but the
+            // canonical signal is the connection drop that follows. We surface
+            // the explicit error line through AuthenticationFailed so the
+            // driver can log it, once per outage: the flag is cleared only
+            // when a session is established, so the backoff retries that
+            // follow a rejection do not repeat the line.
+            //
+            // The parser classifies EVERY line whose first token is "login" as
+            // LoginAck (the success echo and the failure share it), so the
+            // check must accept that kind. Before 1.0.12 it required GlobalRaw,
+            // which the parser never produces for this line, and the event
+            // could not fire: a wrong password was an endless reconnect loop
+            // with no explanation.
+            if ((message.Kind == LmsMessageKind.LoginAck || message.Kind == LmsMessageKind.GlobalRaw)
+                && message.Tokens != null
+                && message.Tokens.Length >= 2
+                && string.Equals(message.Tokens[0], "login", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(message.Tokens[1], "failed", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!_authFailureAnnounced)
+                {
+                    _authFailureAnnounced = true;
+                    try { AuthenticationFailed?.Invoke("LMS rejected credentials."); }
+                    catch { }
+                }
+                return;
+            }
+
+            try { MessageReceived?.Invoke(message); }
+            catch (Exception ex) { _log("LmsCliClient: message handler threw: " + ex.GetType().Name + ": " + ex.Message); }
+        }
+
+        private void SetState(LmsConnectionState newState)
+        {
+            LmsConnectionState previous;
+            bool changed;
+            lock (_stateLock)
+            {
+                previous = _state;
+                changed = previous != newState;
+                if (changed) _state = newState;
+            }
+
+            if (!changed) return;
+
+            if (newState == LmsConnectionState.Connected)
+            {
+                Interlocked.Increment(ref _connectCount);
+            }
+            else if (previous == LmsConnectionState.Connected)
+            {
+                Interlocked.Increment(ref _disconnectCount);
+            }
+
+            try { ConnectionStateChanged?.Invoke(newState); }
+            catch (Exception ex) { _log("LmsCliClient: state change handler threw: " + ex.GetType().Name + ": " + ex.Message); }
+        }
+
+        private void TeardownCurrentConnection(TcpClient tcp, Stream stream)
+        {
+            _stream = null;
+            _tcpClient = null;
+
+            try { stream?.Dispose(); } catch { }
+            try { tcp?.Close(); } catch { }
+        }
+
+        private void CloseSocket()
+        {
+            var tcp = _tcpClient;
+            _tcpClient = null;
+            var stream = _stream;
+            _stream = null;
+
+            try { stream?.Dispose(); } catch { }
+            try { tcp?.Close(); } catch { }
+        }
+    }
+}

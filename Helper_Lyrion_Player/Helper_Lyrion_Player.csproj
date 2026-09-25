@@ -4,7 +4,7 @@
   Per-room rich UI extension device (RAD AExtensionDevice, DeviceType
   "Media Player", IsExtensionDevice=true). Hosts the Crestron Home
   now-playing UI for one Lyrion player: metadata, transport, shuffle,
-  repeat, power. Bound by MAC address; consumes the gateway service.
+  repeat, power. Bound by MAC address; consumes the Lyrion Server service.
   Never connects to LMS.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
@@ -77,6 +77,17 @@
   </ItemGroup>
 
   <!--
+    SimplSharpHelperInterface.dll defines Crestron.SimplSharp.ReadOnlyDictionary,
+    the return type of the GetLanguageTranslations override (#51). The Certified
+    Drivers SDK does not ship it, so it comes from Crestron's NuGet package.
+    Compile-only: the processor already has this assembly, so nothing from
+    the package is copied to the output or bundled into the .pkg.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Crestron.SimplSharp.SDK.Library" Version="2.22.15" ExcludeAssets="runtime;build;buildTransitive;contentFiles;native" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
     Lyrion_Common.dll is shared by all four drivers. RAD drivers have no
     DriverAssemblyEntryPoint to hook AssemblyResolve, so it is bundled into
     the package as a plain dependency (declared in Driver.json's
@@ -96,9 +107,18 @@
   <!--
     UiDefinition.xml is copied to IncludeInPkg/UiDefinitions/ in the output
     directory so ManifestUtil bundles it into the .pkg package.
+
+    Translations/en-US.json is deliberately empty: the UI uses literal labels,
+    no ^keys. It exists because AExtensionDevice looks for the package's
+    translations folder on every load and UI request, and logs two errlog
+    Errors each time it is missing (through 1.0.17). ManifestUtil lowercases
+    both folder names in the .pkg.
   -->
   <ItemGroup>
     <Content Include="IncludeInPkg\UiDefinitions\UiDefinition.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="IncludeInPkg\Translations\en-US.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
@@ -127,6 +147,16 @@
 
     <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pkg')"
            Text="ManifestUtil.exe did not produce $(AssemblyName).pkg." />
+
+    <!--
+      ManifestUtil writes nested package entries with Windows separators
+      ("uidefinitions\UiDefinition.xml"). The ZIP spec (APPNOTE 4.4.17.1)
+      requires forward slashes, and Crestron Home's CustomAppManager logs an
+      errlog warning for every package that does not use them (#78), so the entry
+      names are rewritten in place. A package with no nested entries is left
+      untouched.
+    -->
+    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\build\Normalize-PkgPaths.ps1&quot; -Path &quot;$(TargetDir)$(AssemblyName).pkg&quot;" />
 
     <Message Importance="high" Text="ManifestUtil: produced $(TargetDir)$(AssemblyName).pkg" />
   </Target>

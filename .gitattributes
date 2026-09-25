@@ -1,0 +1,19 @@
+# Line endings are declared here so they do not depend on each contributor's
+# core.autocrlf setting. Every file in this repository is stored with LF, and
+# is checked out with LF: Visual Studio, MSBuild and the Crestron SDK all read
+# LF happily on Windows, and pinning it stops Git from rewriting files on
+# checkout (the "this file uses LF but Git is configured to convert them to
+# CRLF" notice in GitHub Desktop) and stops the working tree drifting into a
+# mix of both.
+* text=auto eol=lf
+
+# Never touch these, should any ever be committed: rewriting a byte of a
+# driver package or an assembly corrupts it.
+*.pkg binary
+*.dat binary
+*.dll binary
+*.exe binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.ico binary

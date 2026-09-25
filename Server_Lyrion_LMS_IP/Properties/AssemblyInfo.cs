@@ -1,0 +1,21 @@
+// ---------------------------------------------------------------------------
+//  Server_Lyrion_LMS_IP - Lyrion Server driver (Driver 1 of 4)
+//  Licensed under the MIT License. See LICENSE at the repository root.
+// ---------------------------------------------------------------------------
+
+using System.Reflection;
+using System.Runtime.InteropServices;
+
+[assembly: AssemblyTitle("Server_Lyrion_LMS_IP")]
+[assembly: AssemblyDescription("Lyrion Server. Owns the sole LMS connection and publishes the ILyrionServerService consumed by Source, Helper, and Receiver drivers.")]
+[assembly: AssemblyConfiguration("")]
+[assembly: AssemblyCompany("Lyrion Community")]
+[assembly: AssemblyProduct("Server_Lyrion_LMS_IP")]
+[assembly: AssemblyCopyright("Copyright (C) Lyrion Community contributors.")]
+[assembly: AssemblyTrademark("")]
+[assembly: AssemblyCulture("")]
+
+[assembly: AssemblyVersion("1.0.0.0")]
+
+[assembly: ComVisible(false)]
+[assembly: Guid("4b7aa667-3cce-4886-858e-0c415c7d29a8")]
