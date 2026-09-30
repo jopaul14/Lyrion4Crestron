@@ -45,11 +45,14 @@
       control, so vertical space is bought only by using fewer controls.
       Before adding anything here, check what it displaces.
     -->
-    <layout id="NowPlaying" isdefaultlayout="#true">
+    <!-- The source name is the layout's title ("shown at the top of the page"
+         per Crestron's UI-Files docs, which allow a {property} binding there)
+         rather than a subheader card. Through 1.1.1 the title was unset and
+         the name sat in a SourceHeader subheader below a blank band at the
+         top of the page; if that band was the empty title area, this reclaims
+         one card of height. Trial - unverified on hardware (#83). -->
+    <layout id="NowPlaying" title="{SourceName}" isdefaultlayout="#true">
       <controls>
-
-        <!-- Source name header (top of screen). -->
-        <subheader id="SourceHeader" label="{SourceName}"/>
 
         <!-- Track card. Carries the timing on its fourth line rather than in a
              card of its own. {TimeText} is already duration-aware: it reads
