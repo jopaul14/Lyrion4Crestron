@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<uidefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://prd-use-rad-assets.azurewebsites.net/ExtensionsSchemaDefinition_v1_0.xsd">
+<uidefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://prd-use-rad-assets.azurewebsites.net/ExtensionsSchemaDefinition.xsd">
   <version ver="1.0"/>
 
   <!-- Tile tap toggles POWER (primary icon + status reflect on/off); the
@@ -15,10 +15,15 @@
 
     <!--
       LAYOUT RULES - all observed on real hardware (a Crestron Home phone
-      client). The schema URL above is dead and Crestron Home, not the SDK,
-      interprets this file, so these are empirical and easy to break:
+      client). The schema above says which elements and attributes exist, but
+      not how Crestron Home draws them, and Crestron Home is more lenient than
+      it: the schema requires every label to be a ^translation key, $variable
+      or {property}, and the literal labels below render fine (an editor
+      validating against it flags them - see #82, #84). How the page lays out is
+      therefore empirical and easy to break:
 
-        1. A buttongroup holds at most FIVE buttons. A six-button group does
+        1. A buttongroup holds at most FIVE buttons (the schema's own limit,
+           maxOccurs="5"). A six-button group does
            not render at all - the whole row silently vanishes; it does not
            wrap, scroll, or truncate. This is why power/transport/modes are
            split across two rows rather than combined into one.
